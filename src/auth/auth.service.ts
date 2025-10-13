@@ -60,7 +60,7 @@ export class AuthService {
       lastname,
       email,
       password: hashedPassword,
-      createdAt: new Date().toISOString(),
+      createdAt: admin.firestore.Timestamp.now(),
       profileImage: '',
       enterprise: '',
       enterpriseWeb: '',
