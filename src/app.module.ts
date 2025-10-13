@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { LanguagesModule } from './languages/languages.module';
+import { FishAudioModule } from './fish-audio/fish-audio.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { LanguagesModule } from './languages/languages.module';
     AuthModule,
     UsersModule,
     LanguagesModule,
+    FishAudioModule,
   ],
   controllers: [],
   providers: [],
