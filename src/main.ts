@@ -5,9 +5,17 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Configuración de CORS
+  /*app.enableCors({
+    origin: ['https://app.llamalo.ai', 'http://localhost:4200'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });*/
+
   // Configuración básica de Swagger
   const config = new DocumentBuilder()
-    .setTitle('Mi API de LlamaloIA')
+    .setTitle('LlamaloAI API')
     .setDescription('Documentación de la API de autenticación y servicios')
     .setVersion('1.0')
     .addBearerAuth()

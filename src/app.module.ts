@@ -6,6 +6,7 @@ import { LanguagesModule } from './languages/languages.module';
 import { FishAudioModule } from './fish-audio/fish-audio.module';
 import { AgentsModule } from './agents/agents.module';
 import { TwilioModule } from './twilio/twilio.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { TwilioModule } from './twilio/twilio.module';
     FishAudioModule,
     AgentsModule,
     TwilioModule,
+    HealthModule,
   ],
   controllers: [],
   providers: [],
