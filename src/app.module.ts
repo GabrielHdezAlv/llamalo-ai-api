@@ -5,6 +5,7 @@ import { UsersModule } from './users/users.module';
 import { LanguagesModule } from './languages/languages.module';
 import { FishAudioModule } from './fish-audio/fish-audio.module';
 import { AgentsModule } from './agents/agents.module';
+import { TwilioModule } from './twilio/twilio.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { AgentsModule } from './agents/agents.module';
     LanguagesModule,
     FishAudioModule,
     AgentsModule,
+    TwilioModule,
   ],
   controllers: [],
   providers: [],
