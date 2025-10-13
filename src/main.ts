@@ -10,7 +10,7 @@ async function bootstrap() {
     .setTitle('Mi API de LlamaloIA')
     .setDescription('Documentación de la API de autenticación y servicios')
     .setVersion('1.0')
-    // .addBearerAuth()  // si luego quieres JWT
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
