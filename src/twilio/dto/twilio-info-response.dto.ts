@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { InboundMinutesDto } from './inbound-minutes.dto';
 
 export class TwilioInfoResponseDto {
   @ApiProperty({
@@ -42,4 +43,10 @@ export class TwilioInfoResponseDto {
     description: 'Instrucciones para el agente',
   })
   agentInstruction?: string;
+
+  @ApiProperty({
+    type: InboundMinutesDto,
+    description: 'Información de consumo de minutos de llamadas entrantes',
+  })
+  inboundMinutes?: InboundMinutesDto;
 }

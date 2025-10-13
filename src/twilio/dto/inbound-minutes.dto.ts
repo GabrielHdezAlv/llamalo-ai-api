@@ -1,9 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-export class InboundMinutesResponseDto {
+export class InboundMinutesDto {
   @ApiProperty({
     example: '150',
-    description: 'Número de minutos consumidos',
+    description: 'Minutos consumidos de llamadas entrantes',
   })
   minutes: string;
 
@@ -16,7 +16,6 @@ export class InboundMinutesResponseDto {
   @ApiProperty({
     example: 'No hay consumo de llamadas entrantes registrado.',
     description: 'Mensaje informativo',
-    required: false,
   })
   message?: string;
 }

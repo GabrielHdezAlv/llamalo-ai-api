@@ -105,41 +105,8 @@ export class TwilioService {
     }
   }
 
-  // ✅ Obtener configuración de Twilio
+  // ✅ Obtener configuración de Twilio con minutos consumidos
   async getTwilioInfo(userId: string) {
-    try {
-      const userDocRef = this.firestore.collection('users').doc(userId);
-      const userSnapshot = await userDocRef.get();
-
-      if (!userSnapshot.exists) {
-        throw new NotFoundException('Usuario no encontrado.');
-      }
-
-      const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioConfig = userData?.twilio;
-
-      if (!twilioConfig) {
-        throw new NotFoundException(
-          'Configuración de Twilio no encontrada para el usuario.',
-        );
-      }
-
-      return twilioConfig;
-    } catch (error) {
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
-        throw error;
-      }
-      throw new BadRequestException(
-        `Error al obtener la configuración de Twilio: ${(error as Error).message}`,
-      );
-    }
-  }
-
-  // ✅ Obtener minutos de llamadas entrantes
-  async getInboundMinutes(userId: string) {
     try {
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
@@ -152,45 +119,62 @@ export class TwilioService {
       const twilioConfig = userData?.twilio as Record<string, unknown>;
 
       if (!twilioConfig) {
-        throw new NotFoundException('Configuración de Twilio no encontrada.');
-      }
-
-      const sid = twilioConfig.twilioSid as string;
-      const token = twilioConfig.twilioToken as string;
-
-      if (!sid || !token) {
-        throw new BadRequestException(
-          'Credenciales de Twilio no configuradas correctamente.',
+        throw new NotFoundException(
+          'Configuración de Twilio no encontrada para el usuario.',
         );
       }
 
-      // Autenticación básica
-      const auth = Buffer.from(`${sid}:${token}`).toString('base64');
+      // Obtener minutos consumidos
+      let inboundMinutes = {};
+      try {
+        const sid = twilioConfig.twilioSid as string;
+        const token = twilioConfig.twilioToken as string;
 
-      const response = await axios.get(
-        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Usage/Records/ThisMonth.json`,
-        {
-          headers: {
-            Authorization: `Basic ${auth}`,
-          },
-        },
-      );
+        if (sid && token) {
+          const auth = Buffer.from(`${sid}:${token}`).toString('base64');
+          const response = await axios.get<{
+            usage_records: Array<{
+              category: string;
+              usage: string;
+              usage_unit: string;
+            }>;
+          }>(
+            `https://api.twilio.com/2010-04-01/Accounts/${sid}/Usage/Records/ThisMonth.json`,
+            {
+              headers: {
+                Authorization: `Basic ${auth}`,
+              },
+            },
+          );
 
-      const usageRecords = response.data.usage_records;
-      const inbound = usageRecords.find(
-        (record: { category: string }) => record.category === 'calls-inbound',
-      );
+          const usageRecords = response.data.usage_records;
+          const inbound = usageRecords.find(
+            (record) => record.category === 'calls-inbound',
+          );
 
-      if (!inbound) {
-        return {
+          if (inbound) {
+            inboundMinutes = {
+              minutes: inbound.usage,
+              unit: inbound.usage_unit,
+            };
+          } else {
+            inboundMinutes = {
+              minutes: '0',
+              message: 'No hay consumo de llamadas entrantes registrado.',
+            };
+          }
+        }
+      } catch {
+        // Si falla la obtención de minutos, continuar sin ellos
+        inboundMinutes = {
           minutes: '0',
-          message: 'No hay consumo de llamadas entrantes registrado.',
+          message: 'No se pudieron obtener los minutos consumidos.',
         };
       }
 
       return {
-        minutes: inbound.usage,
-        unit: inbound.usage_unit,
+        ...twilioConfig,
+        inboundMinutes,
       };
     } catch (error) {
       if (
@@ -199,13 +183,8 @@ export class TwilioService {
       ) {
         throw error;
       }
-      if (axios.isAxiosError(error)) {
-        throw new BadRequestException(
-          'No se pudo obtener el consumo de minutos inbound desde Twilio.',
-        );
-      }
       throw new BadRequestException(
-        `Error al obtener minutos de Twilio: ${(error as Error).message}`,
+        `Error al obtener la configuración de Twilio: ${(error as Error).message}`,
       );
     }
   }
@@ -227,9 +206,8 @@ export class TwilioService {
       );
 
       return response.status === 200;
-    } catch (error) {
+    } catch {
       return false;
     }
   }
 }
-
