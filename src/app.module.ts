@@ -7,6 +7,8 @@ import { FishAudioModule } from './fish-audio/fish-audio.module';
 import { AgentsModule } from './agents/agents.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { HealthModule } from './health/health.module';
+import { CallsModule } from './calls/calls.module';
+import { LlmModule } from './llm/llm.module';
 
 @Module({
   imports: [
@@ -14,6 +16,8 @@ import { HealthModule } from './health/health.module';
       envFilePath: `.env.${process.env.NODE_ENV || 'development'}`,
       isGlobal: true,
     }),
+    CallsModule,
+    LlmModule,
     AuthModule,
     UsersModule,
     LanguagesModule,
