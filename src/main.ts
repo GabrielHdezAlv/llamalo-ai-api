@@ -21,15 +21,17 @@ async function bootstrap() {
   */
 
   // Swagger setup
-  const config = new DocumentBuilder()
-    .setTitle('LlamaloAI API')
-    .setDescription('Documentación de la API de autenticación y servicios')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('LlamaloAI API')
+      .setDescription('Documentación de la API de autenticación y servicios')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document); // Accedes con /api
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, document); // Accedes con /api
+  }
 
   const port = process.env.APP_PORT || 3000;
   await app.listen(port);
