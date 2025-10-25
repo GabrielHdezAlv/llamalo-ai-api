@@ -28,10 +28,13 @@ export class CallsController {
     try {
       // 🔹 Twilio envía números con prefijo internacional (ej: +34822272090)
       // eliminamos el prefijo +34 y lo convertimos a número para compararlo con phoneNumber
-      const rawPhone = body.From?.replace('+34', '').replace(/\D/g, '');
+      const rawPhone = body.To?.replace('+34', '').replace(/\D/g, '');
       const phoneNumber = parseInt(rawPhone || '0', 10);
 
-      console.log('🔍 Buscando usuario con phoneNumber:', phoneNumber);
+      console.log(
+        '🔍 Buscando usuario registrado con phoneNumber:',
+        phoneNumber,
+      );
 
       const userSnapshot = await firestore
         .collection('users')
@@ -41,27 +44,37 @@ export class CallsController {
 
       if (!userSnapshot.empty) {
         const user = userSnapshot.docs[0].data();
+        const twilioConfig = (user?.twilio as Record<string, unknown>) || {};
 
-        if (user.firstInteractionUrl) {
+        if (twilioConfig.firstInteractionUrl) {
           console.log(
-            '🔊 Reproduciendo audio personalizado:',
-            user.firstInteractionUrl,
+            '🔊 Reproduciendo audio personalizado del usuario registrado:',
+            twilioConfig.firstInteractionUrl,
           );
-          r.play(String(user.firstInteractionUrl || ''));
-        } else if (user.firstInteraction) {
-          console.log('🗣️ Usuario sin URL pero con texto de bienvenida.');
-          // 🔸 Si en el futuro generas audio dinámico con Fish Audio:
-          // const url = await this.fishAudioService.generateFirstInteraction(user.firstInteraction);
-          // r.play(url);
-          r.say(String(user.firstInteraction || ''));
+          r.play(
+            typeof twilioConfig.firstInteractionUrl === 'string'
+              ? twilioConfig.firstInteractionUrl
+              : '',
+          );
+        } else if (twilioConfig.firstInteraction) {
+          console.log(
+            '🗣️ Usuario registrado sin URL pero con texto de bienvenida.',
+          );
+          r.say(
+            typeof twilioConfig.firstInteraction === 'string'
+              ? twilioConfig.firstInteraction
+              : '',
+          );
         } else {
-          console.log('⚠️ Usuario sin audio ni texto, usando por defecto.');
+          console.log(
+            '⚠️ Usuario registrado sin audio ni texto, usando por defecto.',
+          );
           r.play(
             'https://storage.googleapis.com/llamaloio.firebasestorage.app/audios/default.mp3',
           );
         }
       } else {
-        console.log('⚠️ No se encontró usuario con ese número.');
+        console.log('⚠️ No se encontró usuario registrado con ese número.');
         r.play(
           'https://storage.googleapis.com/llamaloio.firebasestorage.app/audios/default.mp3',
         );
