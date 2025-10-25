@@ -12,60 +12,81 @@ import * as admin from 'firebase-admin';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-// ✅ Inicializa Firebase Admin (de forma segura para local y producción)
-if (!admin.apps.length) {
-  const serviceAccountPath =
-    process.env.FIREBASE_SERVICE_ACCOUNT ||
-    join(
-      __dirname,
-      '../config/llamaloio-firebase-adminsdk-fbsvc-2884e73711.json',
-    );
+// ⚡ Lazy initialization para Firebase Admin
+let firebaseApp: admin.app.App | null = null;
 
-  const serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
+function getFirebaseApp(): admin.app.App {
+  if (!firebaseApp) {
+    try {
+      const serviceAccountPath =
+        process.env.FIREBASE_SERVICE_ACCOUNT ||
+        join(
+          __dirname,
+          '../config/llamaloio-firebase-adminsdk-fbsvc-2884e73711.json',
+        );
 
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  });
+      let serviceAccount: admin.ServiceAccount;
+
+      // En Render o producción se puede usar la variable en texto plano
+      if (serviceAccountPath.endsWith('.json')) {
+        const raw = readFileSync(serviceAccountPath, 'utf8');
+        serviceAccount = JSON.parse(raw);
+      } else {
+        // Si la variable contiene el JSON directamente
+        serviceAccount = JSON.parse(serviceAccountPath);
+      }
+
+      firebaseApp = admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+      });
+
+      console.log('✅ Firebase Admin inicializado');
+    } catch (error) {
+      console.error('❌ Error al inicializar Firebase Admin:', error);
+      throw new Error('Error al inicializar Firebase Admin');
+    }
+  }
+  return firebaseApp;
 }
-
-const firestore = admin.firestore();
 
 @Injectable()
 export class AuthService {
   private firebaseApiKey = process.env.FIREBASE_API_KEY;
 
+  private getFirestore() {
+    return getFirebaseApp().firestore();
+  }
+
   // ✅ Registro de usuario
   async registerUser(createUserDto: CreateUserDto) {
     const { name, lastname, email, password } = createUserDto;
 
-    if (!email || !password) {
+    if (!email || !password)
       throw new BadRequestException(
         'El email y la contraseña son obligatorios.',
       );
-    }
 
-    // 1️⃣ Crear usuario en Firebase Auth (REST API)
+    // 1️⃣ Crear usuario en Firebase Auth
     let firebaseResponse: { idToken: string; localId: string };
     try {
-      const response = await axios.post(
+      const { data } = await axios.post(
         `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${this.firebaseApiKey}`,
         { email, password, returnSecureToken: true },
       );
-      firebaseResponse = response.data as { idToken: string; localId: string };
+      firebaseResponse = data;
     } catch (error: any) {
       const message = axios.isAxiosError(error)
         ? error.message || 'Error desconocido'
         : error.message;
-      throw new BadRequestException(
-        `No se pudo registrar en Firebase: ${message}`,
-      );
+      throw new BadRequestException(`No se pudo registrar: ${message}`);
     }
 
-    // 2️⃣ Hash de contraseña
+    // 2️⃣ Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // 3️⃣ Guardar usuario en Firestore
+    const firestore = this.getFirestore();
     const userRef = firestore.collection('users').doc(firebaseResponse.localId);
     await userRef.set({
       name,
@@ -86,13 +107,12 @@ export class AuthService {
     };
   }
 
-  // ✅ Login
+  // ✅ Login de usuario
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    if (!email || !password) {
+    if (!email || !password)
       throw new BadRequestException('Email y contraseña son obligatorios.');
-    }
 
     try {
       const { data } = await axios.post(
