@@ -1,18 +1,13 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Importamos inicializador global
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
+  getFirebaseApp();
 
-  // ✅ Twilio envía datos en formato x-www-form-urlencoded (Nest lo maneja automáticamente desde v9)
-  // Si tu endpoint Twilio funciona correctamente sin body-parser, no necesitas esto.
-  // Si Twilio da error 400, puedes descomentar estas líneas:
-  /*
-  import * as bodyParser from 'body-parser';
-  app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
-  app.use(bodyParser.json({ limit: '2mb' }));
-  */
+  const app = await NestFactory.create(AppModule);
 
   // ✅ CORS — permite peticiones desde tu frontend
   app.enableCors({

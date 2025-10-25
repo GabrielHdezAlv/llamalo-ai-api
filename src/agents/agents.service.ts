@@ -3,12 +3,12 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import * as admin from 'firebase-admin';
 import { SetAgentConfigDto } from './dto/set-agent-config.dto';
+import { getFirestore } from '../firebase/firebase.config';
 
 @Injectable()
 export class AgentsService {
-  private firestore = admin.firestore();
+  private firestore = getFirestore();
 
   // ✅ Obtener todos los agentes
   async getAllAgents() {

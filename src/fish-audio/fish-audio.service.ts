@@ -5,10 +5,11 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import axios from 'axios';
+import { getFirestore } from '../firebase/firebase.config';
 
 @Injectable()
 export class FishAudioService {
-  private firestore = admin.firestore();
+  private firestore = getFirestore();
   private storage = admin.storage();
   private fishApiKey = process.env.FISH_API_KEY;
 

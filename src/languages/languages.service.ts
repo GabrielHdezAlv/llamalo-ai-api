@@ -3,11 +3,10 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import * as admin from 'firebase-admin';
-
+import { getFirestore } from '../firebase/firebase.config';
 @Injectable()
 export class LanguagesService {
-  private firestore = admin.firestore();
+  private firestore = getFirestore();
 
   // ✅ Obtener todos los idiomas
   async getAllLanguages() {

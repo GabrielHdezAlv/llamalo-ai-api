@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { getFirestore } from '../firebase/firebase.config';
 
 interface UserData {
   name?: string;
@@ -27,7 +28,7 @@ export interface UploadFile {
 
 @Injectable()
 export class UsersService {
-  private firestore = admin.firestore();
+  private firestore = getFirestore();
   private storage = admin.storage();
 
   // ✅ Obtener perfil del usuario

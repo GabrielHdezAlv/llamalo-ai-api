@@ -3,13 +3,13 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import * as admin from 'firebase-admin';
 import axios from 'axios';
 import { TwilioConfigDto } from './dto/twilio-config.dto';
+import { getFirestore } from '../firebase/firebase.config';
 
 @Injectable()
 export class TwilioService {
-  private firestore = admin.firestore();
+  private firestore = getFirestore();
 
   // ✅ Configurar Twilio
   async setTwilioConfig(userId: string, config: TwilioConfigDto) {
