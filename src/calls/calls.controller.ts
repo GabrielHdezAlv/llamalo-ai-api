@@ -13,91 +13,112 @@ class IncomingDto {
 export class CallsController {
   constructor(private readonly twilio: TwilioService) {}
 
-  /**
-   * Endpoint que Twilio llama al recibir una llamada entrante.
-   * Devuelve TwiML (XML) para reproducir el audio de firstInteraction y abrir el stream.
-   */
   @Post('incoming')
   async incoming(@Body() body: IncomingDto, @Res() res: Response) {
     const r = this.twilio.newVoiceResponse();
-
-    console.log('📞 Llamada entrante desde:', body.From);
-
     const firestore = admin.firestore();
 
+    console.log('📞 Llamada entrante detectada');
+    console.log('➡️ Número marcado (To):', body.To);
+    console.log('➡️ Número del cliente (From):', body.From);
+
     try {
-      // 🔹 Twilio envía números con prefijo internacional (ej: +34822272090)
-      // eliminamos el prefijo +34 y lo convertimos a número para compararlo con phoneNumber
-      const rawPhone = body.To?.replace('+34', '').replace(/\D/g, '');
-      const phoneNumber = parseInt(rawPhone || '0', 10);
+      // 🔹 Buscar agente por su número Twilio (body.To)
+      const rawNumber = body.To?.replace('+34', '').replace(/\D/g, '');
+      const agentNumber = parseInt(rawNumber || '0', 10);
 
-      console.log(
-        '🔍 Buscando usuario registrado con phoneNumber:',
-        phoneNumber,
-      );
+      console.log('🔍 Buscando agente con twilio.phoneNumber:', agentNumber);
 
-      const userSnapshot = await firestore
+      const agentSnapshot = await firestore
         .collection('users')
-        .where('phoneNumber', '==', phoneNumber)
+        .where('twilio.phoneNumber', '==', agentNumber)
         .limit(1)
         .get();
 
-      if (!userSnapshot.empty) {
-        const user = userSnapshot.docs[0].data();
-        const twilioConfig = (user?.twilio as Record<string, unknown>) || {};
+      if (agentSnapshot.empty) {
+        console.log('⚠️ No se encontró ningún agente con ese número.');
+        (r.say as any)(
+          'El número de agente no está configurado. Inténtelo más tarde.',
+          {
+            voice: 'alice',
+            language: 'es-ES',
+          },
+        );
+        return res.type('text/xml').send(r.toString());
+      }
 
-        if (twilioConfig.firstInteractionUrl) {
+      const agent = agentSnapshot.docs[0].data();
+      const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
+
+      // 🔹 Verificar antigüedad de la cuenta
+      if (agent.createdAt) {
+        const createdAt = (
+          agent.createdAt as admin.firestore.Timestamp
+        ).toDate();
+        const diffDays =
+          (Date.now() - createdAt.getTime()) / (1000 * 3600 * 24);
+
+        if (diffDays >= 7) {
           console.log(
-            '🔊 Reproduciendo audio personalizado del usuario registrado:',
-            twilioConfig.firstInteractionUrl,
+            `❌ Cuenta con ${diffDays.toFixed(0)} días — llamada no permitida.`,
           );
-          r.play(
-            typeof twilioConfig.firstInteractionUrl === 'string'
-              ? twilioConfig.firstInteractionUrl
-              : '',
+          (r.say as any)(
+            'Su cuenta tiene más de 7 días de antigüedad. No puede realizar esta llamada.',
+            { voice: 'alice', language: 'es-ES' },
           );
-        } else if (twilioConfig.firstInteraction) {
-          console.log(
-            '🗣️ Usuario registrado sin URL pero con texto de bienvenida.',
-          );
-          r.say(
-            typeof twilioConfig.firstInteraction === 'string'
-              ? twilioConfig.firstInteraction
-              : '',
-          );
-        } else {
-          console.log(
-            '⚠️ Usuario registrado sin audio ni texto, usando por defecto.',
-          );
-          r.play(
-            'https://storage.googleapis.com/llamaloio.firebasestorage.app/audios/default.mp3',
-          );
+          return res.type('text/xml').send(r.toString());
         }
+      }
+
+      // 🔹 Reproducir audio o texto de bienvenida del agente
+      if (twilioConfig.firstInteractionUrl) {
+        console.log(
+          '🔊 Reproduciendo audio personalizado:',
+          twilioConfig.firstInteractionUrl,
+        );
+        r.play(
+          typeof twilioConfig.firstInteractionUrl === 'string'
+            ? twilioConfig.firstInteractionUrl
+            : '',
+        );
+      } else if (twilioConfig.firstInteraction) {
+        console.log('🗣️ Reproduciendo texto de bienvenida');
+        (r.say as any)(
+          typeof twilioConfig.firstInteraction === 'string'
+            ? twilioConfig.firstInteraction
+            : 'Bienvenido a LlamaloAI.',
+          { voice: 'alice', language: 'es-ES' },
+        );
       } else {
-        console.log('⚠️ No se encontró usuario registrado con ese número.');
+        console.log('⚠️ Sin configuración, usando audio por defecto');
         r.play(
           'https://storage.googleapis.com/llamaloio.firebasestorage.app/audios/default.mp3',
         );
       }
+
+      // 🔹 Iniciar streaming de audio hacia tu WS backend
+      const start = r.start();
+      const wsUrl =
+        process.env.NODE_ENV === 'production'
+          ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
+          : 'ws://localhost:3000/voice/stream';
+      start.stream({ url: wsUrl });
+
+      // 🔹 Mantener llamada viva (10 minutos)
+      r.pause({ length: 600 });
+
+      console.log('✅ TwiML generado correctamente.');
+      res.type('text/xml').send(r.toString());
     } catch (error) {
-      console.error('❌ Error al buscar usuario o reproducir audio:', error);
-      r.play(
-        'https://storage.googleapis.com/llamaloio.firebasestorage.app/audios/default.mp3',
+      console.error('❌ Error al procesar la llamada entrante:', error);
+      (r.say as any)(
+        'Ha ocurrido un error interno. Por favor, inténtelo más tarde.',
+        {
+          voice: 'alice',
+          language: 'es-ES',
+        },
       );
+      res.type('text/xml').send(r.toString());
     }
-
-    // 🚀 Iniciar el streaming de audio hacia tu backend (Fish Audio / WS)
-    const start = r.start();
-    const wsUrl =
-      process.env.NODE_ENV === 'production'
-        ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
-        : 'ws://localhost:3000/voice/stream';
-
-    start.stream({ url: wsUrl });
-
-    // 🕓 Mantener la llamada activa (10 min)
-    r.pause({ length: 600 });
-
-    res.type('text/xml').send(r.toString());
   }
 }
