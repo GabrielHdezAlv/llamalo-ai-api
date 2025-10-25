@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import WebSocket from 'ws';
 import { FishTtsInit, FishTtsText, FishTtsAudio } from './types';
+import axios from 'axios';
 
 @Injectable()
 export class FishTtsService implements OnModuleDestroy {
@@ -82,6 +83,38 @@ export class FishTtsService implements OnModuleDestroy {
       } catch (error) {
         console.error('Error closing WebSocket:', error);
       }
+    }
+  }
+  async generateAudioBuffer(
+    text: string,
+    voiceId?: string,
+    language?: string,
+  ): Promise<Buffer> {
+    try {
+      const response = await axios.post(
+        'https://api.fish.audio/v1/tts',
+        {
+          text,
+          format: 'mp3',
+          voice_id: voiceId || process.env.FISH_TTS_VOICE_ID!,
+          language: language || process.env.FISH_LANG || 'es-ES',
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.FISH_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          responseType: 'arraybuffer',
+        },
+      );
+
+      return Buffer.from(response.data as ArrayBuffer);
+    } catch (error: any) {
+      console.error(
+        '❌ Error generando audio TTS:',
+        error?.response?.data || error,
+      );
+      throw new Error('Error al generar audio con Fish.audio');
     }
   }
 }
