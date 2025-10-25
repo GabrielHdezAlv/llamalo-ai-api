@@ -1,13 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Importamos inicializador global
+import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializador global de Firebase
+import * as bodyParser from 'body-parser';
 
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
   getFirebaseApp();
 
   const app = await NestFactory.create(AppModule);
+
+  // 🧠 Body parser (Twilio usa x-www-form-urlencoded)
+  app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
+  app.use(bodyParser.json({ limit: '2mb' }));
 
   // ✅ CORS — permite peticiones desde tu frontend
   app.enableCors({
@@ -17,8 +22,9 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
-  // ✅ Swagger solo en desarrollo o preproducción
-  if (process.env.NODE_ENV !== 'production') {
+  // ✅ Swagger habilitable también en Render
+  // Usa DISABLE_SWAGGER=true si quieres ocultarlo
+  if (process.env.DISABLE_SWAGGER !== 'true') {
     const config = new DocumentBuilder()
       .setTitle('LlamaloAI API')
       .setDescription('Documentación de la API de autenticación y servicios')
@@ -30,7 +36,7 @@ async function bootstrap() {
     SwaggerModule.setup('api', app, document);
     console.log('📘 Swagger habilitado en /api');
   } else {
-    console.log('🚀 Swagger desactivado en producción');
+    console.log('🚀 Swagger desactivado por configuración');
   }
 
   // ✅ Render asigna dinámicamente el puerto (usa PORT si existe)
