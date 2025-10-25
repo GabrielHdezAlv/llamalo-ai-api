@@ -9,15 +9,17 @@ export function getFirebaseApp(): admin.app.App {
     try {
       let serviceAccount: admin.ServiceAccount;
 
+      // 🔹 1. Render: secret file
       const renderSecretPath = '/etc/secrets/firebase_service_account.json';
-
       if (existsSync(renderSecretPath)) {
         console.log('📦 Usando credenciales Firebase desde Render secret file');
         serviceAccount = JSON.parse(readFileSync(renderSecretPath, 'utf8'));
-      } else {
+      }
+      // 🔹 2. Local: cuando desarrollas en tu equipo
+      else {
         const localPath = join(
-          __dirname,
-          '../config/llamaloio-firebase-adminsdk-fbsvc-2884e73711.json',
+          process.cwd(),
+          'src/config/llamaloio-firebase-adminsdk-fbsvc-2884e73711.json',
         );
         console.log('💻 Usando credenciales Firebase locales');
         serviceAccount = JSON.parse(readFileSync(localPath, 'utf8'));
