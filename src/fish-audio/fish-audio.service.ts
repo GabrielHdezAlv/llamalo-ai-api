@@ -34,8 +34,21 @@ export class FishAudioService {
         };
       }
 
+      // Obtener configuración del agente del usuario
+      const agentConfig = (userData?.agent as Record<string, unknown>) || {};
+      const voiceId =
+        typeof agentConfig.voiceId === 'string' ? agentConfig.voiceId : 's1';
+      const language =
+        typeof agentConfig.language === 'string'
+          ? agentConfig.language
+          : 'es-ES';
+
       // Generar audio con Fish.audio API
-      const audioBuffer = await this.generateAudioWithFish(firstInteraction);
+      const audioBuffer = await this.generateAudioWithFish(
+        firstInteraction,
+        voiceId,
+        language,
+      );
 
       // Subir el audio a Firebase Storage
       const audioUrl = await this.uploadAudioToStorage(userId, audioBuffer);
@@ -63,19 +76,24 @@ export class FishAudioService {
     }
   }
 
-  private async generateAudioWithFish(text: string): Promise<Buffer> {
+  private async generateAudioWithFish(
+    text: string,
+    voiceId: string,
+    language: string,
+  ): Promise<Buffer> {
     try {
       const response = await axios.post(
         'https://api.fish.audio/v1/tts',
         {
           text,
           format: 'mp3',
+          voice_id: voiceId,
+          language: language,
         },
         {
           headers: {
             Authorization: `Bearer ${this.fishApiKey}`,
             'Content-Type': 'application/json',
-            model: 's1',
           },
           responseType: 'arraybuffer',
         },
