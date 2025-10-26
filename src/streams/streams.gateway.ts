@@ -16,6 +16,39 @@ interface WebSocketClient {
   close: () => void;
 }
 
+// 🧠 Métricas acumuladas globales
+const metrics = {
+  asr: [] as number[],
+  gpt: [] as number[],
+  tts: [] as number[],
+};
+
+function recordMetric(type: keyof typeof metrics, ms: number) {
+  metrics[type].push(ms);
+  if (metrics[type].length > 2000) metrics[type].shift(); // mantiene ventana corta
+}
+
+function percentile95(arr: number[]): number {
+  if (!arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.floor(0.95 * sorted.length);
+  return sorted[idx];
+}
+
+setInterval(() => {
+  const logSummary = (type: keyof typeof metrics) => {
+    const arr = metrics[type];
+    if (!arr.length) return `0ms`;
+    const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+    const p95 = percentile95(arr);
+    return `${avg.toFixed(0)}ms (p95 ${p95.toFixed(0)}ms)`;
+  };
+
+  console.log(
+    `📊 Métricas — ASR ${logSummary('asr')} | GPT ${logSummary('gpt')} | TTS ${logSummary('tts')}`,
+  );
+}, 30_000);
+
 @WebSocketGateway({ path: '/voice/stream' })
 export class StreamsGateway implements OnGatewayInit {
   private speaking = false;
@@ -29,46 +62,52 @@ export class StreamsGateway implements OnGatewayInit {
   afterInit(server: Server) {
     server.on('connection', async (client: WebSocketClient) => {
       console.log('🛰️ Twilio WS conectado');
+      const startTime = Date.now();
 
-      // 1️⃣ Conectar ASR y TTS
       await Promise.all([this.asr.connect(), this.tts.connect()]);
+      console.log(`✅ ASR + TTS conectados en ${Date.now() - startTime}ms`);
 
       let callSid = '';
+      let lastAsrTime = 0;
 
-      // 2️⃣ Audio del TTS → se reenvía a Twilio
       this.tts.onAudio((pcm: Int16Array) => {
         if (!this.speaking) return;
         const ulawB64 = pcm16ToUlawB64(pcm);
         client.send(
           JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
         );
+        recordMetric('tts', pcm.length / 8); // proxy de carga TTS
+        console.log(
+          `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)`,
+        );
       });
 
-      // 3️⃣ Procesar lo que el usuario dice
       this.asr.onTranscript((t) => {
         const text = (t.text || '').trim();
         if (!text) return;
 
-        // Si el usuario habla, interrumpe cualquier respuesta TTS activa
-        this.speaking = false;
+        const now = Date.now();
+        if (lastAsrTime) recordMetric('asr', now - lastAsrTime);
+        lastAsrTime = now;
 
-        // ✅ Inicia GPT al tener algo de texto (sin esperar a que termine)
+        console.log(
+          `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})`,
+        );
+
+        this.speaking = false;
         if (t.is_final || text.length > 15) {
-          if (!this.speaking) {
-            this.speaking = true;
-            void this.handleGptResponse(text);
-          }
+          this.speaking = true;
+          void this.handleGptResponse(text, callSid);
         }
       });
 
-      // 4️⃣ Recibir eventos de Twilio
       client.on('message', (raw: Buffer) => {
         try {
           const msg = JSON.parse(raw.toString()) as TwilioMsg;
 
           if (msg.event === 'start') {
             callSid = msg.start?.callSid || '';
-            console.log('🎯 CallSid recibido:', callSid);
+            console.log(`🎯 CallSid recibido: ${callSid}`);
           }
 
           if (msg.event === 'media') {
@@ -80,7 +119,7 @@ export class StreamsGateway implements OnGatewayInit {
           if (msg.event === 'stop') {
             this.asr.stop();
             client.close();
-            console.log('🛑 Llamada terminada.');
+            console.log(`🛑 [${callSid}] Llamada terminada.`);
           }
         } catch (err) {
           console.error('Error procesando mensaje Twilio WS:', err);
@@ -89,30 +128,46 @@ export class StreamsGateway implements OnGatewayInit {
     });
   }
 
-  /**
-   * GPT → TTS (flujo en streaming)
-   */
-  private async handleGptResponse(text: string): Promise<void> {
+  private async handleGptResponse(
+    text: string,
+    callSid: string,
+  ): Promise<void> {
     try {
+      const gptStart = Date.now();
       let buffer = '';
+      let firstToken = 0;
 
       for await (const token of this.gpt.streamReply(text)) {
         if (!this.speaking) break;
-        buffer += token;
+        if (!firstToken) {
+          firstToken = Date.now();
+          recordMetric('gpt', firstToken - gptStart);
+          console.log(
+            `⚡ [${callSid}] GPT primer token tras ${firstToken - gptStart}ms`,
+          );
+        }
 
-        // Envía frases parciales al TTS
+        buffer += token;
         if (buffer.length > 80 || /[.!?]\s$/.test(buffer)) {
-          console.log('💬 GPT parcial:', buffer);
+          console.log(`💬 [${callSid}] GPT parcial: "${buffer.trim()}"`);
+          const ttsStart = Date.now();
           this.tts.sendText(buffer.trim());
+          recordMetric('tts', Date.now() - ttsStart);
           buffer = '';
         }
       }
 
+      const total = Date.now() - gptStart;
+      recordMetric('gpt', total);
+      console.log(`✅ [${callSid}] GPT completado en ${total}ms`);
+
       if (this.speaking && buffer.trim()) {
+        const ttsStart = Date.now();
         this.tts.sendText(buffer.trim());
+        recordMetric('tts', Date.now() - ttsStart);
       }
     } catch (err) {
-      console.error('❌ Error procesando respuesta GPT:', err);
+      console.error(`❌ [${callSid}] Error procesando respuesta GPT:`, err);
     }
   }
 }
