@@ -60,6 +60,7 @@ export class StreamsGateway implements OnGatewayInit {
   ) {}
 
   afterInit(server: Server) {
+    console.log('🚀 StreamsGateway afterInit ejecutándose...');
     server.on('connection', async (client: WebSocketClient) => {
       console.log('🛰️ Twilio WS conectado');
       const startTime = Date.now();
