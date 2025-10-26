@@ -1,15 +1,12 @@
 import { WebSocketGateway, OnGatewayInit } from '@nestjs/websockets';
 import { Server } from 'ws';
-import { ulawToPcm16 } from './audio.utils';
+import { ulawToPcm16, pcm16ToUlawB64 } from './audio.utils';
 import { FishAsrService } from '../fish-audio/realtime/fish-asr.service';
 import { FishTtsService } from '../fish-audio/realtime/fish-tts.service';
 import { GptService } from '../llm/gpt.service';
-import { TwilioCallMediaService } from 'src/twilio/twilio-call-media.service';
-import * as admin from 'firebase-admin';
-import { v4 as uuidv4 } from 'uuid';
 
 type TwilioMediaIn = { event: 'media'; media: { payload: string } };
-type TwilioStart = { event: 'start'; start: unknown };
+type TwilioStart = { event: 'start'; start: { callSid?: string } };
 type TwilioStop = { event: 'stop' };
 type TwilioMsg = TwilioMediaIn | TwilioStart | TwilioStop;
 
@@ -22,45 +19,55 @@ interface WebSocketClient {
 @WebSocketGateway({ path: '/voice/stream' })
 export class StreamsGateway implements OnGatewayInit {
   private speaking = false;
+
   constructor(
     private readonly asr: FishAsrService,
     private readonly tts: FishTtsService,
     private readonly gpt: GptService,
-    private readonly twilioMedia: TwilioCallMediaService,
   ) {}
-
-  private storage = admin.storage();
 
   afterInit(server: Server) {
     server.on('connection', async (client: WebSocketClient) => {
       console.log('🛰️ Twilio WS conectado');
 
-      // 1️⃣ Conectar ASR y TTS de Fish
+      // 1️⃣ Conectar ASR y TTS
       await Promise.all([this.asr.connect(), this.tts.connect()]);
 
-      // 2️⃣ Preparar variable para guardar el callSid de Twilio
       let callSid = '';
 
-      // 3️⃣ Recibir los transcripts del ASR (voz del cliente)
+      // 2️⃣ Audio del TTS → se reenvía a Twilio
+      this.tts.onAudio((pcm: Int16Array) => {
+        if (!this.speaking) return;
+        const ulawB64 = pcm16ToUlawB64(pcm);
+        client.send(
+          JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
+        );
+      });
+
+      // 3️⃣ Procesar lo que el usuario dice
       this.asr.onTranscript((t) => {
         const text = (t.text || '').trim();
         if (!text) return;
 
-        if (t.is_final) {
-          console.log('🗣️ Usuario dijo:', text);
-          // ⬇️ Envía el texto a GPT y luego reproduce con Twilio
-          void this.handleGptResponse(text, callSid);
+        // Si el usuario habla, interrumpe cualquier respuesta TTS activa
+        this.speaking = false;
+
+        // ✅ Inicia GPT al tener algo de texto (sin esperar a que termine)
+        if (t.is_final || text.length > 15) {
+          if (!this.speaking) {
+            this.speaking = true;
+            void this.handleGptResponse(text);
+          }
         }
       });
 
-      // 4️⃣ Escuchar eventos entrantes de Twilio (audio, start, stop)
+      // 4️⃣ Recibir eventos de Twilio
       client.on('message', (raw: Buffer) => {
         try {
           const msg = JSON.parse(raw.toString()) as TwilioMsg;
 
-          // Guarda el CallSid cuando llega el evento "start"
-          if (msg.event === 'start' && (msg as any).start?.callSid) {
-            callSid = (msg as any).start.callSid;
+          if (msg.event === 'start') {
+            callSid = msg.start?.callSid || '';
             console.log('🎯 CallSid recibido:', callSid);
           }
 
@@ -73,62 +80,39 @@ export class StreamsGateway implements OnGatewayInit {
           if (msg.event === 'stop') {
             this.asr.stop();
             client.close();
+            console.log('🛑 Llamada terminada.');
           }
-        } catch (error) {
-          console.error('Error processing message:', error);
+        } catch (err) {
+          console.error('Error procesando mensaje Twilio WS:', err);
         }
       });
     });
   }
 
-  private async handleGptResponse(
-    text: string,
-    callSid: string,
-  ): Promise<void> {
+  /**
+   * GPT → TTS (flujo en streaming)
+   */
+  private async handleGptResponse(text: string): Promise<void> {
     try {
-      let pending = '';
+      let buffer = '';
 
       for await (const token of this.gpt.streamReply(text)) {
         if (!this.speaking) break;
-        pending += token;
+        buffer += token;
 
-        const flush = /[.!?]\s$/.test(pending) || pending.length > 120;
-        if (flush) {
-          console.log('💬 Respuesta parcial GPT:', pending);
-
-          // 1️⃣ Generar audio
-          const audioBuffer = await this.tts.generateAudioBuffer(pending);
-          // 2️⃣ Subir a Firebase Storage
-          const audioUrl = await this.uploadBufferToPublicUrl(audioBuffer);
-          // 3️⃣ Reproducirlo al cliente con Twilio
-          await this.twilioMedia.playUrl(callSid, audioUrl);
-
-          pending = '';
+        // Envía frases parciales al TTS
+        if (buffer.length > 80 || /[.!?]\s$/.test(buffer)) {
+          console.log('💬 GPT parcial:', buffer);
+          this.tts.sendText(buffer.trim());
+          buffer = '';
         }
       }
 
-      if (this.speaking && pending) {
-        const audioBuffer = await this.tts.generateAudioBuffer(pending);
-        const audioUrl = await this.uploadBufferToPublicUrl(audioBuffer);
-        await this.twilioMedia.playUrl(callSid, audioUrl);
+      if (this.speaking && buffer.trim()) {
+        this.tts.sendText(buffer.trim());
       }
-    } catch (error) {
-      console.error('❌ Error manejando respuesta GPT:', error);
+    } catch (err) {
+      console.error('❌ Error procesando respuesta GPT:', err);
     }
-  }
-
-  /**
-   * Guarda un buffer de audio en Firebase Storage y devuelve su URL pública
-   */
-  private async uploadBufferToPublicUrl(buffer: Buffer, userId = 'realtime') {
-    const bucket = this.storage.bucket(process.env.FIREBASE_STORAGE_BUCKET);
-    const audioId = `${Date.now()}-${uuidv4()}.mp3`;
-    const objectName = `audios/${userId}/${audioId}`;
-    const file = bucket.file(objectName);
-
-    await file.save(buffer, { metadata: { contentType: 'audio/mpeg' } });
-    await file.makePublic();
-
-    return `https://storage.googleapis.com/${process.env.FIREBASE_STORAGE_BUCKET}/${objectName}`;
   }
 }
