@@ -49,7 +49,7 @@ export class StreamsGateway implements OnGatewayInit {
         if (t.is_final) {
           console.log('🗣️ Usuario dijo:', text);
           // ⬇️ Envía el texto a GPT y luego reproduce con Twilio
-          this.handleGptResponse(text, callSid);
+          void this.handleGptResponse(text, callSid);
         }
       });
 
