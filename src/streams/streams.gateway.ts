@@ -67,8 +67,11 @@ export class StreamsGateway implements OnGatewayInit {
 
   afterInit(server: Server) {
     console.log('🚀 StreamsGateway afterInit ejecutándose...');
+    console.log('🔧 WebSocket server configurado correctamente');
+    
     server.on('connection', async (client: WebSocketClient) => {
       console.log('🛰️ Twilio WS conectado');
+      console.log('📡 Nueva conexión WebSocket establecida');
       const startTime = Date.now();
 
       await Promise.all([this.asr.connect(), this.tts.connect()]);
@@ -111,10 +114,13 @@ export class StreamsGateway implements OnGatewayInit {
       client.on('message', (raw: Buffer) => {
         try {
           const msg = JSON.parse(raw.toString()) as TwilioMsg;
+          console.log('📨 Twilio mensaje recibido:', msg.event);
+          console.log('📋 Datos del mensaje:', JSON.stringify(msg, null, 2));
 
           if (msg.event === 'start') {
             callSid = msg.start?.callSid || '';
             console.log(`🎯 CallSid recibido: ${callSid}`);
+            console.log('🎯 Start data completo:', msg.start);
           }
 
           if (msg.event === 'media') {
