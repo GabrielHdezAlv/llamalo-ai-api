@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializador global de Firebase
 import * as bodyParser from 'body-parser';
+import * as WebSocket from 'ws';
 
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
@@ -43,8 +44,51 @@ async function bootstrap() {
 
   // ✅ Render asigna dinámicamente el puerto (usa PORT si existe)
   const port = process.env.PORT || process.env.APP_PORT || 3000;
-  await app.listen(port, '0.0.0.0');
+  const server = await app.listen(port, '0.0.0.0');
   console.log(`✅ LlamaloAI backend corriendo en el puerto ${port}`);
+
+  // 🚀 Configurar WebSocket Server
+  const wss = new WebSocket.Server({
+    server,
+    path: '/voice/stream',
+  });
+
+  wss.on('connection', (ws: WebSocket, req) => {
+    console.log('🛰️ Nueva conexión WebSocket establecida');
+    console.log('📡 Cliente conectado desde:', req.socket.remoteAddress);
+    console.log('🌐 URL:', req.url);
+    console.log('📋 Headers:', req.headers);
+
+    ws.on('message', (data: WebSocket.Data) => {
+      let message: string;
+      if (data instanceof Buffer) {
+        message = data.toString('utf8');
+      } else if (typeof data === 'string') {
+        message = data;
+      } else {
+        message = JSON.stringify(data);
+      }
+      console.log('📨 Mensaje WebSocket recibido:', message);
+    });
+
+    ws.on('close', () => {
+      console.log('🔌 Conexión WebSocket cerrada');
+    });
+
+    ws.on('error', (error) => {
+      console.error('❌ Error en WebSocket:', error);
+    });
+
+    // Enviar mensaje de confirmación
+    ws.send(
+      JSON.stringify({
+        event: 'connected',
+        message: 'WebSocket connection established',
+      }),
+    );
+  });
+
+  console.log('🚀 WebSocket Server configurado en /voice/stream');
 }
 
 void bootstrap();
