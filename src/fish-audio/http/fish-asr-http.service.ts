@@ -9,15 +9,20 @@ export class FishAsrHttpService {
   async transcribeAudio(audioBuffer: Buffer): Promise<string> {
     try {
       console.log('🎙️ Transcribiendo audio ASR HTTP...');
+      console.log('📊 Tamaño del buffer:', audioBuffer.length, 'bytes');
 
       const formData = new FormData();
-      const arrayBuffer = audioBuffer.buffer.slice(0);
+
+      // Enviar como PCM raw en lugar de WAV
       formData.append(
         'audio',
-        new Blob([arrayBuffer as ArrayBuffer], { type: 'audio/wav' }),
-        'audio.wav',
+        new Blob([audioBuffer.buffer as ArrayBuffer], { type: 'audio/pcm' }),
+        'audio.pcm',
       );
       formData.append('language', this.language);
+      formData.append('sample_rate', '8000'); // 8kHz como Twilio
+
+      console.log('📤 Enviando audio a Fish Audio ASR...');
 
       const response = await axios.post(
         'https://api.fish.audio/v1/asr',
@@ -25,7 +30,7 @@ export class FishAsrHttpService {
         {
           headers: {
             Authorization: `Bearer ${this.fishApiKey}`,
-            'Content-Type': 'multipart/form-data',
+            // No especificar Content-Type, axios lo manejará automáticamente para FormData
           },
         },
       );
@@ -36,6 +41,11 @@ export class FishAsrHttpService {
       return transcript;
     } catch (error) {
       console.error('❌ Error transcribiendo audio ASR:', error);
+      if (axios.isAxiosError(error)) {
+        console.error('📋 Status:', error.response?.status);
+        console.error('📋 Data:', error.response?.data);
+        console.error('📋 Headers:', error.response?.headers);
+      }
       throw error;
     }
   }
