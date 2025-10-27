@@ -11,7 +11,7 @@ export class FishAsrHttpService {
       console.log('🎙️ Transcribiendo audio ASR HTTP...');
       
       const formData = new FormData();
-      formData.append('audio', new Blob([audioBuffer], { type: 'audio/wav' }), 'audio.wav');
+      formData.append('audio', new Blob([audioBuffer.buffer], { type: 'audio/wav' }), 'audio.wav');
       formData.append('language', this.language);
 
       const response = await axios.post(
