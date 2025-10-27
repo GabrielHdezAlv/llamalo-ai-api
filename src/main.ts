@@ -4,7 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializador global de Firebase
 import * as bodyParser from 'body-parser';
 import * as WebSocket from 'ws';
-// import { StreamsGateway } from './streams/streams.gateway';
+import { StreamsGateway } from './streams/streams.gateway';
 
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
@@ -60,21 +60,35 @@ async function bootstrap() {
     console.log('🌐 URL:', req.url);
     console.log('📋 Headers:', req.headers);
 
-    // TODO: Integrar con StreamsGateway cuando esté listo
-    // const client = { ... };
+    // Obtener instancia del StreamsGateway
+    const streamsGateway = app.get(StreamsGateway);
 
-    // Por ahora, solo manejamos la conexión básica
-    // TODO: Integrar con StreamsGateway cuando esté listo
-    ws.on('message', (data: WebSocket.Data) => {
-      let message: string;
-      if (data instanceof Buffer) {
-        message = data.toString('utf8');
-      } else if (typeof data === 'string') {
-        message = data;
-      } else {
-        message = JSON.stringify(data);
-      }
-      console.log('📨 Mensaje WebSocket recibido:', message);
+    // Crear un objeto cliente compatible con StreamsGateway
+    const client = {
+      send: (data: string) => ws.send(data),
+      on: (event: string, callback: (data: Buffer) => void) => {
+        if (event === 'message') {
+          ws.on('message', (data: WebSocket.Data) => {
+            let buffer: Buffer;
+            if (data instanceof Buffer) {
+              buffer = data;
+            } else if (typeof data === 'string') {
+              buffer = Buffer.from(data, 'utf8');
+            } else if (data instanceof ArrayBuffer) {
+              buffer = Buffer.from(data);
+            } else {
+              buffer = Buffer.from(JSON.stringify(data), 'utf8');
+            }
+            callback(buffer);
+          });
+        }
+      },
+      close: () => ws.close(),
+    };
+
+    // Delegar el manejo de la conexión al StreamsGateway
+    void streamsGateway.handleConnection(client).catch((error) => {
+      console.error('❌ Error en StreamsGateway:', error);
     });
 
     ws.on('close', () => {
@@ -84,14 +98,6 @@ async function bootstrap() {
     ws.on('error', (error) => {
       console.error('❌ Error en WebSocket:', error);
     });
-
-    // Enviar mensaje de confirmación
-    ws.send(
-      JSON.stringify({
-        event: 'connected',
-        message: 'WebSocket connection established',
-      }),
-    );
   });
 
   console.log('🚀 WebSocket Server configurado en /voice/stream');
