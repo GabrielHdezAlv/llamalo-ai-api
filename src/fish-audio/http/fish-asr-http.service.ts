@@ -9,10 +9,14 @@ export class FishAsrHttpService {
   async transcribeAudio(audioBuffer: Buffer): Promise<string> {
     try {
       console.log('🎙️ Transcribiendo audio ASR HTTP...');
-      
+
       const formData = new FormData();
       const arrayBuffer = audioBuffer.buffer.slice(0);
-      formData.append('audio', new Blob([arrayBuffer], { type: 'audio/wav' }), 'audio.wav');
+      formData.append(
+        'audio',
+        new Blob([arrayBuffer as ArrayBuffer], { type: 'audio/wav' }),
+        'audio.wav',
+      );
       formData.append('language', this.language);
 
       const response = await axios.post(
@@ -28,7 +32,7 @@ export class FishAsrHttpService {
 
       const transcript = response.data?.text || '';
       console.log('✅ Audio transcrito:', transcript);
-      
+
       return transcript;
     } catch (error) {
       console.error('❌ Error transcribiendo audio ASR:', error);

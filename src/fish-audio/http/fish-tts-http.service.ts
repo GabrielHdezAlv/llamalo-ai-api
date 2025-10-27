@@ -1,16 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
+import * as admin from 'firebase-admin';
 
 @Injectable()
 export class FishTtsHttpService {
   private fishApiKey = process.env.FISH_API_KEY;
-  private voiceId = process.env.FISH_TTS_VOICE_ID || 'bfed5c0810a347dbb62e8ccce7f59c48';
+  private voiceId =
+    process.env.FISH_TTS_VOICE_ID || 'bfed5c0810a347dbb62e8ccce7f59c48';
   private language = process.env.FISH_LANG || 'es-ES';
 
   async generateAudio(text: string): Promise<Buffer> {
     try {
-      console.log('🎤 Generando audio TTS HTTP:', text.substring(0, 50) + '...');
-      
+      console.log(
+        '🎤 Generando audio TTS HTTP:',
+        text.substring(0, 50) + '...',
+      );
+
       const response = await axios.post(
         'https://api.fish.audio/v1/tts',
         {
@@ -39,10 +44,10 @@ export class FishTtsHttpService {
   async generateAudioAndUpload(text: string, userId: string): Promise<string> {
     try {
       const audioBuffer = await this.generateAudio(text);
-      
+
       // Subir a Firebase Storage
       const audioUrl = await this.uploadToStorage(audioBuffer, userId);
-      
+
       return audioUrl;
     } catch (error) {
       console.error('❌ Error generando y subiendo audio:', error);
@@ -50,11 +55,15 @@ export class FishTtsHttpService {
     }
   }
 
-  private async uploadToStorage(audioBuffer: Buffer, userId: string): Promise<string> {
+  private async uploadToStorage(
+    audioBuffer: Buffer,
+    userId: string,
+  ): Promise<string> {
     try {
-      const admin = require('firebase-admin');
-      const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET);
-      
+      const bucket = admin
+        .storage()
+        .bucket(process.env.FIREBASE_STORAGE_BUCKET);
+
       const audioId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const objectName = `audios/${userId}/${audioId}.mp3`;
       const fileRef = bucket.file(objectName);
@@ -70,7 +79,7 @@ export class FishTtsHttpService {
 
       const publicUrl = `https://storage.googleapis.com/${process.env.FIREBASE_STORAGE_BUCKET}/${objectName}`;
       console.log('✅ Audio subido a Storage:', publicUrl);
-      
+
       return publicUrl;
     } catch (error) {
       console.error('❌ Error subiendo audio a Storage:', error);
