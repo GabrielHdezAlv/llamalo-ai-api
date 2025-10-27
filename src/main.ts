@@ -8,6 +8,8 @@ async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
   getFirebaseApp();
 
+  console.log('🌐 Servidor HTTP y WS escuchando en /voice/stream');
+
   const app = await NestFactory.create(AppModule);
 
   // 🧠 Body parser (Twilio usa x-www-form-urlencoded)

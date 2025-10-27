@@ -49,7 +49,13 @@ setInterval(() => {
   );
 }, 30_000);
 
-@WebSocketGateway({ path: '/voice/stream' })
+@WebSocketGateway({
+  path: '/voice/stream',
+  cors: {
+    origin: '*',
+    credentials: true,
+  },
+})
 export class StreamsGateway implements OnGatewayInit {
   private speaking = false;
 

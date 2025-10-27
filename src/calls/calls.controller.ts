@@ -101,11 +101,10 @@ export class CallsController {
       const wsUrl =
         process.env.NODE_ENV === 'production'
           ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
-          : 'ws://localhost:3000/voice/stream';
-
-      console.log('🔗 WebSocket URL:', wsUrl); // ← Agregar este log
+          : 'wss://syntactically-subcontiguous-venus.ngrok-free.dev/voice/stream';
 
       start.stream({ url: wsUrl });
+      console.log('🔗 WebSocket URL:', wsUrl);
 
       // 🔹 Mantener llamada viva (10 minutos)
       r.pause({ length: 600 });
