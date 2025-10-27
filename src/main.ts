@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializador global de Firebase
 import * as bodyParser from 'body-parser';
 import * as WebSocket from 'ws';
+import { StreamsGateway } from './streams/streams.gateway';
 
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
@@ -59,6 +60,22 @@ async function bootstrap() {
     console.log('🌐 URL:', req.url);
     console.log('📋 Headers:', req.headers);
 
+    // Crear un objeto cliente compatible con StreamsGateway
+    const client = {
+      send: (data: string) => ws.send(data),
+      on: (event: string, callback: (data: Buffer) => void) => {
+        if (event === 'message') {
+          ws.on('message', (data: WebSocket.Data) => {
+            const buffer = data instanceof Buffer ? data : Buffer.from(data);
+            callback(buffer);
+          });
+        }
+      },
+      close: () => ws.close(),
+    };
+
+    // Por ahora, solo manejamos la conexión básica
+    // TODO: Integrar con StreamsGateway cuando esté listo
     ws.on('message', (data: WebSocket.Data) => {
       let message: string;
       if (data instanceof Buffer) {
