@@ -68,10 +68,21 @@ export class StreamsGateway implements OnGatewayInit {
   async handleConnection(client: WebSocketClient) {
     console.log('🛰️ Twilio WS conectado');
     console.log('📡 Nueva conexión WebSocket establecida');
+    
+    // Verificar variables de entorno
+    console.log('🔑 FISH_API_KEY:', process.env.FISH_API_KEY ? '✅ Configurado' : '❌ No configurado');
+    console.log('🎤 FISH_TTS_VOICE_ID:', process.env.FISH_TTS_VOICE_ID || '❌ No configurado');
+    console.log('🌍 FISH_LANG:', process.env.FISH_LANG || '❌ No configurado');
+    
     const startTime = Date.now();
 
-    await Promise.all([this.asr.connect(), this.tts.connect()]);
-    console.log(`✅ ASR + TTS conectados en ${Date.now() - startTime}ms`);
+    try {
+      await Promise.all([this.asr.connect(), this.tts.connect()]);
+      console.log(`✅ ASR + TTS conectados en ${Date.now() - startTime}ms`);
+    } catch (error) {
+      console.error('❌ Error conectando ASR/TTS:', error);
+      throw error;
+    }
 
     let callSid = '';
     let lastAsrTime = 0;
