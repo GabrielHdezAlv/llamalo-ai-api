@@ -6,9 +6,10 @@ import { FishTtsService } from '../fish-audio/realtime/fish-tts.service';
 import { FishAsrService } from '../fish-audio/realtime/fish-asr.service';
 import { LlmModule } from '../llm/llm.module';
 import { TwilioCallMediaService } from 'src/twilio/twilio-call-media.service';
+import { FishAudioModule } from 'src/fish-audio/fish-audio.module';
 
 @Module({
-  imports: [LlmModule],
+  imports: [LlmModule, FishAudioModule],
   controllers: [CallsController],
   providers: [
     TwilioService,
@@ -17,5 +18,6 @@ import { TwilioCallMediaService } from 'src/twilio/twilio-call-media.service';
     FishAsrService,
     TwilioCallMediaService,
   ],
+  exports: [StreamsGateway],
 })
 export class CallsModule {}

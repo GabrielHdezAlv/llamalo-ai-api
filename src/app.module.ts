@@ -9,7 +9,6 @@ import { TwilioModule } from './twilio/twilio.module';
 import { HealthModule } from './health/health.module';
 import { CallsModule } from './calls/calls.module';
 import { LlmModule } from './llm/llm.module';
-import { StreamsGateway } from './streams/streams.gateway';
 
 @Module({
   imports: [
@@ -26,13 +25,8 @@ import { StreamsGateway } from './streams/streams.gateway';
     AgentsModule,
     TwilioModule,
     HealthModule,
-    CallsModule,
-    LlmModule,
-    LanguagesModule,
-    UsersModule,
-    FishAudioModule,
   ],
   controllers: [],
-  providers: [StreamsGateway],
+  providers: [],
 })
 export class AppModule {}

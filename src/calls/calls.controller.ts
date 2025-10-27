@@ -101,7 +101,7 @@ export class CallsController {
       const wsUrl =
         process.env.NODE_ENV === 'production'
           ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
-          : 'wss://syntactically-subcontiguous-venus.ngrok-free.dev/voice/stream';
+          : 'ws://localhost:3000/voice/stream';
 
       start.stream({ url: wsUrl });
       console.log('🔗 WebSocket URL:', wsUrl);
