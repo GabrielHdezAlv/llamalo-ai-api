@@ -68,7 +68,7 @@ export class StreamsGateway implements OnGatewayInit {
   afterInit(server: Server) {
     console.log('🚀 StreamsGateway afterInit ejecutándose...');
     console.log('🔧 WebSocket server configurado correctamente');
-    
+
     server.on('connection', async (client: WebSocketClient) => {
       console.log('🛰️ Twilio WS conectado');
       console.log('📡 Nueva conexión WebSocket establecida');
