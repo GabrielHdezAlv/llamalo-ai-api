@@ -352,18 +352,22 @@ export class StreamsGateway implements OnGatewayInit {
       try {
         // Convertir audio de Twilio a formato PCM
         pcm = ulawToPcm16(audioPayload);
+
+        // Log para debugging
+        if (!pcm || !pcm.buffer || pcm.length === 0) {
+          console.warn(
+            `⚠️ PCM inválido - buffer: ${!!pcm?.buffer}, length: ${pcm?.length || 0}, payload length: ${audioPayload.length}`,
+          );
+          return;
+        }
+
+        console.log(
+          `✅ PCM generado: ${pcm.length} samples (${(pcm.length * 2).toFixed(0)} bytes)`,
+        );
       } catch (error) {
         console.error(
           '❌ Error decodificando audio base64:',
           error instanceof Error ? error.message : String(error),
-        );
-        return;
-      }
-
-      // Validar que el PCM se haya generado correctamente
-      if (!pcm || !pcm.buffer || pcm.length === 0) {
-        console.warn(
-          '⚠️ Error generando PCM desde audio payload - resultado inválido',
         );
         return;
       }
