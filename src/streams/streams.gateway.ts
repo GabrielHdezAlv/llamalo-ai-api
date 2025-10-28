@@ -342,12 +342,29 @@ export class StreamsGateway implements OnGatewayInit {
         return;
       }
 
-      // Convertir audio de Twilio a formato PCM
-      const pcm = ulawToPcm16(audioPayload);
+      // Validar que el payload no esté vacío
+      if (audioPayload.trim().length === 0) {
+        console.warn('⚠️ Audio payload vacío');
+        return;
+      }
+
+      let pcm: Int16Array;
+      try {
+        // Convertir audio de Twilio a formato PCM
+        pcm = ulawToPcm16(audioPayload);
+      } catch (error) {
+        console.error(
+          '❌ Error decodificando audio base64:',
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
 
       // Validar que el PCM se haya generado correctamente
-      if (!pcm || !pcm.buffer) {
-        console.warn('⚠️ Error generando PCM desde audio payload');
+      if (!pcm || !pcm.buffer || pcm.length === 0) {
+        console.warn(
+          '⚠️ Error generando PCM desde audio payload - resultado inválido',
+        );
         return;
       }
 
