@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
+import FormData from 'form-data';
 
 @Injectable()
 export class FishAsrHttpService {
@@ -11,14 +12,22 @@ export class FishAsrHttpService {
       console.log('🎙️ Transcribiendo audio ASR HTTP...');
       console.log('📊 Tamaño del buffer:', audioBuffer.length, 'bytes');
 
+      // Verificar que tengamos suficiente audio
+      const minAudioSize = 16000; // 1 segundo a 8kHz 16-bit mono
+      if (audioBuffer.length < minAudioSize) {
+        console.log(
+          `⏳ Audio demasiado corto (${audioBuffer.length} bytes), esperando más...`,
+        );
+        return '';
+      }
+
       const formData = new FormData();
 
-      // Enviar como PCM raw en lugar de WAV
-      formData.append(
-        'audio',
-        new Blob([audioBuffer.buffer as ArrayBuffer], { type: 'audio/pcm' }),
-        'audio.pcm',
-      );
+      // Enviar como PCM raw directamente desde el Buffer
+      formData.append('audio', audioBuffer, {
+        filename: 'audio.pcm',
+        contentType: 'audio/pcm',
+      });
       formData.append('language', this.language);
       formData.append('sample_rate', '8000'); // 8kHz como Twilio
 
@@ -30,7 +39,7 @@ export class FishAsrHttpService {
         {
           headers: {
             Authorization: `Bearer ${this.fishApiKey}`,
-            // No especificar Content-Type, axios lo manejará automáticamente para FormData
+            ...formData.getHeaders(), // Incluir headers de FormData (boundary, etc.)
           },
         },
       );

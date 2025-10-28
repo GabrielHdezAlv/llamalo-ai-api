@@ -362,16 +362,20 @@ export class StreamsGateway implements OnGatewayInit {
         `📤 Enviando buffer de audio: ${buffer.length} bytes (${(buffer.length / 16000).toFixed(1)}s)`,
       );
 
-      // Convertir PCM a WAV para ASR HTTP
-      const pcm = new Int16Array(
-        buffer.buffer,
-        buffer.byteOffset,
-        buffer.length / 2,
-      );
-      const wavBuffer = this.pcmToWav(pcm);
+      // Verificar que tengamos suficiente audio (al menos 1 segundo = 16000 bytes)
+      const minAudioSize = 16000;
+      if (buffer.length < minAudioSize) {
+        console.log(
+          `⏳ Audio demasiado corto (${buffer.length} bytes), esperando más...`,
+        );
+        // Re-agregar el buffer y continuar acumulando
+        this.audioBuffers.set(callSid, buffer);
+        return;
+      }
 
+      // Enviar PCM directamente sin convertir a WAV
       // Transcribir con ASR HTTP
-      const transcript = await this.asrHttp.transcribeAudio(wavBuffer);
+      const transcript = await this.asrHttp.transcribeAudio(buffer);
 
       if (transcript && transcript.trim()) {
         console.log('🎙️ ASR HTTP:', transcript);
