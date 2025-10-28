@@ -155,6 +155,12 @@ export class StreamsGateway implements OnGatewayInit {
           this.speaking = false;
           console.log('🎵 Audio recibido de Twilio');
 
+          // Validar que tenemos el payload de media
+          if (!msg.media?.payload) {
+            console.warn('⚠️ Mensaje de media sin payload válido');
+            return;
+          }
+
           if (useWebSocket && this.asr) {
             // Usar WebSocket si está disponible
             const pcm = ulawToPcm16(msg.media.payload);
@@ -306,8 +312,20 @@ export class StreamsGateway implements OnGatewayInit {
 
   private processAudioWithHttp(audioPayload: string, callSid: string): void {
     try {
+      // Validar que tengamos payload válido
+      if (!audioPayload || typeof audioPayload !== 'string') {
+        console.warn('⚠️ Audio payload inválido o faltante');
+        return;
+      }
+
       // Convertir audio de Twilio a formato PCM
       const pcm = ulawToPcm16(audioPayload);
+
+      // Validar que el PCM se haya generado correctamente
+      if (!pcm || !pcm.buffer) {
+        console.warn('⚠️ Error generando PCM desde audio payload');
+        return;
+      }
 
       // Acumular chunks de audio en el buffer
       if (!this.audioBuffers.has(callSid)) {
