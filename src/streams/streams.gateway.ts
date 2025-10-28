@@ -61,6 +61,9 @@ setInterval(() => {
 })
 export class StreamsGateway implements OnGatewayInit {
   private speaking = false;
+  // Buffer para acumular audio HTTP antes de enviar a ASR
+  private audioBuffers: Map<string, Buffer> = new Map();
+  private audioBufferTimers: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(
     private readonly asr: FishAsrService,
@@ -167,6 +170,12 @@ export class StreamsGateway implements OnGatewayInit {
           if (this.asr) {
             this.asr.stop();
           }
+
+          // Flush cualquier audio pendiente antes de cerrar
+          if (this.audioBuffers.has(callSid)) {
+            void this.flushAudioBuffer(callSid);
+          }
+
           client.close();
           console.log(`🛑 [${callSid}] Llamada terminada.`);
         }
@@ -295,15 +304,70 @@ export class StreamsGateway implements OnGatewayInit {
     }
   }
 
-  private async processAudioWithHttp(
-    audioPayload: string,
-    callSid: string,
-  ): Promise<void> {
+  private processAudioWithHttp(audioPayload: string, callSid: string): void {
     try {
-      // Convertir audio de Twilio a formato para ASR
+      // Convertir audio de Twilio a formato PCM
       const pcm = ulawToPcm16(audioPayload);
 
+      // Acumular chunks de audio en el buffer
+      if (!this.audioBuffers.has(callSid)) {
+        this.audioBuffers.set(callSid, Buffer.alloc(0));
+      }
+
+      const currentBuffer = this.audioBuffers.get(callSid)!;
+      const pcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+      const newBuffer = Buffer.concat([currentBuffer, pcmBuffer]);
+      this.audioBuffers.set(callSid, newBuffer);
+
+      // Limpiar timer anterior
+      const existingTimer = this.audioBufferTimers.get(callSid);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      // Enviar a ASR cuando tengamos suficiente audio (3 segundos = 24000 bytes a 8kHz 16-bit mono)
+      const minBufferSize = 24000 * 2; // 3 segundos de audio
+
+      if (newBuffer.length >= minBufferSize) {
+        // Enviar inmediatamente si tenemos suficiente
+        void this.flushAudioBuffer(callSid);
+      } else {
+        // Configurar timer para enviar después de 2 segundos de silencio
+        const timer = setTimeout(() => {
+          void this.flushAudioBuffer(callSid);
+        }, 2000);
+        this.audioBufferTimers.set(callSid, timer);
+      }
+    } catch (error) {
+      console.error('❌ Error procesando audio con HTTP:', error);
+    }
+  }
+
+  private async flushAudioBuffer(callSid: string): Promise<void> {
+    try {
+      const buffer = this.audioBuffers.get(callSid);
+      if (!buffer || buffer.length === 0) {
+        return;
+      }
+
+      // Limpiar timers y buffer
+      const timer = this.audioBufferTimers.get(callSid);
+      if (timer) {
+        clearTimeout(timer);
+        this.audioBufferTimers.delete(callSid);
+      }
+      this.audioBuffers.delete(callSid);
+
+      console.log(
+        `📤 Enviando buffer de audio: ${buffer.length} bytes (${(buffer.length / 16000).toFixed(1)}s)`,
+      );
+
       // Convertir PCM a WAV para ASR HTTP
+      const pcm = new Int16Array(
+        buffer.buffer,
+        buffer.byteOffset,
+        buffer.length / 2,
+      );
       const wavBuffer = this.pcmToWav(pcm);
 
       // Transcribir con ASR HTTP
@@ -316,7 +380,7 @@ export class StreamsGateway implements OnGatewayInit {
         await this.handleGptResponseHttp(transcript, callSid);
       }
     } catch (error) {
-      console.error('❌ Error procesando audio con HTTP:', error);
+      console.error('❌ Error flush audio buffer:', error);
     }
   }
 
