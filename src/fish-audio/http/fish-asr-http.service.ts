@@ -52,8 +52,22 @@ export class FishAsrHttpService {
       console.error('❌ Error transcribiendo audio ASR:', error);
       if (axios.isAxiosError(error)) {
         console.error('📋 Status:', error.response?.status);
-        console.error('📋 Data:', error.response?.data);
-        console.error('📋 Headers:', error.response?.headers);
+        console.error('📋 Status Text:', error.response?.statusText);
+        console.error(
+          '📋 Response Data:',
+          JSON.stringify(error.response?.data, null, 2),
+        );
+        console.error('📋 Request URL:', error.config?.url);
+        console.error('📋 Request Method:', error.config?.method);
+
+        // Log del contenido del FormData para debugging
+        if (error.config?.data instanceof FormData) {
+          console.error('📋 FormData fields:', {
+            audioSize: audioBuffer.length,
+            language: this.language,
+            sample_rate: '8000',
+          });
+        }
       }
       throw error;
     }
