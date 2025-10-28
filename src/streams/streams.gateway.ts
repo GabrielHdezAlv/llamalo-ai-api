@@ -353,10 +353,26 @@ export class StreamsGateway implements OnGatewayInit {
         // Convertir audio de Twilio a formato PCM
         pcm = ulawToPcm16(audioPayload);
 
-        // Log para debugging
-        if (!pcm || !pcm.buffer || pcm.length === 0) {
+        // Log para debugging y validación
+        if (!pcm || pcm.length === 0) {
           console.warn(
-            `⚠️ PCM inválido - buffer: ${!!pcm?.buffer}, length: ${pcm?.length || 0}, payload length: ${audioPayload.length}`,
+            `⚠️ PCM inválido - length: ${pcm?.length || 0}, payload length: ${audioPayload.length}`,
+          );
+          return;
+        }
+
+        // Validar que sea un Int16Array válido
+        if (!(pcm instanceof Int16Array)) {
+          let pcmType = 'unknown';
+          let pcmLength = 0;
+          if (pcm) {
+            pcmType =
+              (pcm as unknown as { constructor?: { name?: string } })
+                .constructor?.name || 'unknown';
+            pcmLength = (pcm as unknown as { length?: number }).length || 0;
+          }
+          console.warn(
+            `⚠️ PCM no es Int16Array - tipo: ${pcmType}, length: ${pcmLength}`,
           );
           return;
         }
@@ -378,7 +394,29 @@ export class StreamsGateway implements OnGatewayInit {
       }
 
       const currentBuffer = this.audioBuffers.get(callSid)!;
-      const pcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+
+      // Crear Buffer desde Int16Array de forma segura
+      let pcmBuffer: Buffer;
+      try {
+        if (pcm.buffer && pcm.buffer instanceof ArrayBuffer) {
+          // Método preferido: usar buffer y byteOffset
+          pcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+        } else {
+          // Método alternativo: crear Buffer copiando datos del array
+          console.warn(
+            '⚠️ Usando método alternativo para crear Buffer desde PCM',
+          );
+          const tempArray = new Int16Array(pcm);
+          pcmBuffer = Buffer.from(tempArray.buffer);
+        }
+      } catch (error) {
+        console.error(
+          '❌ Error creando Buffer desde PCM:',
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
+
       const newBuffer = Buffer.concat([currentBuffer, pcmBuffer]);
       this.audioBuffers.set(callSid, newBuffer);
 
