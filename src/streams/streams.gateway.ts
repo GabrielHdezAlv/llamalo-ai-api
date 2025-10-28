@@ -349,6 +349,7 @@ export class StreamsGateway implements OnGatewayInit {
       }
 
       let pcm: Int16Array;
+      let pcmArray: Int16Array;
       try {
         // Convertir audio de Twilio a formato PCM
         pcm = ulawToPcm16(audioPayload);
@@ -361,24 +362,31 @@ export class StreamsGateway implements OnGatewayInit {
           return;
         }
 
-        // Validar que sea un Int16Array válido
+        // Convertir a Int16Array si es necesario
         if (!(pcm instanceof Int16Array)) {
-          let pcmType = 'unknown';
-          let pcmLength = 0;
-          if (pcm) {
-            pcmType =
-              (pcm as unknown as { constructor?: { name?: string } })
-                .constructor?.name || 'unknown';
-            pcmLength = (pcm as unknown as { length?: number }).length || 0;
-          }
-          console.warn(
-            `⚠️ PCM no es Int16Array - tipo: ${pcmType}, length: ${pcmLength}`,
+          // mulaw-js puede devolver un array normal, convertirlo a Int16Array
+          const pcmAsAny = pcm as unknown as {
+            constructor?: { name?: string };
+            length?: number;
+          };
+          console.log(
+            `⚠️ PCM no es Int16Array, convirtiendo... tipo: ${pcmAsAny?.constructor?.name || 'unknown'}, length: ${pcmAsAny?.length || 0}`,
           );
-          return;
+          try {
+            pcmArray = new Int16Array(pcm as ArrayLike<number>);
+          } catch (error) {
+            console.error(
+              '❌ Error convirtiendo array a Int16Array:',
+              error instanceof Error ? error.message : String(error),
+            );
+            return;
+          }
+        } else {
+          pcmArray = pcm;
         }
 
         console.log(
-          `✅ PCM generado: ${pcm.length} samples (${(pcm.length * 2).toFixed(0)} bytes)`,
+          `✅ PCM generado: ${pcmArray.length} samples (${(pcmArray.length * 2).toFixed(0)} bytes)`,
         );
       } catch (error) {
         console.error(
@@ -398,18 +406,22 @@ export class StreamsGateway implements OnGatewayInit {
       // Crear Buffer desde Int16Array de forma segura
       let pcmBuffer: Buffer;
       try {
-        if (pcm.buffer && pcm.buffer instanceof ArrayBuffer) {
+        if (pcmArray.buffer && pcmArray.buffer instanceof ArrayBuffer) {
           // Método preferido: usar buffer y byteOffset
-          pcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+          pcmBuffer = Buffer.from(
+            pcmArray.buffer,
+            pcmArray.byteOffset,
+            pcmArray.byteLength,
+          );
           console.log(
-            `✅ Buffer creado desde PCM: ${pcmBuffer.length} bytes (offset: ${pcm.byteOffset}, length: ${pcm.byteLength})`,
+            `✅ Buffer creado desde PCM: ${pcmBuffer.length} bytes (offset: ${pcmArray.byteOffset}, length: ${pcmArray.byteLength})`,
           );
         } else {
           // Método alternativo: crear Buffer copiando datos del array
           console.warn(
-            `⚠️ Usando método alternativo - PCM buffer: ${!!pcm.buffer}, buffer type: ${typeof pcm.buffer}`,
+            `⚠️ Usando método alternativo - PCM buffer: ${!!pcmArray.buffer}, buffer type: ${typeof pcmArray.buffer}`,
           );
-          const tempArray = new Int16Array(pcm);
+          const tempArray = new Int16Array(pcmArray);
           pcmBuffer = Buffer.from(tempArray.buffer);
           console.log(
             `✅ Buffer alternativo creado: ${pcmBuffer.length} bytes`,
