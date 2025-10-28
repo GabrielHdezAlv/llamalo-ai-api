@@ -438,6 +438,12 @@ export class StreamsGateway implements OnGatewayInit {
       const newBuffer = Buffer.concat([currentBuffer, pcmBuffer]);
       this.audioBuffers.set(callSid, newBuffer);
 
+      // Log del progreso del buffer acumulado
+      const bufferSeconds = (newBuffer.length / 16000).toFixed(2);
+      console.log(
+        `📦 Buffer acumulado: ${newBuffer.length} bytes (${bufferSeconds}s)`,
+      );
+
       // Limpiar timer anterior
       const existingTimer = this.audioBufferTimers.get(callSid);
       if (existingTimer) {
@@ -449,10 +455,12 @@ export class StreamsGateway implements OnGatewayInit {
 
       if (newBuffer.length >= minBufferSize) {
         // Enviar inmediatamente si tenemos suficiente
+        console.log('🚀 Buffer suficiente, enviando a ASR...');
         void this.flushAudioBuffer(callSid);
       } else {
         // Configurar timer para enviar después de 2 segundos de silencio
         const timer = setTimeout(() => {
+          console.log('⏰ Timeout alcanzado, enviando buffer acumulado...');
           void this.flushAudioBuffer(callSid);
         }, 2000);
         this.audioBufferTimers.set(callSid, timer);
