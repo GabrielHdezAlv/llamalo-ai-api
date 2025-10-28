@@ -401,13 +401,19 @@ export class StreamsGateway implements OnGatewayInit {
         if (pcm.buffer && pcm.buffer instanceof ArrayBuffer) {
           // Método preferido: usar buffer y byteOffset
           pcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+          console.log(
+            `✅ Buffer creado desde PCM: ${pcmBuffer.length} bytes (offset: ${pcm.byteOffset}, length: ${pcm.byteLength})`,
+          );
         } else {
           // Método alternativo: crear Buffer copiando datos del array
           console.warn(
-            '⚠️ Usando método alternativo para crear Buffer desde PCM',
+            `⚠️ Usando método alternativo - PCM buffer: ${!!pcm.buffer}, buffer type: ${typeof pcm.buffer}`,
           );
           const tempArray = new Int16Array(pcm);
           pcmBuffer = Buffer.from(tempArray.buffer);
+          console.log(
+            `✅ Buffer alternativo creado: ${pcmBuffer.length} bytes`,
+          );
         }
       } catch (error) {
         console.error(
