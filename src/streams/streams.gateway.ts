@@ -273,8 +273,10 @@ export class StreamsGateway implements OnGatewayInit {
   ): Promise<void> {
     try {
       const gptStart = Date.now();
-      let buffer = '';
+      let wordBuffer = '';
+      let sentenceBuffer = '';
       let firstToken = 0;
+      let wordCount = 0;
 
       for await (const token of this.gpt.streamReply(text)) {
         if (!this.speaking) break;
@@ -286,13 +288,32 @@ export class StreamsGateway implements OnGatewayInit {
           );
         }
 
-        buffer += token;
-        if (buffer.length > 80 || /[.!?]\s$/.test(buffer)) {
-          console.log(`💬 [${callSid}] GPT parcial: "${buffer.trim()}"`);
-          const ttsStart = Date.now();
-          this.tts.sendText(buffer.trim());
-          recordMetric('tts', Date.now() - ttsStart);
-          buffer = '';
+        wordBuffer += token;
+
+        // Cuando tenemos una palabra completa (termina con espacio o puntuación)
+        if (/[\s.!?,:;]/.test(token)) {
+          sentenceBuffer += wordBuffer;
+          wordBuffer = '';
+          wordCount++;
+
+          // Enviar cada 5-10 palabras o al finalizar oración (según mejores prácticas de Fish Audio)
+          const shouldSend =
+            wordCount >= 5 || /[.!?]\s*$/.test(sentenceBuffer.trim());
+
+          if (shouldSend && sentenceBuffer.trim()) {
+            // Asegurar que terminamos con espacio (mejor práctica: palabras completas con espacios)
+            let textToSend = sentenceBuffer.trim();
+            // Solo agregar espacio si no termina con puntuación
+            if (!/[.!?]$/.test(textToSend)) {
+              textToSend += ' ';
+            }
+            console.log(`💬 [${callSid}] GPT streaming: "${textToSend}"`);
+            const ttsStart = Date.now();
+            this.tts.sendText(textToSend);
+            recordMetric('tts', Date.now() - ttsStart);
+            sentenceBuffer = '';
+            wordCount = 0;
+          }
         }
       }
 
@@ -300,9 +321,12 @@ export class StreamsGateway implements OnGatewayInit {
       recordMetric('gpt', total);
       console.log(`✅ [${callSid}] GPT completado en ${total}ms`);
 
-      if (this.speaking && buffer.trim()) {
+      // Enviar cualquier texto restante
+      const remaining = (sentenceBuffer + wordBuffer).trim();
+      if (this.speaking && remaining) {
+        console.log(`💬 [${callSid}] GPT final: "${remaining}"`);
         const ttsStart = Date.now();
-        this.tts.sendText(buffer.trim());
+        this.tts.sendText(remaining);
         recordMetric('tts', Date.now() - ttsStart);
       }
     } catch (err) {
