@@ -453,6 +453,10 @@ export class StreamsGateway implements OnGatewayInit {
       // Enviar a ASR cuando tengamos suficiente audio (3 segundos = 24000 bytes a 8kHz 16-bit mono)
       const minBufferSize = 24000 * 2; // 3 segundos de audio
 
+      console.log(
+        `📊 Buffer actual: ${newBuffer.length} bytes, mínimo requerido: ${minBufferSize} bytes`,
+      );
+
       if (newBuffer.length >= minBufferSize) {
         // Enviar inmediatamente si tenemos suficiente
         console.log('🚀 Buffer suficiente, enviando a ASR...');
@@ -460,8 +464,17 @@ export class StreamsGateway implements OnGatewayInit {
       } else {
         // Configurar timer para enviar después de 2 segundos de silencio
         const timer = setTimeout(() => {
-          console.log('⏰ Timeout alcanzado, enviando buffer acumulado...');
-          void this.flushAudioBuffer(callSid);
+          const currentBuffer = this.audioBuffers.get(callSid);
+          if (currentBuffer && currentBuffer.length >= 16000) {
+            console.log(
+              `⏰ Timeout alcanzado, enviando buffer acumulado: ${currentBuffer.length} bytes...`,
+            );
+            void this.flushAudioBuffer(callSid);
+          } else {
+            console.log(
+              `⏰ Timeout alcanzado pero buffer muy pequeño (${currentBuffer?.length || 0} bytes), esperando más...`,
+            );
+          }
         }, 2000);
         this.audioBufferTimers.set(callSid, timer);
       }
@@ -487,6 +500,9 @@ export class StreamsGateway implements OnGatewayInit {
 
       console.log(
         `📤 Enviando buffer de audio: ${buffer.length} bytes (${(buffer.length / 16000).toFixed(1)}s)`,
+      );
+      console.log(
+        `📊 Detalles del buffer: ${buffer.length} bytes, WAV size estimado: ${buffer.length + 44} bytes`,
       );
 
       // Verificar que tengamos suficiente audio (al menos 1 segundo = 16000 bytes)

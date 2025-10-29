@@ -10,7 +10,8 @@ export class FishAsrHttpService {
   async transcribeAudio(audioBuffer: Buffer): Promise<string> {
     try {
       console.log('🎙️ Transcribiendo audio ASR HTTP...');
-      console.log('📊 Tamaño del buffer:', audioBuffer.length, 'bytes');
+      console.log('📊 Tamaño del buffer PCM:', audioBuffer.length, 'bytes');
+      console.log('📊 Tamaño estimado WAV:', audioBuffer.length + 44, 'bytes');
 
       // Verificar que tengamos suficiente audio
       const minAudioSize = 16000; // 1 segundo a 8kHz 16-bit mono
@@ -25,6 +26,9 @@ export class FishAsrHttpService {
 
       // Convertir PCM a WAV (formato más compatible)
       const wavBuffer = this.pcmToWav(audioBuffer);
+      console.log(
+        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes)`,
+      );
 
       // Enviar como WAV
       formData.append('audio', wavBuffer, {
@@ -35,6 +39,9 @@ export class FishAsrHttpService {
       formData.append('sample_rate', 8000); // 8kHz como Twilio (número, no string)
 
       console.log('📤 Enviando audio a Fish Audio ASR...');
+      console.log(
+        `📋 Parámetros: language=${this.language}, sample_rate=8000, filename=audio.wav`,
+      );
 
       const response = await axios.post(
         'https://api.fish.audio/v1/asr',
@@ -67,9 +74,17 @@ export class FishAsrHttpService {
         if (error.config?.data instanceof FormData) {
           console.error('📋 FormData fields:', {
             audioSize: audioBuffer.length,
+            wavSize: audioBuffer.length + 44,
             language: this.language,
-            sample_rate: '8000',
+            sample_rate: 8000,
+            contentType: 'audio/wav',
+            filename: 'audio.wav',
           });
+        }
+
+        // Log adicional de la respuesta del servidor
+        if (error.response?.data) {
+          console.error('📋 Fish Audio API Response:', error.response.data);
         }
       }
       throw error;
