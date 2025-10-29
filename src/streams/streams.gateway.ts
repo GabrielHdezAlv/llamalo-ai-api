@@ -195,74 +195,75 @@ export class StreamsGateway implements OnGatewayInit {
     console.log('🚀 StreamsGateway afterInit ejecutándose...');
     console.log('🔧 WebSocket server configurado correctamente');
 
-    server.on('connection', async (client: WebSocketClient) => {
+    server.on('connection', (client: WebSocketClient) => {
       console.log('🛰️ Twilio WS conectado');
       console.log('📡 Nueva conexión WebSocket establecida');
       const startTime = Date.now();
 
-      await Promise.all([this.asr.connect(), this.tts.connect()]);
-      console.log(`✅ ASR + TTS conectados en ${Date.now() - startTime}ms`);
+      void Promise.all([this.asr.connect(), this.tts.connect()]).then(() => {
+        console.log(`✅ ASR + TTS conectados en ${Date.now() - startTime}ms`);
 
-      let callSid = '';
-      let lastAsrTime = 0;
+        let callSid = '';
+        let lastAsrTime = 0;
 
-      this.tts.onAudio((pcm: Int16Array) => {
-        if (!this.speaking) return;
-        const ulawB64 = pcm16ToUlawB64(pcm);
-        client.send(
-          JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
-        );
-        recordMetric('tts', pcm.length / 8); // proxy de carga TTS
-        console.log(
-          `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)`,
-        );
-      });
+        this.tts.onAudio((pcm: Int16Array) => {
+          if (!this.speaking) return;
+          const ulawB64 = pcm16ToUlawB64(pcm);
+          client.send(
+            JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
+          );
+          recordMetric('tts', pcm.length / 8); // proxy de carga TTS
+          console.log(
+            `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)`,
+          );
+        });
 
-      this.asr.onTranscript((t) => {
-        const text = (t.text || '').trim();
-        if (!text) return;
+        this.asr.onTranscript((t) => {
+          const text = (t.text || '').trim();
+          if (!text) return;
 
-        const now = Date.now();
-        if (lastAsrTime) recordMetric('asr', now - lastAsrTime);
-        lastAsrTime = now;
+          const now = Date.now();
+          if (lastAsrTime) recordMetric('asr', now - lastAsrTime);
+          lastAsrTime = now;
 
-        console.log(
-          `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})`,
-        );
+          console.log(
+            `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})`,
+          );
 
-        this.speaking = false;
-        if (t.is_final || text.length > 15) {
-          this.speaking = true;
-          void this.handleGptResponse(text, callSid);
-        }
-      });
-
-      client.on('message', (raw: Buffer) => {
-        try {
-          const msg = JSON.parse(raw.toString()) as TwilioMsg;
-          console.log('📨 Twilio mensaje recibido:', msg.event);
-          console.log('📋 Datos del mensaje:', JSON.stringify(msg, null, 2));
-
-          if (msg.event === 'start') {
-            callSid = msg.start?.callSid || '';
-            console.log(`🎯 CallSid recibido: ${callSid}`);
-            console.log('🎯 Start data completo:', msg.start);
+          this.speaking = false;
+          if (t.is_final || text.length > 15) {
+            this.speaking = true;
+            void this.handleGptResponse(text, callSid);
           }
+        });
 
-          if (msg.event === 'media') {
-            this.speaking = false;
-            const pcm = ulawToPcm16(msg.media.payload);
-            this.asr.sendPcm16(pcm);
-          }
+        client.on('message', (raw: Buffer) => {
+          try {
+            const msg = JSON.parse(raw.toString()) as TwilioMsg;
+            console.log('📨 Twilio mensaje recibido:', msg.event);
+            console.log('📋 Datos del mensaje:', JSON.stringify(msg, null, 2));
 
-          if (msg.event === 'stop') {
-            this.asr.stop();
-            client.close();
-            console.log(`🛑 [${callSid}] Llamada terminada.`);
+            if (msg.event === 'start') {
+              callSid = msg.start?.callSid || '';
+              console.log(`🎯 CallSid recibido: ${callSid}`);
+              console.log('🎯 Start data completo:', msg.start);
+            }
+
+            if (msg.event === 'media') {
+              this.speaking = false;
+              const pcm = ulawToPcm16(msg.media.payload);
+              this.asr.sendPcm16(pcm);
+            }
+
+            if (msg.event === 'stop') {
+              this.asr.stop();
+              client.close();
+              console.log(`🛑 [${callSid}] Llamada terminada.`);
+            }
+          } catch (err) {
+            console.error('Error procesando mensaje Twilio WS:', err);
           }
-        } catch (err) {
-          console.error('Error procesando mensaje Twilio WS:', err);
-        }
+        });
       });
     });
   }
