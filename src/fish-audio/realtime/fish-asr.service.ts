@@ -14,13 +14,22 @@ export class FishAsrService implements OnModuleDestroy {
   private ws?: WebSocket;
   private ready = false;
   private sessionId?: string;
+  private keepAliveInterval?: NodeJS.Timeout;
+  private reconnectTimer?: NodeJS.Timeout;
+  private reconnectAttempts = 0;
+  private shouldReconnect = true;
 
   connect(): Promise<void> {
+    this.shouldReconnect = true;
+
     if (this.ws && this.ready && this.ws.readyState === WebSocket.OPEN) {
       return Promise.resolve();
     }
 
     return new Promise((resolve, reject) => {
+      this.stopKeepAlive();
+      this.clearReconnectTimer();
+
       const sessionId = randomUUID();
       this.ready = false;
       this.sessionId = sessionId;
@@ -73,6 +82,8 @@ export class FishAsrService implements OnModuleDestroy {
               if (!this.ready) {
                 this.ready = true;
                 this.sessionId = msg.session_id || sessionId;
+              this.reconnectAttempts = 0;
+              this.startKeepAlive();
                 if (!settled) {
                   settled = true;
                   this.ws?.off('open', handleOpen);
@@ -124,10 +135,14 @@ export class FishAsrService implements OnModuleDestroy {
       const handleClose = () => {
         this.ready = false;
         this.sessionId = undefined;
+        this.stopKeepAlive();
         if (!settled) {
           settled = true;
           this.cleanupListeners(handleOpen, handleMessage, handleError, handleClose);
           reject(new Error('Fish Audio ASR websocket closed before ready'));
+        } else if (this.shouldReconnect) {
+          console.warn('Fish Audio ASR websocket closed; intentando reconectar…');
+          this.scheduleReconnect();
         }
       };
 
@@ -174,8 +189,11 @@ export class FishAsrService implements OnModuleDestroy {
   onModuleDestroy() {
     if (this.ws) {
       try {
+        this.shouldReconnect = false;
         this.ready = false;
         this.sessionId = undefined;
+        this.stopKeepAlive();
+        this.clearReconnectTimer();
         this.ws.close();
       } catch (error) {
         console.error('Error closing WebSocket:', error);
@@ -193,5 +211,56 @@ export class FishAsrService implements OnModuleDestroy {
     this.ws?.off('message', handleMessage);
     this.ws?.off('error', handleError);
     this.ws?.off('close', handleClose);
+  }
+
+  private startKeepAlive() {
+    this.stopKeepAlive();
+    if (!this.ws) return;
+
+    this.keepAliveInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.ping();
+        } catch (error) {
+          console.error('Error enviando ping a Fish ASR:', error);
+        }
+      }
+    }, 15000);
+  }
+
+  private stopKeepAlive() {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = undefined;
+    }
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer || !this.shouldReconnect) {
+      return;
+    }
+
+    const delay = Math.min(30000, 1000 * 2 ** this.reconnectAttempts);
+    this.reconnectAttempts += 1;
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      if (!this.shouldReconnect) return;
+
+      console.log(
+        `Reintentando conexión a Fish ASR (intento ${this.reconnectAttempts})…`,
+      );
+      this.connect().catch((error) => {
+        console.error('Falló reconexión a Fish ASR:', error);
+        this.scheduleReconnect();
+      });
+    }, delay);
+  }
+
+  private clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
   }
 }
