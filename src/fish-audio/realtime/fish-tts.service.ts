@@ -6,6 +6,7 @@ import {
   FishTtsText,
   FishTtsAudio,
   FishTtsIncoming,
+  FishTtsEnd,
 } from './types';
 import axios from 'axios';
 
@@ -19,6 +20,7 @@ export class FishTtsService implements OnModuleDestroy {
   private reconnectTimer?: NodeJS.Timeout;
   private reconnectAttempts = 0;
   private shouldReconnect = true;
+  private expectingEnd = false;
 
   connect(): Promise<void> {
     this.shouldReconnect = true;
@@ -42,11 +44,6 @@ export class FishTtsService implements OnModuleDestroy {
         });
       } catch (error) {
         reject(error instanceof Error ? error : new Error(String(error)));
-        return;
-      }
-
-      if (!this.ws) {
-        reject(new Error('Failed to create WebSocket'));
         return;
       }
 
@@ -109,8 +106,17 @@ export class FishTtsService implements OnModuleDestroy {
               }
               break;
             }
-            case 'tts_end':
+            case 'tts_end': {
+              const endMsg = msg as FishTtsEnd;
+              console.log(
+                `Fish Audio TTS indicó fin de audio${
+                  endMsg.reason ? `: ${endMsg.reason}` : ''
+                }`,
+              );
               this.ready = false;
+              this.stopKeepAlive();
+              const wasExpected = this.expectingEnd;
+              this.expectingEnd = false;
               if (!settled) {
                 settled = true;
                 this.cleanupListeners(
@@ -121,12 +127,15 @@ export class FishTtsService implements OnModuleDestroy {
                 );
                 reject(
                   new Error(
-                    msg.reason || 'Fish Audio TTS ended unexpectedly before ready',
+                    endMsg.reason ||
+                      'Fish Audio TTS ended unexpectedly before ready',
                   ),
                 );
+              } else if (this.shouldReconnect) {
+                this.scheduleReconnect(wasExpected ? 1000 : undefined);
               }
-              this.scheduleReconnect();
               break;
+            }
             case 'tts_audio': {
               const audioMsg = msg as FishTtsAudio;
               if (audioMsg.audio) {
@@ -201,6 +210,7 @@ export class FishTtsService implements OnModuleDestroy {
         this.shouldReconnect = false;
         this.ready = false;
         this.sessionId = undefined;
+        this.expectingEnd = false;
         this.stopKeepAlive();
         this.clearReconnectTimer();
         this.ws.close();
@@ -276,12 +286,13 @@ export class FishTtsService implements OnModuleDestroy {
     }
   }
 
-  private scheduleReconnect() {
+  private scheduleReconnect(customDelay?: number) {
     if (this.reconnectTimer || !this.shouldReconnect) {
       return;
     }
 
-    const delay = Math.min(30000, 1000 * 2 ** this.reconnectAttempts);
+    const delay =
+      customDelay ?? Math.min(30000, 1000 * 2 ** this.reconnectAttempts);
     this.reconnectAttempts += 1;
 
     this.reconnectTimer = setTimeout(() => {

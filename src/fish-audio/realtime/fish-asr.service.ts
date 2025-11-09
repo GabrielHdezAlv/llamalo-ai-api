@@ -7,6 +7,8 @@ import {
   FishAsrStop,
   FishAsrTranscript,
   FishAsrIncoming,
+  FishAsrStopNotice,
+  FishAsrCloseNotice,
 } from './types';
 
 @Injectable()
@@ -18,6 +20,7 @@ export class FishAsrService implements OnModuleDestroy {
   private reconnectTimer?: NodeJS.Timeout;
   private reconnectAttempts = 0;
   private shouldReconnect = true;
+  private expectingStop = false;
 
   connect(): Promise<void> {
     this.shouldReconnect = true;
@@ -41,16 +44,6 @@ export class FishAsrService implements OnModuleDestroy {
         });
       } catch (error) {
         reject(error instanceof Error ? error : new Error(String(error)));
-        return;
-      }
-
-      if (!this.ws) {
-        reject(new Error('Failed to create WebSocket'));
-        return;
-      }
-
-      if (!this.ws) {
-        reject(new Error('Failed to create WebSocket'));
         return;
       }
 
@@ -82,8 +75,8 @@ export class FishAsrService implements OnModuleDestroy {
               if (!this.ready) {
                 this.ready = true;
                 this.sessionId = msg.session_id || sessionId;
-              this.reconnectAttempts = 0;
-              this.startKeepAlive();
+                this.reconnectAttempts = 0;
+                this.startKeepAlive();
                 if (!settled) {
                   settled = true;
                   this.ws?.off('open', handleOpen);
@@ -113,6 +106,39 @@ export class FishAsrService implements OnModuleDestroy {
                 this.onCb(msg as FishAsrTranscript);
               }
               break;
+            case 'asr_stop': {
+              const stopMsg = msg as FishAsrStopNotice;
+              console.log(
+                `Fish Audio ASR indicó stop${
+                  stopMsg.reason ? `: ${stopMsg.reason}` : ''
+                }`,
+              );
+              this.ready = false;
+              this.stopKeepAlive();
+              const wasExpected = this.expectingStop;
+              this.expectingStop = false;
+              if (this.shouldReconnect) {
+                // Reconectar para mantener la sesión fresca
+                this.scheduleReconnect(wasExpected ? 1000 : undefined);
+              }
+              break;
+            }
+            case 'asr_close': {
+              const closeMsg = msg as FishAsrCloseNotice;
+              console.log(
+                `Fish Audio ASR cerró la sesión${
+                  closeMsg.reason ? `: ${closeMsg.reason}` : ''
+                }`,
+              );
+              this.ready = false;
+              this.stopKeepAlive();
+              const wasExpected = this.expectingStop;
+              this.expectingStop = false;
+              if (this.shouldReconnect) {
+                this.scheduleReconnect(wasExpected ? 1000 : undefined);
+              }
+              break;
+            }
             default:
               break;
           }
@@ -180,6 +206,7 @@ export class FishAsrService implements OnModuleDestroy {
         type: 'asr_stop',
       };
       try {
+        this.expectingStop = true;
         this.ws.send(JSON.stringify(s));
       } catch (error) {
         console.error('Error sending stop to ASR:', error);
@@ -192,6 +219,7 @@ export class FishAsrService implements OnModuleDestroy {
         this.shouldReconnect = false;
         this.ready = false;
         this.sessionId = undefined;
+        this.expectingStop = false;
         this.stopKeepAlive();
         this.clearReconnectTimer();
         this.ws.close();
@@ -235,12 +263,13 @@ export class FishAsrService implements OnModuleDestroy {
     }
   }
 
-  private scheduleReconnect() {
+  private scheduleReconnect(customDelay?: number) {
     if (this.reconnectTimer || !this.shouldReconnect) {
       return;
     }
 
-    const delay = Math.min(30000, 1000 * 2 ** this.reconnectAttempts);
+    const delay =
+      customDelay ?? Math.min(30000, 1000 * 2 ** this.reconnectAttempts);
     this.reconnectAttempts += 1;
 
     this.reconnectTimer = setTimeout(() => {

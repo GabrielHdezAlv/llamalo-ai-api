@@ -26,10 +26,24 @@ export interface FishAsrError {
   error?: string;
 }
 
+export interface FishAsrStopNotice {
+  type: 'asr_stop';
+  reason?: string;
+}
+
+export interface FishAsrCloseNotice {
+  type: 'asr_close';
+  reason?: string;
+}
+
 export interface FishAsrTranscript {
   type: 'asr_transcript';
   text: string;
   is_final: boolean;
+  utterance_id?: string;
+  sequence_id?: number;
+  start_ms?: number;
+  end_ms?: number;
 }
 
 export interface FishTtsInit {
@@ -65,12 +79,15 @@ export interface FishTtsError {
 export interface FishTtsEnd {
   type: 'tts_end';
   reason?: string;
+  utterance_id?: string;
 }
 
 export type FishAsrIncoming =
   | FishAsrReady
   | FishAsrError
-  | FishAsrTranscript;
+  | FishAsrTranscript
+  | FishAsrStopNotice
+  | FishAsrCloseNotice;
 
 export type FishTtsIncoming =
   | FishTtsReady
