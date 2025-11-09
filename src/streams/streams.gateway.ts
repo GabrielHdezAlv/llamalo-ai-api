@@ -66,6 +66,7 @@ export class StreamsGateway implements OnGatewayInit {
   private audioBuffers: Map<string, Buffer> = new Map();
   private audioBufferTimers: Map<string, NodeJS.Timeout> = new Map();
   private lastUtteranceMeta: Map<string, FishAsrTranscript> = new Map();
+  private httpQueues: Map<string, Promise<void>> = new Map();
 
   constructor(
     private readonly asr: FishAsrService,
@@ -217,7 +218,7 @@ export class StreamsGateway implements OnGatewayInit {
 
           // Flush cualquier audio pendiente antes de cerrar
           if (this.audioBuffers.has(callSid)) {
-            void this.flushAudioBuffer(callSid);
+            void this.flushAudioBuffer(callSid, true);
           }
 
           client.close();
@@ -334,6 +335,9 @@ export class StreamsGateway implements OnGatewayInit {
             if (msg.event === 'stop') {
               this.asr.stop();
               this.tts.cancelAll('call-stop');
+              if (callSid && this.audioBuffers.has(callSid)) {
+                void this.flushAudioBuffer(callSid, true);
+              }
               client.close();
               console.log(`🛑 [${callSid}] Llamada terminada.`);
               if (callSid) {
@@ -556,7 +560,6 @@ export class StreamsGateway implements OnGatewayInit {
       let pcmBuffer: Buffer;
       try {
         if (pcmArray.buffer && pcmArray.buffer instanceof ArrayBuffer) {
-          // Método preferido: usar buffer y byteOffset
           pcmBuffer = Buffer.from(
             pcmArray.buffer,
             pcmArray.byteOffset,
@@ -566,7 +569,6 @@ export class StreamsGateway implements OnGatewayInit {
             `✅ Buffer creado desde PCM: ${pcmBuffer.length} bytes (offset: ${pcmArray.byteOffset}, length: ${pcmArray.byteLength})`,
           );
         } else {
-          // Método alternativo: crear Buffer copiando datos del array
           console.warn(
             `⚠️ Usando método alternativo - PCM buffer: ${!!pcmArray.buffer}, buffer type: ${typeof pcmArray.buffer}`,
           );
@@ -584,55 +586,59 @@ export class StreamsGateway implements OnGatewayInit {
         return;
       }
 
-      const newBuffer = Buffer.concat([currentBuffer, pcmBuffer]);
-      this.audioBuffers.set(callSid, newBuffer);
+      const appendedBuffer = Buffer.concat([currentBuffer, pcmBuffer]);
+      const chunkSizeBytes = 16000; // 1 segundo a 8kHz 16-bit mono
+      const timeoutMs = 1000;
 
-      // Log del progreso del buffer acumulado
-      const bufferSeconds = (newBuffer.length / 16000).toFixed(2);
+      const chunks: Buffer[] = [];
+      let workingBuffer = appendedBuffer;
+
+      while (workingBuffer.length >= chunkSizeBytes) {
+        const chunk = Buffer.from(workingBuffer.slice(0, chunkSizeBytes));
+        chunks.push(chunk);
+        workingBuffer = workingBuffer.slice(chunkSizeBytes);
+      }
+
+      this.audioBuffers.set(callSid, workingBuffer);
+
+      chunks.forEach((chunk, index) => {
+        console.log(
+          `🚀 [${callSid}] Encolando chunk HTTP #${index + 1} (${chunk.length} bytes)`,
+        );
+        this.enqueueHttpChunk(callSid, chunk);
+      });
+
+      const bufferSeconds = (workingBuffer.length / 16000).toFixed(2);
       console.log(
-        `📦 Buffer acumulado: ${newBuffer.length} bytes (${bufferSeconds}s)`,
+        `📦 Buffer restante: ${workingBuffer.length} bytes (${bufferSeconds}s)`,
       );
 
-      // Limpiar timer anterior
       const existingTimer = this.audioBufferTimers.get(callSid);
       if (existingTimer) {
         clearTimeout(existingTimer);
       }
 
-      // Enviar a ASR cuando tengamos suficiente audio (3 segundos = 24000 bytes a 8kHz 16-bit mono)
-      const minBufferSize = 24000 * 2; // 3 segundos de audio
-
-      console.log(
-        `📊 Buffer actual: ${newBuffer.length} bytes, mínimo requerido: ${minBufferSize} bytes`,
-      );
-
-      if (newBuffer.length >= minBufferSize) {
-        // Enviar inmediatamente si tenemos suficiente
-        console.log('🚀 Buffer suficiente, enviando a ASR...');
-        void this.flushAudioBuffer(callSid);
-      } else {
-        // Configurar timer para enviar después de 2 segundos de silencio
+      if (workingBuffer.length > 0) {
         const timer = setTimeout(() => {
-          const currentBuffer = this.audioBuffers.get(callSid);
-          if (currentBuffer && currentBuffer.length >= 16000) {
+          const pending = this.audioBuffers.get(callSid);
+          if (pending && pending.length > 0) {
             console.log(
-              `⏰ Timeout alcanzado, enviando buffer acumulado: ${currentBuffer.length} bytes...`,
+              `⏰ Timeout HTTP — enviando chunk residual de ${pending.length} bytes`,
             );
-            void this.flushAudioBuffer(callSid);
-          } else {
-            console.log(
-              `⏰ Timeout alcanzado pero buffer muy pequeño (${currentBuffer?.length || 0} bytes), esperando más...`,
-            );
+            this.audioBuffers.set(callSid, Buffer.alloc(0));
+            this.enqueueHttpChunk(callSid, Buffer.from(pending));
           }
-        }, 2000);
+        }, timeoutMs);
         this.audioBufferTimers.set(callSid, timer);
+      } else {
+        this.audioBufferTimers.delete(callSid);
       }
     } catch (error) {
       console.error('❌ Error procesando audio con HTTP:', error);
     }
   }
 
-  private async flushAudioBuffer(callSid: string): Promise<void> {
+  private flushAudioBuffer(callSid: string, finalize = false): void {
     try {
       const buffer = this.audioBuffers.get(callSid);
       if (!buffer || buffer.length === 0) {
@@ -648,33 +654,12 @@ export class StreamsGateway implements OnGatewayInit {
       this.audioBuffers.delete(callSid);
 
       console.log(
-        `📤 Enviando buffer de audio: ${buffer.length} bytes (${(buffer.length / 16000).toFixed(1)}s)`,
+        `📤 Enviando buffer residual HTTP: ${buffer.length} bytes (${(
+          buffer.length / 16000
+        ).toFixed(1)}s)`,
       );
-      console.log(
-        `📊 Detalles del buffer: ${buffer.length} bytes, WAV size estimado: ${buffer.length + 44} bytes`,
-      );
 
-      // Verificar que tengamos suficiente audio (al menos 1 segundo = 16000 bytes)
-      const minAudioSize = 16000;
-      if (buffer.length < minAudioSize) {
-        console.log(
-          `⏳ Audio demasiado corto (${buffer.length} bytes), esperando más...`,
-        );
-        // Re-agregar el buffer y continuar acumulando
-        this.audioBuffers.set(callSid, buffer);
-        return;
-      }
-
-      // Enviar PCM directamente sin convertir a WAV
-      // Transcribir con ASR HTTP
-      const transcript = await this.asrHttp.transcribeAudio(buffer);
-
-      if (transcript && transcript.trim()) {
-        console.log('🎙️ ASR HTTP:', transcript);
-
-        // Generar respuesta con GPT
-        await this.handleGptResponseHttp(transcript, callSid);
-      }
+      this.enqueueHttpChunk(callSid, Buffer.from(buffer), finalize);
     } catch (error) {
       console.error('❌ Error flush audio buffer:', error);
     }
@@ -707,6 +692,63 @@ export class StreamsGateway implements OnGatewayInit {
       }
     } catch (error) {
       console.error('❌ Error manejando respuesta GPT HTTP:', error);
+    }
+  }
+
+  private enqueueHttpChunk(
+    callSid: string,
+    chunk: Buffer,
+    finalize = false,
+  ): void {
+    const previous = this.httpQueues.get(callSid) ?? Promise.resolve();
+
+    const next = previous
+      .catch((error) => {
+        console.error(
+          `❌ [${callSid}] Error en chunk HTTP previo:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+      .then(() => this.processHttpChunk(callSid, chunk, finalize));
+
+    this.httpQueues.set(callSid, next);
+
+    void next.finally(() => {
+      if (this.httpQueues.get(callSid) === next) {
+        this.httpQueues.delete(callSid);
+      }
+    });
+  }
+
+  private async processHttpChunk(
+    callSid: string,
+    chunk: Buffer,
+    finalize: boolean,
+  ): Promise<void> {
+    try {
+      console.log(
+        `📤 [${callSid}] Enviando chunk HTTP de ${chunk.length} bytes (${(
+          chunk.length / 16000
+        ).toFixed(2)}s)`,
+      );
+
+      const transcript = await this.asrHttp.transcribeAudio(chunk);
+
+      if (transcript && transcript.trim()) {
+        console.log(`🎙️ [${callSid}] ASR HTTP chunk: "${transcript}"`);
+        await this.handleGptResponseHttp(transcript, callSid);
+      } else {
+        console.log(`🕸️ [${callSid}] Chunk HTTP sin transcripción utilizable.`);
+      }
+
+      if (finalize) {
+        console.log(`✅ [${callSid}] Chunk HTTP final procesado.`);
+      }
+    } catch (error) {
+      console.error(
+        `❌ [${callSid}] Error procesando chunk HTTP:`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 
