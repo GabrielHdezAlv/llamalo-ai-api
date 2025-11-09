@@ -58,12 +58,20 @@ export interface FishTtsInit {
 export interface FishTtsText {
   type: 'tts_text';
   text: string;
+  utterance_id?: string;
+  sequence_id?: number;
+  priority?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface FishTtsAudio {
   type: 'tts_audio';
   audio: string;
   is_final?: boolean;
+  utterance_id?: string;
+  sequence_id?: number;
+  start_ms?: number;
+  end_ms?: number;
 }
 
 export interface FishTtsReady {

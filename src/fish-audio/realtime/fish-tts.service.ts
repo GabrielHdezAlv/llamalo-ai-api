@@ -13,7 +13,18 @@ import axios from 'axios';
 @Injectable()
 export class FishTtsService implements OnModuleDestroy {
   private ws?: WebSocket;
-  private listeners: Array<(pcm: Int16Array, isFinal?: boolean) => void> = [];
+  private listeners: Array<
+    (
+      pcm: Int16Array,
+      info: {
+        isFinal?: boolean;
+        utteranceId?: string;
+        sequenceId?: number;
+        startMs?: number;
+        endMs?: number;
+      },
+    ) => void
+  > = [];
   private ready = false;
   private sessionId?: string;
   private keepAliveInterval?: NodeJS.Timeout;
@@ -145,7 +156,14 @@ export class FishTtsService implements OnModuleDestroy {
                   buf.byteOffset,
                   buf.byteLength / 2,
                 );
-                this.listeners.forEach((l) => l(pcm, audioMsg.is_final));
+                const info = {
+                  isFinal: audioMsg.is_final,
+                  utteranceId: audioMsg.utterance_id,
+                  sequenceId: audioMsg.sequence_id,
+                  startMs: audioMsg.start_ms,
+                  endMs: audioMsg.end_ms,
+                };
+                this.listeners.forEach((l) => l(pcm, info));
               }
               break;
             }
@@ -189,12 +207,43 @@ export class FishTtsService implements OnModuleDestroy {
     });
   }
 
-  onAudio(cb: (pcm: Int16Array, isFinal?: boolean) => void) {
+  onAudio(
+    cb: (pcm: Int16Array, info: {
+      isFinal?: boolean;
+      utteranceId?: string;
+      sequenceId?: number;
+      startMs?: number;
+      endMs?: number;
+    }) => void,
+  ) {
     this.listeners.push(cb);
   }
-  sendText(text: string) {
+  sendText(
+    text: string,
+    options?: {
+      utteranceId?: string;
+      sequenceId?: number;
+      priority?: number;
+      metadata?: Record<string, unknown>;
+    },
+  ) {
     if (this.ws && this.ready && this.ws.readyState === WebSocket.OPEN) {
-      const payload: FishTtsText = { type: 'tts_text', text };
+      const payload: FishTtsText = {
+        type: 'tts_text',
+        text,
+      };
+      if (options?.utteranceId) {
+        payload.utterance_id = options.utteranceId;
+      }
+      if (typeof options?.sequenceId === 'number') {
+        payload.sequence_id = options.sequenceId;
+      }
+      if (typeof options?.priority === 'number') {
+        payload.priority = options.priority;
+      }
+      if (options?.metadata) {
+        payload.metadata = options.metadata;
+      }
       try {
         this.ws.send(JSON.stringify(payload));
       } catch (error) {

@@ -7,6 +7,7 @@ import { FishTtsHttpService } from '../fish-audio/http/fish-tts-http.service';
 import { FishAsrHttpService } from '../fish-audio/http/fish-asr-http.service';
 import { GptService } from '../llm/gpt.service';
 import { TwilioCallMediaService } from '../twilio/twilio-call-media.service';
+import type { FishAsrTranscript } from '../fish-audio/realtime/types';
 
 type TwilioMediaIn = { event: 'media'; media: { payload: string } };
 type TwilioStart = { event: 'start'; start: { callSid?: string } };
@@ -64,6 +65,7 @@ export class StreamsGateway implements OnGatewayInit {
   // Buffer para acumular audio HTTP antes de enviar a ASR
   private audioBuffers: Map<string, Buffer> = new Map();
   private audioBufferTimers: Map<string, NodeJS.Timeout> = new Map();
+  private lastUtteranceMeta: Map<string, FishAsrTranscript> = new Map();
 
   constructor(
     private readonly asr: FishAsrService,
@@ -107,17 +109,46 @@ export class StreamsGateway implements OnGatewayInit {
 
     // Solo configurar callbacks si ASR/TTS están conectados
     if (this.asr && this.tts) {
-      this.tts.onAudio((pcm: Int16Array) => {
-        if (!this.speaking) return;
-        const ulawB64 = pcm16ToUlawB64(pcm);
-        client.send(
-          JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
-        );
-        recordMetric('tts', pcm.length / 8); // proxy de carga TTS
-        console.log(
-          `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)`,
-        );
-      });
+      this.tts.onAudio(
+        (
+          pcm: Int16Array,
+          info: {
+            isFinal?: boolean;
+            utteranceId?: string;
+            sequenceId?: number;
+            startMs?: number;
+            endMs?: number;
+          },
+        ) => {
+          if (!this.speaking) return;
+          const ulawB64 = pcm16ToUlawB64(pcm);
+          client.send(
+            JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
+          );
+          recordMetric('tts', pcm.length / 8); // proxy de carga TTS
+          const metaBits: string[] = [];
+          if (info?.utteranceId) {
+            metaBits.push(`utt ${info.utteranceId}`);
+          }
+          if (typeof info?.sequenceId === 'number') {
+            metaBits.push(`seq ${info.sequenceId}`);
+          }
+          if (
+            typeof info?.startMs === 'number' &&
+            typeof info?.endMs === 'number'
+          ) {
+            metaBits.push(`win ${info.startMs}-${info.endMs}ms`);
+          }
+          if (info?.isFinal) {
+            metaBits.push('final');
+          }
+          console.log(
+            `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)${
+              metaBits.length ? ` [${metaBits.join(' | ')}]` : ''
+            }`,
+          );
+        },
+      );
 
       this.asr.onTranscript((t) => {
         const text = (t.text || '').trim();
@@ -127,14 +158,19 @@ export class StreamsGateway implements OnGatewayInit {
         if (lastAsrTime) recordMetric('asr', now - lastAsrTime);
         lastAsrTime = now;
 
+        if (callSid) {
+          this.lastUtteranceMeta.set(callSid, t);
+        }
+
         console.log(
-          `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})`,
+          `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})` +
+            (t.utterance_id ? ` [utt ${t.utterance_id}]` : ''),
         );
 
         this.speaking = false;
         if (t.is_final || text.length > 15) {
           this.speaking = true;
-          void this.handleGptResponse(text, callSid);
+          void this.handleGptResponse(text, callSid, t);
         }
       });
     }
@@ -184,6 +220,9 @@ export class StreamsGateway implements OnGatewayInit {
 
           client.close();
           console.log(`🛑 [${callSid}] Llamada terminada.`);
+          if (callSid) {
+            this.lastUtteranceMeta.delete(callSid);
+          }
         }
       } catch (err) {
         console.error('❌ Error procesando mensaje Twilio:', err);
@@ -206,17 +245,46 @@ export class StreamsGateway implements OnGatewayInit {
         let callSid = '';
         let lastAsrTime = 0;
 
-        this.tts.onAudio((pcm: Int16Array) => {
-          if (!this.speaking) return;
-          const ulawB64 = pcm16ToUlawB64(pcm);
-          client.send(
-            JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
-          );
-          recordMetric('tts', pcm.length / 8); // proxy de carga TTS
-          console.log(
-            `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)`,
-          );
-        });
+        this.tts.onAudio(
+          (
+            pcm: Int16Array,
+            info: {
+              isFinal?: boolean;
+              utteranceId?: string;
+              sequenceId?: number;
+              startMs?: number;
+              endMs?: number;
+            },
+          ) => {
+            if (!this.speaking) return;
+            const ulawB64 = pcm16ToUlawB64(pcm);
+            client.send(
+              JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
+            );
+            recordMetric('tts', pcm.length / 8); // proxy de carga TTS
+            const metaBits: string[] = [];
+            if (info?.utteranceId) {
+              metaBits.push(`utt ${info.utteranceId}`);
+            }
+            if (typeof info?.sequenceId === 'number') {
+              metaBits.push(`seq ${info.sequenceId}`);
+            }
+            if (
+              typeof info?.startMs === 'number' &&
+              typeof info?.endMs === 'number'
+            ) {
+              metaBits.push(`win ${info.startMs}-${info.endMs}ms`);
+            }
+            if (info?.isFinal) {
+              metaBits.push('final');
+            }
+            console.log(
+              `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)${
+                metaBits.length ? ` [${metaBits.join(' | ')}]` : ''
+              }`,
+            );
+          },
+        );
 
         this.asr.onTranscript((t) => {
           const text = (t.text || '').trim();
@@ -226,14 +294,19 @@ export class StreamsGateway implements OnGatewayInit {
           if (lastAsrTime) recordMetric('asr', now - lastAsrTime);
           lastAsrTime = now;
 
+          if (callSid) {
+            this.lastUtteranceMeta.set(callSid, t);
+          }
+
           console.log(
-            `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})`,
+            `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})` +
+              (t.utterance_id ? ` [utt ${t.utterance_id}]` : ''),
           );
 
           this.speaking = false;
           if (t.is_final || text.length > 15) {
             this.speaking = true;
-            void this.handleGptResponse(text, callSid);
+            void this.handleGptResponse(text, callSid, t);
           }
         });
 
@@ -259,6 +332,9 @@ export class StreamsGateway implements OnGatewayInit {
               this.asr.stop();
               client.close();
               console.log(`🛑 [${callSid}] Llamada terminada.`);
+              if (callSid) {
+                this.lastUtteranceMeta.delete(callSid);
+              }
             }
           } catch (err) {
             console.error('Error procesando mensaje Twilio WS:', err);
@@ -271,13 +347,32 @@ export class StreamsGateway implements OnGatewayInit {
   private async handleGptResponse(
     text: string,
     callSid: string,
+    transcript?: FishAsrTranscript,
   ): Promise<void> {
     try {
       const gptStart = Date.now();
+      const utteranceId = transcript?.utterance_id;
+      const sequenceId = transcript?.sequence_id;
+      const startMs = transcript?.start_ms;
+      const endMs = transcript?.end_ms;
+      const isFinal = transcript?.is_final;
       let wordBuffer = '';
       let sentenceBuffer = '';
       let firstToken = 0;
       let wordCount = 0;
+      let chunkIndex = 0;
+
+      if (utteranceId || typeof sequenceId === 'number') {
+        console.log(
+          `🧭 [${callSid}] Procesando respuesta GPT para utt ${
+            utteranceId ?? 'sin-id'
+          }${typeof sequenceId === 'number' ? ` seq ${sequenceId}` : ''}${
+            typeof startMs === 'number' && typeof endMs === 'number'
+              ? ` (${startMs}ms-${endMs}ms)`
+              : ''
+          }`,
+        );
+      }
 
       for await (const token of this.gpt.streamReply(text)) {
         if (!this.speaking) break;
@@ -310,10 +405,22 @@ export class StreamsGateway implements OnGatewayInit {
             }
             console.log(`💬 [${callSid}] GPT streaming: "${textToSend}"`);
             const ttsStart = Date.now();
-            this.tts.sendText(textToSend);
+            this.tts.sendText(textToSend, {
+              utteranceId,
+              sequenceId,
+              metadata: {
+                callSid,
+                chunkIndex,
+                startMs,
+                endMs,
+                isFinalSource: isFinal,
+                sentAt: Date.now(),
+              },
+            });
             recordMetric('tts', Date.now() - ttsStart);
             sentenceBuffer = '';
             wordCount = 0;
+            chunkIndex += 1;
           }
         }
       }
@@ -327,8 +434,24 @@ export class StreamsGateway implements OnGatewayInit {
       if (this.speaking && remaining) {
         console.log(`💬 [${callSid}] GPT final: "${remaining}"`);
         const ttsStart = Date.now();
-        this.tts.sendText(remaining);
+        this.tts.sendText(remaining, {
+          utteranceId,
+          sequenceId,
+          metadata: {
+            callSid,
+            chunkIndex,
+            startMs,
+            endMs,
+            isFinalSource: isFinal,
+            sentAt: Date.now(),
+            finalChunk: true,
+          },
+        });
         recordMetric('tts', Date.now() - ttsStart);
+      }
+
+      if (transcript?.is_final && callSid) {
+        this.lastUtteranceMeta.delete(callSid);
       }
     } catch (err) {
       console.error(`❌ [${callSid}] Error procesando respuesta GPT:`, err);
