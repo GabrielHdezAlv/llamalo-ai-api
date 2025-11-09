@@ -2,6 +2,14 @@ export interface FishAsrInit {
   type: 'asr_init';
   sample_rate: number;
   language: string;
+  encoding?: 'pcm16';
+  session_id?: string;
+  enable_intermediate_results?: boolean;
+}
+
+export interface FishAsrReady {
+  type: 'asr_ready';
+  session_id?: string;
 }
 
 export interface FishAsrAudio {
@@ -11,6 +19,11 @@ export interface FishAsrAudio {
 
 export interface FishAsrStop {
   type: 'asr_stop';
+}
+
+export interface FishAsrError {
+  type: 'asr_error';
+  error?: string;
 }
 
 export interface FishAsrTranscript {
@@ -24,6 +37,8 @@ export interface FishTtsInit {
   voice_id: string;
   sample_rate: number;
   language: string;
+  encoding?: 'pcm16';
+  session_id?: string;
 }
 
 export interface FishTtsText {
@@ -36,3 +51,29 @@ export interface FishTtsAudio {
   audio: string;
   is_final?: boolean;
 }
+
+export interface FishTtsReady {
+  type: 'tts_ready';
+  session_id?: string;
+}
+
+export interface FishTtsError {
+  type: 'tts_error';
+  error?: string;
+}
+
+export interface FishTtsEnd {
+  type: 'tts_end';
+  reason?: string;
+}
+
+export type FishAsrIncoming =
+  | FishAsrReady
+  | FishAsrError
+  | FishAsrTranscript;
+
+export type FishTtsIncoming =
+  | FishTtsReady
+  | FishTtsError
+  | FishTtsEnd
+  | FishTtsAudio;
