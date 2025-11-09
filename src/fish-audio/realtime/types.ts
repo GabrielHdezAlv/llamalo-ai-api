@@ -74,6 +74,13 @@ export interface FishTtsAudio {
   end_ms?: number;
 }
 
+export interface FishTtsCancel {
+  type: 'tts_cancel';
+  utterance_id?: string;
+  scope?: 'current' | 'pending' | 'all';
+  reason?: string;
+}
+
 export interface FishTtsReady {
   type: 'tts_ready';
   session_id?: string;

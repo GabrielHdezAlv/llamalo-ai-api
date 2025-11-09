@@ -189,6 +189,7 @@ export class StreamsGateway implements OnGatewayInit {
 
         if (msg.event === 'media') {
           this.speaking = false;
+          this.tts.cancelAll('interrupted-by-user-audio');
           console.log('🎵 Audio recibido de Twilio');
 
           // Validar que tenemos el payload de media
@@ -212,6 +213,7 @@ export class StreamsGateway implements OnGatewayInit {
           if (this.asr) {
             this.asr.stop();
           }
+          this.tts.cancelAll('call-stop');
 
           // Flush cualquier audio pendiente antes de cerrar
           if (this.audioBuffers.has(callSid)) {
@@ -324,12 +326,14 @@ export class StreamsGateway implements OnGatewayInit {
 
             if (msg.event === 'media') {
               this.speaking = false;
+              this.tts.cancelAll('interrupted-by-user-audio');
               const pcm = ulawToPcm16(msg.media.payload);
               this.asr.sendPcm16(pcm);
             }
 
             if (msg.event === 'stop') {
               this.asr.stop();
+              this.tts.cancelAll('call-stop');
               client.close();
               console.log(`🛑 [${callSid}] Llamada terminada.`);
               if (callSid) {
@@ -356,6 +360,7 @@ export class StreamsGateway implements OnGatewayInit {
       const startMs = transcript?.start_ms;
       const endMs = transcript?.end_ms;
       const isFinal = transcript?.is_final;
+      const priority: number = transcript?.is_final ? 1 : 0;
       let wordBuffer = '';
       let sentenceBuffer = '';
       let firstToken = 0;
@@ -405,9 +410,10 @@ export class StreamsGateway implements OnGatewayInit {
             }
             console.log(`💬 [${callSid}] GPT streaming: "${textToSend}"`);
             const ttsStart = Date.now();
-            this.tts.sendText(textToSend, {
+            const queuedId = this.tts.sendText(textToSend, {
               utteranceId,
               sequenceId,
+              priority,
               metadata: {
                 callSid,
                 chunkIndex,
@@ -421,6 +427,15 @@ export class StreamsGateway implements OnGatewayInit {
             sentenceBuffer = '';
             wordCount = 0;
             chunkIndex += 1;
+            if (queuedId) {
+              const priorityLabel = priority.toString();
+              console.log(
+                '🗂️ [%s] TTS chunk en cola (%s) prioridad %s',
+                callSid,
+                queuedId,
+                priorityLabel,
+              );
+            }
           }
         }
       }
@@ -434,9 +449,10 @@ export class StreamsGateway implements OnGatewayInit {
       if (this.speaking && remaining) {
         console.log(`💬 [${callSid}] GPT final: "${remaining}"`);
         const ttsStart = Date.now();
-        this.tts.sendText(remaining, {
+        const queuedId = this.tts.sendText(remaining, {
           utteranceId,
           sequenceId,
+          priority,
           metadata: {
             callSid,
             chunkIndex,
@@ -448,6 +464,15 @@ export class StreamsGateway implements OnGatewayInit {
           },
         });
         recordMetric('tts', Date.now() - ttsStart);
+        if (queuedId) {
+          const priorityLabel = priority.toString();
+          console.log(
+            '🗂️ [%s] TTS chunk final en cola (%s) prioridad %s',
+            callSid,
+            queuedId,
+            priorityLabel,
+          );
+        }
       }
 
       if (transcript?.is_final && callSid) {

@@ -7,8 +7,18 @@ import {
   FishTtsAudio,
   FishTtsIncoming,
   FishTtsEnd,
+  FishTtsCancel,
 } from './types';
 import axios from 'axios';
+
+type QueuedTtsItem = {
+  utteranceId: string;
+  text: string;
+  sequenceId?: number;
+  priority: number;
+  metadata?: Record<string, unknown>;
+  submittedAt: number;
+};
 
 @Injectable()
 export class FishTtsService implements OnModuleDestroy {
@@ -32,6 +42,9 @@ export class FishTtsService implements OnModuleDestroy {
   private reconnectAttempts = 0;
   private shouldReconnect = true;
   private expectingEnd = false;
+  private queue: QueuedTtsItem[] = [];
+  private currentUtteranceId?: string;
+  private currentPriority = Number.NEGATIVE_INFINITY;
 
   connect(): Promise<void> {
     this.shouldReconnect = true;
@@ -99,6 +112,7 @@ export class FishTtsService implements OnModuleDestroy {
                   resolve();
                 }
               }
+              this.processQueue();
               break;
             case 'tts_error': {
               const errorMessage =
@@ -114,6 +128,7 @@ export class FishTtsService implements OnModuleDestroy {
                 reject(new Error(errorMessage));
               } else {
                 console.error('Fish Audio TTS error:', errorMessage);
+                this.markCurrentComplete();
               }
               break;
             }
@@ -128,6 +143,7 @@ export class FishTtsService implements OnModuleDestroy {
               this.stopKeepAlive();
               const wasExpected = this.expectingEnd;
               this.expectingEnd = false;
+              this.markCurrentComplete();
               if (!settled) {
                 settled = true;
                 this.cleanupListeners(
@@ -156,6 +172,9 @@ export class FishTtsService implements OnModuleDestroy {
                   buf.byteOffset,
                   buf.byteLength / 2,
                 );
+                if (audioMsg.utterance_id) {
+                  this.currentUtteranceId = audioMsg.utterance_id;
+                }
                 const info = {
                   isFinal: audioMsg.is_final,
                   utteranceId: audioMsg.utterance_id,
@@ -164,6 +183,9 @@ export class FishTtsService implements OnModuleDestroy {
                   endMs: audioMsg.end_ms,
                 };
                 this.listeners.forEach((l) => l(pcm, info));
+                if (audioMsg.is_final) {
+                  this.markCurrentComplete();
+                }
               }
               break;
             }
@@ -226,32 +248,83 @@ export class FishTtsService implements OnModuleDestroy {
       priority?: number;
       metadata?: Record<string, unknown>;
     },
+  ): string {
+    const utteranceId = options?.utteranceId ?? randomUUID();
+    const priority = options?.priority ?? 0;
+    const item: QueuedTtsItem = {
+      utteranceId,
+      text,
+      sequenceId: options?.sequenceId,
+      priority,
+      metadata: options?.metadata,
+      submittedAt: Date.now(),
+    };
+
+    this.queue.push(item);
+    this.queue.sort((a, b) => {
+      if (b.priority !== a.priority) {
+        return b.priority - a.priority;
+      }
+      return a.submittedAt - b.submittedAt;
+    });
+
+    if (priority > this.currentPriority && this.currentUtteranceId) {
+      this.cancelUtterance(this.currentUtteranceId, 'preempted-by-priority', 'current');
+    }
+
+    this.processQueue();
+
+    return utteranceId;
+  }
+
+  cancelUtterance(
+    utteranceId?: string,
+    reason?: string,
+    scope: 'current' | 'pending' | 'all' = 'current',
   ) {
-    if (this.ws && this.ready && this.ws.readyState === WebSocket.OPEN) {
-      const payload: FishTtsText = {
-        type: 'tts_text',
-        text,
+    if (scope === 'all') {
+      this.queue = [];
+      this.currentUtteranceId = undefined;
+      this.currentPriority = Number.NEGATIVE_INFINITY;
+    } else if (scope === 'pending' && utteranceId) {
+      this.queue = this.queue.filter((item) => item.utteranceId !== utteranceId);
+    }
+
+    if (!utteranceId && scope === 'current') {
+      utteranceId = this.currentUtteranceId;
+    }
+
+    if (utteranceId) {
+      this.queue = this.queue.filter((item) => item.utteranceId !== utteranceId);
+    }
+
+    if (utteranceId && utteranceId === this.currentUtteranceId) {
+      this.currentUtteranceId = undefined;
+      this.currentPriority = Number.NEGATIVE_INFINITY;
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const payload: FishTtsCancel = {
+        type: 'tts_cancel',
+        ...(utteranceId ? { utterance_id: utteranceId } : {}),
+        scope,
+        reason,
       };
-      if (options?.utteranceId) {
-        payload.utterance_id = options.utteranceId;
-      }
-      if (typeof options?.sequenceId === 'number') {
-        payload.sequence_id = options.sequenceId;
-      }
-      if (typeof options?.priority === 'number') {
-        payload.priority = options.priority;
-      }
-      if (options?.metadata) {
-        payload.metadata = options.metadata;
-      }
+
       try {
         this.ws.send(JSON.stringify(payload));
       } catch (error) {
-        console.error('Error sending text to TTS:', error);
+        console.error('Error enviando cancelación a TTS:', error);
       }
     } else {
-      console.warn('TTS WebSocket no listo; se ignora texto saliente.');
+      console.warn('TTS WebSocket no listo para cancelar.');
     }
+
+    this.processQueue();
+  }
+
+  cancelAll(reason?: string) {
+    this.cancelUtterance(undefined, reason, 'all');
   }
   onModuleDestroy() {
     if (this.ws) {
@@ -260,6 +333,9 @@ export class FishTtsService implements OnModuleDestroy {
         this.ready = false;
         this.sessionId = undefined;
         this.expectingEnd = false;
+        this.queue = [];
+        this.currentUtteranceId = undefined;
+        this.currentPriority = Number.NEGATIVE_INFINITY;
         this.stopKeepAlive();
         this.clearReconnectTimer();
         this.ws.close();
@@ -311,6 +387,56 @@ export class FishTtsService implements OnModuleDestroy {
     this.ws?.off('message', handleMessage);
     this.ws?.off('error', handleError);
     this.ws?.off('close', handleClose);
+  }
+
+  private processQueue() {
+    if (!this.ready || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (this.currentUtteranceId) {
+      return;
+    }
+
+    const next = this.queue.shift();
+    if (!next) {
+      return;
+    }
+
+    const payload: FishTtsText = {
+      type: 'tts_text',
+      text: next.text,
+      utterance_id: next.utteranceId,
+    };
+
+    if (typeof next.sequenceId === 'number') {
+      payload.sequence_id = next.sequenceId;
+    }
+
+    if (typeof next.priority === 'number') {
+      payload.priority = next.priority;
+    }
+
+    if (next.metadata) {
+      payload.metadata = next.metadata;
+    }
+
+    try {
+      this.currentUtteranceId = next.utteranceId;
+      this.currentPriority = next.priority;
+      this.ws.send(JSON.stringify(payload));
+    } catch (error) {
+      console.error('Error enviando texto a TTS:', error);
+      this.currentUtteranceId = undefined;
+      this.currentPriority = Number.NEGATIVE_INFINITY;
+      this.queue.unshift(next);
+    }
+  }
+
+  private markCurrentComplete() {
+    this.currentUtteranceId = undefined;
+    this.currentPriority = Number.NEGATIVE_INFINITY;
+    this.processQueue();
   }
 
   private startKeepAlive() {
