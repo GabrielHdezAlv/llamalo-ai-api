@@ -50,25 +50,25 @@ export class CallsController {
       const agent = agentSnapshot.docs[0].data();
       const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
 
-      // 🔹 Verificar antigüedad de la cuenta
-      if (agent.createdAt) {
-        const createdAt = (
-          agent.createdAt as admin.firestore.Timestamp
-        ).toDate();
-        const diffDays =
-          (Date.now() - createdAt.getTime()) / (1000 * 3600 * 24);
-
-        if (diffDays >= 7) {
-          console.log(
-            `❌ Cuenta con ${diffDays.toFixed(0)} días — llamada no permitida.`,
-          );
-          (r.say as any)(
-            'Su cuenta tiene más de 7 días de antigüedad. No puede realizar esta llamada.',
-            { voice: 'alice', language: 'es-ES' },
-          );
-          return res.type('text/xml').send(r.toString());
-        }
-      }
+      // // 🔹 Verificar antigüedad de la cuenta (deshabilitado temporalmente)
+      // if (agent.createdAt) {
+      //   const createdAt = (
+      //     agent.createdAt as admin.firestore.Timestamp
+      //   ).toDate();
+      //   const diffDays =
+      //     (Date.now() - createdAt.getTime()) / (1000 * 3600 * 24);
+      //
+      //   if (diffDays >= 7) {
+      //     console.log(
+      //       `❌ Cuenta con ${diffDays.toFixed(0)} días — llamada no permitida.`,
+      //     );
+      //     (r.say as any)(
+      //       'Su cuenta tiene más de 7 días de antigüedad. No puede realizar esta llamada.',
+      //       { voice: 'alice', language: 'es-ES' },
+      //     );
+      //     return res.type('text/xml').send(r.toString());
+      //   }
+      // }
 
       // 🔹 Reproducir audio o texto de bienvenida del agente
       if (twilioConfig.firstInteractionUrl) {
