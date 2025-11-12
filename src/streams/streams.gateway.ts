@@ -169,10 +169,17 @@ export class StreamsGateway implements OnGatewayInit {
         );
 
         this.speaking = false;
-        if (t.is_final || text.length > 15) {
-          this.speaking = true;
-          void this.handleGptResponse(text, callSid, t);
+        if (!t.is_final) {
+          console.log(
+            `⏳ [${callSid || 'no-sid'}] Transcripción parcial recibida, esperando final…`,
+          );
+          return;
         }
+        console.log(
+          `✅ [${callSid || 'no-sid'}] Transcripción final detectada, generando respuesta…`,
+        );
+        this.speaking = true;
+        void this.handleGptResponse(text, callSid, t);
       });
     }
 
@@ -307,10 +314,17 @@ export class StreamsGateway implements OnGatewayInit {
           );
 
           this.speaking = false;
-          if (t.is_final || text.length > 15) {
-            this.speaking = true;
-            void this.handleGptResponse(text, callSid, t);
+          if (!t.is_final) {
+            console.log(
+              `⏳ [${callSid || 'no-sid'}] Transcripción parcial recibida, esperando final…`,
+            );
+            return;
           }
+          console.log(
+            `✅ [${callSid || 'no-sid'}] Transcripción final detectada, generando respuesta…`,
+          );
+          this.speaking = true;
+          void this.handleGptResponse(text, callSid, t);
         });
 
         client.on('message', (raw: Buffer) => {
