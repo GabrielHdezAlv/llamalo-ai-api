@@ -18,6 +18,15 @@ type QueuedTtsItem = {
   priority: number;
   metadata?: Record<string, unknown>;
   submittedAt: number;
+  emotion?: string;
+  style?: string;
+  speed?: number;
+  pitch?: number;
+  volume?: number;
+  textType?: 'plain' | 'ssml';
+  latency?: string;
+  format?: string;
+  extras?: Record<string, unknown>;
 };
 
 @Injectable()
@@ -45,6 +54,26 @@ export class FishTtsService implements OnModuleDestroy {
   private queue: QueuedTtsItem[] = [];
   private currentUtteranceId?: string;
   private currentPriority = Number.NEGATIVE_INFINITY;
+  private readonly defaultLatency = process.env.FISH_TTS_LATENCY_MODE;
+  private readonly defaultFormat = process.env.FISH_TTS_AUDIO_FORMAT;
+  private readonly defaultEmotion = process.env.FISH_TTS_EMOTION;
+  private readonly defaultStyle = process.env.FISH_TTS_STYLE;
+  private readonly defaultTextType = process.env.FISH_TTS_TEXT_TYPE as
+    | 'plain'
+    | 'ssml'
+    | undefined;
+  private readonly defaultSpeed = toOptionalNumber(process.env.FISH_TTS_SPEED);
+  private readonly defaultPitch = toOptionalNumber(process.env.FISH_TTS_PITCH);
+  private readonly defaultVolume = toOptionalNumber(
+    process.env.FISH_TTS_VOLUME,
+  );
+  private readonly defaultModel = process.env.FISH_TTS_MODEL;
+  private readonly initExtras = parseJsonEnv(
+    process.env.FISH_TTS_INIT_OPTIONS_JSON,
+  );
+  private readonly textExtras = parseJsonEnv(
+    process.env.FISH_TTS_TEXT_OPTIONS_JSON,
+  );
 
   connect(): Promise<void> {
     this.shouldReconnect = true;
@@ -87,6 +116,16 @@ export class FishTtsService implements OnModuleDestroy {
           encoding: 'pcm16',
           session_id: sessionId,
         };
+        if (this.defaultLatency) {
+          init.latency = this.defaultLatency;
+        }
+        if (this.defaultFormat) {
+          init.format = this.defaultFormat;
+        }
+        if (this.defaultModel) {
+          init.model = this.defaultModel;
+        }
+        Object.assign(init, this.initExtras);
         try {
           this.ws!.send(JSON.stringify(init));
         } catch (error) {
@@ -247,6 +286,15 @@ export class FishTtsService implements OnModuleDestroy {
       sequenceId?: number;
       priority?: number;
       metadata?: Record<string, unknown>;
+      emotion?: string;
+      style?: string;
+      speed?: number;
+      pitch?: number;
+      volume?: number;
+      textType?: 'plain' | 'ssml';
+      latency?: string;
+      format?: string;
+      extrasJson?: string;
     },
   ): string {
     const utteranceId = options?.utteranceId ?? randomUUID();
@@ -258,6 +306,15 @@ export class FishTtsService implements OnModuleDestroy {
       priority,
       metadata: options?.metadata,
       submittedAt: Date.now(),
+      emotion: options?.emotion ?? this.defaultEmotion,
+      style: options?.style ?? this.defaultStyle,
+      speed: options?.speed ?? this.defaultSpeed,
+      pitch: options?.pitch ?? this.defaultPitch,
+      volume: options?.volume ?? this.defaultVolume,
+      textType: options?.textType ?? this.defaultTextType,
+      latency: options?.latency ?? this.defaultLatency,
+      format: options?.format ?? this.defaultFormat,
+      extras: mergeExtras(this.textExtras, options?.extrasJson),
     };
 
     this.queue.push(item);
@@ -350,14 +407,43 @@ export class FishTtsService implements OnModuleDestroy {
     language?: string,
   ): Promise<Buffer> {
     try {
+      const format = this.defaultFormat || 'mp3';
+      const payload: Record<string, unknown> = {
+        text,
+        format,
+        voice_id: voiceId || process.env.FISH_TTS_VOICE_ID!,
+        language: language || process.env.FISH_LANG || 'es-ES',
+      };
+      if (this.defaultLatency) {
+        payload.latency = this.defaultLatency;
+      }
+      if (this.defaultEmotion) {
+        payload.emotion = this.defaultEmotion;
+      }
+      if (this.defaultStyle) {
+        payload.style = this.defaultStyle;
+      }
+      if (typeof this.defaultSpeed === 'number') {
+        payload.speed = this.defaultSpeed;
+      }
+      if (typeof this.defaultPitch === 'number') {
+        payload.pitch = this.defaultPitch;
+      }
+      if (typeof this.defaultVolume === 'number') {
+        payload.volume = this.defaultVolume;
+      }
+      if (this.defaultModel) {
+        payload.model = this.defaultModel;
+      }
+      if (this.defaultTextType) {
+        payload.text_type = this.defaultTextType;
+      }
+      if (this.textExtras && Object.keys(this.textExtras).length) {
+        Object.assign(payload, this.textExtras);
+      }
       const response = await axios.post(
         'https://api.fish.audio/v1/tts',
-        {
-          text,
-          format: 'mp3',
-          voice_id: voiceId || process.env.FISH_TTS_VOICE_ID!,
-          language: language || process.env.FISH_LANG || 'es-ES',
-        },
+        payload,
         {
           headers: {
             Authorization: `Bearer ${process.env.FISH_API_KEY}`,
@@ -419,6 +505,33 @@ export class FishTtsService implements OnModuleDestroy {
 
     if (next.metadata) {
       payload.metadata = next.metadata;
+    }
+    if (next.emotion) {
+      payload.emotion = next.emotion;
+    }
+    if (next.style) {
+      payload.style = next.style;
+    }
+    if (typeof next.speed === 'number') {
+      payload.speed = next.speed;
+    }
+    if (typeof next.pitch === 'number') {
+      payload.pitch = next.pitch;
+    }
+    if (typeof next.volume === 'number') {
+      payload.volume = next.volume;
+    }
+    if (next.textType) {
+      payload.text_type = next.textType;
+    }
+    if (next.latency) {
+      payload.latency = next.latency;
+    }
+    if (next.format) {
+      payload.format = next.format;
+    }
+    if (next.extras) {
+      Object.assign(payload, next.extras);
     }
 
     try {
@@ -490,4 +603,47 @@ export class FishTtsService implements OnModuleDestroy {
       this.reconnectTimer = undefined;
     }
   }
+}
+
+function toOptionalNumber(value?: string): number | undefined {
+  if (value === undefined || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseJsonEnv(raw?: string): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch (error) {
+    console.error(
+      'No se pudo parsear configuración JSON para Fish TTS:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  return {};
+}
+
+function mergeExtras(
+  base: Record<string, unknown>,
+  overrideJson?: string,
+): Record<string, unknown> | undefined {
+  const merged: Record<string, unknown> = { ...base };
+  if (overrideJson) {
+    try {
+      const override = JSON.parse(overrideJson);
+      if (override && typeof override === 'object' && !Array.isArray(override)) {
+        Object.assign(merged, override as Record<string, unknown>);
+      }
+    } catch (error) {
+      console.error(
+        'No se pudo parsear extrasJson en sendText:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+  return Object.keys(merged).length ? merged : undefined;
 }

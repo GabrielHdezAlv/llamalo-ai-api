@@ -5,6 +5,9 @@ export interface FishAsrInit {
   encoding?: 'pcm16';
   session_id?: string;
   enable_intermediate_results?: boolean;
+  model?: string;
+  latency?: string;
+  [key: string]: unknown;
 }
 
 export interface FishAsrReady {
@@ -53,6 +56,10 @@ export interface FishTtsInit {
   language: string;
   encoding?: 'pcm16';
   session_id?: string;
+  model?: string;
+  latency?: string;
+  format?: string;
+  [key: string]: unknown;
 }
 
 export interface FishTtsText {
@@ -62,6 +69,15 @@ export interface FishTtsText {
   sequence_id?: number;
   priority?: number;
   metadata?: Record<string, unknown>;
+  emotion?: string;
+  style?: string;
+  speed?: number;
+  pitch?: number;
+  volume?: number;
+  text_type?: 'plain' | 'ssml';
+  latency?: string;
+  format?: string;
+  [key: string]: unknown;
 }
 
 export interface FishTtsAudio {

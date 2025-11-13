@@ -21,6 +21,19 @@ export class FishAsrService implements OnModuleDestroy {
   private reconnectAttempts = 0;
   private shouldReconnect = true;
   private expectingStop = false;
+  private readonly sampleRate = Number.parseInt(
+    process.env.FISH_ASR_SAMPLE_RATE ?? '8000',
+    10,
+  );
+  private readonly encoding =
+    (process.env.FISH_ASR_ENCODING as 'pcm16') ?? 'pcm16';
+  private readonly enableIntermediate =
+    process.env.FISH_ASR_ENABLE_INTERMEDIATE_RESULTS !== 'false';
+  private readonly defaultLatency = process.env.FISH_ASR_LATENCY_MODE;
+  private readonly model = process.env.FISH_ASR_MODEL;
+  private readonly extraInit = parseJsonEnv(
+    process.env.FISH_ASR_INIT_OPTIONS_JSON,
+  );
 
   connect(): Promise<void> {
     this.shouldReconnect = true;
@@ -52,12 +65,19 @@ export class FishAsrService implements OnModuleDestroy {
       const handleOpen = () => {
         const init: FishAsrInit = {
           type: 'asr_init',
-          sample_rate: 8000,
+          sample_rate: this.sampleRate,
           language: process.env.FISH_LANG || 'es-ES',
-          encoding: 'pcm16',
+          encoding: this.encoding,
           session_id: sessionId,
-          enable_intermediate_results: true,
+          enable_intermediate_results: this.enableIntermediate,
         };
+        if (this.defaultLatency) {
+          init.latency = this.defaultLatency;
+        }
+        if (this.model) {
+          init.model = this.model;
+        }
+        Object.assign(init, this.extraInit);
         try {
           this.ws!.send(JSON.stringify(init));
         } catch (error) {
@@ -292,4 +312,20 @@ export class FishAsrService implements OnModuleDestroy {
       this.reconnectTimer = undefined;
     }
   }
+}
+
+function parseJsonEnv(raw?: string): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch (error) {
+    console.error(
+      'No se pudo parsear FISH_ASR_INIT_OPTIONS_JSON:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  return {};
 }

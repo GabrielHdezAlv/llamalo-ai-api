@@ -6,6 +6,21 @@ import FormData from 'form-data';
 export class FishAsrHttpService {
   private fishApiKey = process.env.FISH_API_KEY;
   private language = process.env.FISH_LANG || 'es-ES';
+  private sampleRate = Number.parseInt(
+    process.env.FISH_ASR_SAMPLE_RATE ?? '8000',
+    10,
+  );
+  private model = process.env.FISH_ASR_MODEL;
+  private latency = process.env.FISH_ASR_LATENCY_MODE;
+  private enablePunctuation = parseBoolean(
+    process.env.FISH_ASR_ENABLE_PUNCTUATION,
+  );
+  private enableTimestamps = parseBoolean(
+    process.env.FISH_ASR_ENABLE_WORD_TIMESTAMPS,
+  );
+  private readonly extraFormFields = parseJsonEnv(
+    process.env.FISH_ASR_HTTP_OPTIONS_JSON,
+  );
 
   async transcribeAudio(audioBuffer: Buffer): Promise<string> {
     try {
@@ -36,11 +51,36 @@ export class FishAsrHttpService {
         contentType: 'audio/wav',
       });
       formData.append('language', this.language);
-      formData.append('sample_rate', 8000); // 8kHz como Twilio (número, no string)
+      formData.append('sample_rate', this.sampleRate);
+      if (this.model) {
+        formData.append('model', this.model);
+      }
+      if (this.latency) {
+        formData.append('latency', this.latency);
+      }
+      if (this.enablePunctuation !== undefined) {
+        formData.append(
+          'enable_punctuation',
+          this.enablePunctuation ? 'true' : 'false',
+        );
+      }
+      if (this.enableTimestamps !== undefined) {
+        formData.append(
+          'enable_word_timestamps',
+          this.enableTimestamps ? 'true' : 'false',
+        );
+      }
+      for (const [key, value] of Object.entries(this.extraFormFields)) {
+        if (value !== undefined && value !== null) {
+          const normalized =
+            typeof value === 'string' ? value : JSON.stringify(value);
+          formData.append(key, normalized);
+        }
+      }
 
       console.log('📤 Enviando audio a Fish Audio ASR...');
       console.log(
-        `📋 Parámetros: language=${this.language}, sample_rate=8000, filename=audio.wav`,
+        `📋 Parámetros: language=${this.language}, sample_rate=${this.sampleRate}, model=${this.model ?? 'default'}, latency=${this.latency ?? 'default'}, filename=audio.wav`,
       );
 
       const response = await axios.post(
@@ -76,7 +116,7 @@ export class FishAsrHttpService {
             audioSize: audioBuffer.length,
             wavSize: audioBuffer.length + 44,
             language: this.language,
-            sample_rate: 8000,
+            sample_rate: this.sampleRate,
             contentType: 'audio/wav',
             filename: 'audio.wav',
           });
@@ -107,7 +147,7 @@ export class FishAsrHttpService {
    * @returns Buffer con formato WAV
    */
   private pcmToWav(pcmBuffer: Buffer): Buffer {
-    const sampleRate = 8000;
+    const sampleRate = this.sampleRate;
     const numChannels = 1;
     const bitsPerSample = 16;
     const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
@@ -137,4 +177,27 @@ export class FishAsrHttpService {
 
     return buffer;
   }
+}
+
+function parseBoolean(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'true' || value === '1') return true;
+  if (value === 'false' || value === '0') return false;
+  return undefined;
+}
+
+function parseJsonEnv(raw?: string): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch (error) {
+    console.error(
+      'No se pudo parsear FISH_ASR_HTTP_OPTIONS_JSON:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  return {};
 }
