@@ -62,6 +62,8 @@ setInterval(() => {
 })
 export class StreamsGateway implements OnGatewayInit {
   private speaking = false;
+  private readonly autoRespondEnabled =
+    process.env.ENABLE_AUTO_RESPONSE === 'true';
   // Buffer para acumular audio HTTP antes de enviar a ASR
   private audioBuffers: Map<string, Buffer> = new Map();
   private audioBufferTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -176,8 +178,17 @@ export class StreamsGateway implements OnGatewayInit {
           return;
         }
         console.log(
-          `✅ [${callSid || 'no-sid'}] Transcripción final detectada, generando respuesta…`,
+          `✅ [${callSid || 'no-sid'}] Transcripción final detectada.`,
         );
+        if (!this.autoRespondEnabled) {
+          console.log(
+            `🤖 [${callSid || 'no-sid'}] Respuesta automática deshabilitada, solo logging.`,
+          );
+          if (callSid) {
+            this.lastUtteranceMeta.delete(callSid);
+          }
+          return;
+        }
         this.speaking = true;
         void this.handleGptResponse(text, callSid, t);
       });
@@ -321,8 +332,17 @@ export class StreamsGateway implements OnGatewayInit {
             return;
           }
           console.log(
-            `✅ [${callSid || 'no-sid'}] Transcripción final detectada, generando respuesta…`,
+            `✅ [${callSid || 'no-sid'}] Transcripción final detectada.`,
           );
+          if (!this.autoRespondEnabled) {
+            console.log(
+              `🤖 [${callSid || 'no-sid'}] Respuesta automática deshabilitada, solo logging.`,
+            );
+            if (callSid) {
+              this.lastUtteranceMeta.delete(callSid);
+            }
+            return;
+          }
           this.speaking = true;
           void this.handleGptResponse(text, callSid, t);
         });
