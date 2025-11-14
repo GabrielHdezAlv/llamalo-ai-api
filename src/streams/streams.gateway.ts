@@ -1,5 +1,4 @@
-import { WebSocketGateway, OnGatewayInit } from '@nestjs/websockets';
-import { Server } from 'ws';
+import { WebSocketGateway } from '@nestjs/websockets';
 import { ulawToPcm16, pcm16ToUlawB64 } from './audio.utils';
 import { FishAsrService } from '../fish-audio/realtime/fish-asr.service';
 import { FishTtsService } from '../fish-audio/realtime/fish-tts.service';
@@ -18,6 +17,17 @@ interface WebSocketClient {
   send: (data: string) => void;
   on: (event: string, callback: (data: Buffer) => void) => void;
   close: () => void;
+}
+
+// Sesión por llamada para gestionar estado independiente
+interface CallSession {
+  callSid: string;
+  speaking: boolean;
+  useWebSocket: boolean;
+  audioBuffer: Buffer;
+  audioBufferTimer?: NodeJS.Timeout;
+  httpQueue: Promise<void>;
+  lastAsrTime: number;
 }
 
 // 🧠 Métricas acumuladas globales
@@ -60,15 +70,11 @@ setInterval(() => {
     credentials: true,
   },
 })
-export class StreamsGateway implements OnGatewayInit {
-  private speaking = false;
+export class StreamsGateway {
   private readonly autoRespondEnabled =
     process.env.ENABLE_AUTO_RESPONSE === 'true';
-  // Buffer para acumular audio HTTP antes de enviar a ASR
-  private audioBuffers: Map<string, Buffer> = new Map();
-  private audioBufferTimers: Map<string, NodeJS.Timeout> = new Map();
-  private lastUtteranceMeta: Map<string, FishAsrTranscript> = new Map();
-  private httpQueues: Map<string, Promise<void>> = new Map();
+  // Gestión de sesiones por llamada
+  private sessions: Map<string, CallSession> = new Map();
 
   constructor(
     private readonly asr: FishAsrService,
@@ -96,6 +102,7 @@ export class StreamsGateway implements OnGatewayInit {
 
     const startTime = Date.now();
 
+    // Intentar conectar ASR/TTS WebSocket
     let useWebSocket = false;
     try {
       await Promise.all([this.asr.connect(), this.tts.connect()]);
@@ -107,143 +114,51 @@ export class StreamsGateway implements OnGatewayInit {
       useWebSocket = false;
     }
 
-    let callSid = '';
-    let lastAsrTime = 0;
-
-    // Solo configurar callbacks si ASR/TTS están conectados
-    if (this.asr && this.tts) {
-      this.tts.onAudio(
-        (
-          pcm: Int16Array,
-          info: {
-            isFinal?: boolean;
-            utteranceId?: string;
-            sequenceId?: number;
-            startMs?: number;
-            endMs?: number;
-          },
-        ) => {
-          if (!this.speaking) return;
-          const ulawB64 = pcm16ToUlawB64(pcm);
-          client.send(
-            JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
-          );
-          recordMetric('tts', pcm.length / 8); // proxy de carga TTS
-          const metaBits: string[] = [];
-          if (info?.utteranceId) {
-            metaBits.push(`utt ${info.utteranceId}`);
-          }
-          if (typeof info?.sequenceId === 'number') {
-            metaBits.push(`seq ${info.sequenceId}`);
-          }
-          if (
-            typeof info?.startMs === 'number' &&
-            typeof info?.endMs === 'number'
-          ) {
-            metaBits.push(`win ${info.startMs}-${info.endMs}ms`);
-          }
-          if (info?.isFinal) {
-            metaBits.push('final');
-          }
-          console.log(
-            `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)${
-              metaBits.length ? ` [${metaBits.join(' | ')}]` : ''
-            }`,
-          );
-        },
-      );
-
-      this.asr.onTranscript((t) => {
-        const text = (t.text || '').trim();
-        if (!text) return;
-
-        const now = Date.now();
-        if (lastAsrTime) recordMetric('asr', now - lastAsrTime);
-        lastAsrTime = now;
-
-        if (callSid) {
-          this.lastUtteranceMeta.set(callSid, t);
-        }
-
-        console.log(
-          `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})` +
-            (t.utterance_id ? ` [utt ${t.utterance_id}]` : ''),
-        );
-
-        this.speaking = false;
-        if (!t.is_final) {
-          console.log(
-            `⏳ [${callSid || 'no-sid'}] Transcripción parcial recibida, esperando final…`,
-          );
-          return;
-        }
-        console.log(
-          `✅ [${callSid || 'no-sid'}] Transcripción final detectada.`,
-        );
-        if (!this.autoRespondEnabled) {
-          console.log(
-            `🤖 [${callSid || 'no-sid'}] Respuesta automática deshabilitada, solo logging.`,
-          );
-          if (callSid) {
-            this.lastUtteranceMeta.delete(callSid);
-          }
-          return;
-        }
-        this.speaking = true;
-        void this.handleGptResponse(text, callSid, t);
-      });
-    }
+    let currentCallSid = '';
 
     client.on('message', (raw: Buffer) => {
       try {
         const msg = JSON.parse(raw.toString()) as TwilioMsg;
         console.log('📨 Twilio mensaje recibido:', msg.event);
-        console.log('📋 Datos del mensaje:', JSON.stringify(msg, null, 2));
 
         if (msg.event === 'start') {
-          callSid = msg.start?.callSid || '';
-          console.log(`🎯 CallSid recibido: ${callSid}`);
-          console.log('🎯 Start data completo:', msg.start);
+          currentCallSid = msg.start?.callSid || '';
+          console.log(`🎯 CallSid recibido: ${currentCallSid}`);
+          
+          // Crear sesión para esta llamada
+          this.createSession(currentCallSid, client, useWebSocket);
         }
 
         if (msg.event === 'media') {
-          this.speaking = false;
-          this.tts.cancelAll('interrupted-by-user-audio');
-          console.log('🎵 Audio recibido de Twilio');
+          const session = this.sessions.get(currentCallSid);
+          if (!session) {
+            console.warn(`⚠️ No hay sesión para callSid: ${currentCallSid}`);
+            return;
+          }
 
-          // Validar que tenemos el payload de media
+          // Validar payload
           if (!msg.media?.payload) {
             console.warn('⚠️ Mensaje de media sin payload válido');
             return;
           }
 
-          if (useWebSocket && this.asr) {
-            // Usar WebSocket si está disponible
+          // Detener TTS cuando el usuario habla
+          session.speaking = false;
+          this.tts.cancelAll('interrupted-by-user-audio');
+
+          // Procesar audio según el modo
+          if (session.useWebSocket && this.asr) {
             const pcm = ulawToPcm16(msg.media.payload);
             this.asr.sendPcm16(pcm);
           } else {
-            // Usar HTTP fallback
-            console.log('🔄 Procesando audio con HTTP fallback...');
-            void this.processAudioWithHttp(msg.media.payload, callSid);
+            void this.processAudioWithHttp(msg.media.payload, currentCallSid);
           }
         }
 
         if (msg.event === 'stop') {
-          if (this.asr) {
-            this.asr.stop();
-          }
-          this.tts.cancelAll('call-stop');
-
-          // Flush cualquier audio pendiente antes de cerrar
-          if (this.audioBuffers.has(callSid)) {
-            void this.flushAudioBuffer(callSid, true);
-          }
-
+          console.log(`🛑 [${currentCallSid}] Llamada terminada.`);
+          this.cleanupSession(currentCallSid);
           client.close();
-          console.log(`🛑 [${callSid}] Llamada terminada.`);
-          if (callSid) {
-            this.lastUtteranceMeta.delete(callSid);
-          }
         }
       } catch (err) {
         console.error('❌ Error procesando mensaje Twilio:', err);
@@ -251,139 +166,118 @@ export class StreamsGateway implements OnGatewayInit {
     });
   }
 
-  afterInit(server: Server) {
-    console.log('🚀 StreamsGateway afterInit ejecutándose...');
-    console.log('🔧 WebSocket server configurado correctamente');
+  private createSession(callSid: string, client: WebSocketClient, useWebSocket: boolean) {
+    console.log(`📝 [${callSid}] Creando nueva sesión`);
 
-    server.on('connection', (client: WebSocketClient) => {
-      console.log('🛰️ Twilio WS conectado');
-      console.log('📡 Nueva conexión WebSocket establecida');
-      const startTime = Date.now();
+    const session: CallSession = {
+      callSid,
+      speaking: false,
+      useWebSocket,
+      audioBuffer: Buffer.alloc(0),
+      httpQueue: Promise.resolve(),
+      lastAsrTime: 0,
+    };
 
-      void Promise.all([this.asr.connect(), this.tts.connect()]).then(() => {
-        console.log(`✅ ASR + TTS conectados en ${Date.now() - startTime}ms`);
+    this.sessions.set(callSid, session);
 
-        let callSid = '';
-        let lastAsrTime = 0;
+    // Configurar callbacks de ASR y TTS solo si usamos WebSocket
+    if (useWebSocket) {
+      this.setupWebSocketCallbacks(callSid, client);
+    }
+  }
 
-        this.tts.onAudio(
-          (
-            pcm: Int16Array,
-            info: {
-              isFinal?: boolean;
-              utteranceId?: string;
-              sequenceId?: number;
-              startMs?: number;
-              endMs?: number;
-            },
-          ) => {
-            if (!this.speaking) return;
-            const ulawB64 = pcm16ToUlawB64(pcm);
-            client.send(
-              JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
-            );
-            recordMetric('tts', pcm.length / 8); // proxy de carga TTS
-            const metaBits: string[] = [];
-            if (info?.utteranceId) {
-              metaBits.push(`utt ${info.utteranceId}`);
-            }
-            if (typeof info?.sequenceId === 'number') {
-              metaBits.push(`seq ${info.sequenceId}`);
-            }
-            if (
-              typeof info?.startMs === 'number' &&
-              typeof info?.endMs === 'number'
-            ) {
-              metaBits.push(`win ${info.startMs}-${info.endMs}ms`);
-            }
-            if (info?.isFinal) {
-              metaBits.push('final');
-            }
-            console.log(
-              `🔊 [${callSid || 'no-sid'}] Audio TTS emitido (${pcm.length} samples)${
-                metaBits.length ? ` [${metaBits.join(' | ')}]` : ''
-              }`,
-            );
-          },
+  private setupWebSocketCallbacks(callSid: string, client: WebSocketClient) {
+    // Callback para audio TTS
+    this.tts.onAudio(
+      (
+        pcm: Int16Array,
+        info: {
+          isFinal?: boolean;
+          utteranceId?: string;
+          sequenceId?: number;
+          startMs?: number;
+          endMs?: number;
+        },
+      ) => {
+        const session = this.sessions.get(callSid);
+        if (!session || !session.speaking) return;
+
+        const ulawB64 = pcm16ToUlawB64(pcm);
+        client.send(
+          JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
         );
+        recordMetric('tts', pcm.length / 8);
+        
+        const metaBits: string[] = [];
+        if (info?.utteranceId) metaBits.push(`utt ${info.utteranceId}`);
+        if (typeof info?.sequenceId === 'number') metaBits.push(`seq ${info.sequenceId}`);
+        if (typeof info?.startMs === 'number' && typeof info?.endMs === 'number') {
+          metaBits.push(`win ${info.startMs}-${info.endMs}ms`);
+        }
+        if (info?.isFinal) metaBits.push('final');
+        
+        console.log(
+          `🔊 [${callSid}] Audio TTS emitido (${pcm.length} samples)${
+            metaBits.length ? ` [${metaBits.join(' | ')}]` : ''
+          }`,
+        );
+      },
+    );
 
-        this.asr.onTranscript((t) => {
-          const text = (t.text || '').trim();
-          if (!text) return;
+    // Callback para transcripción ASR
+    this.asr.onTranscript((t) => {
+      const text = (t.text || '').trim();
+      if (!text) return;
 
-          const now = Date.now();
-          if (lastAsrTime) recordMetric('asr', now - lastAsrTime);
-          lastAsrTime = now;
+      const session = this.sessions.get(callSid);
+      if (!session) return;
 
-          if (callSid) {
-            this.lastUtteranceMeta.set(callSid, t);
-          }
+      const now = Date.now();
+      if (session.lastAsrTime) recordMetric('asr', now - session.lastAsrTime);
+      session.lastAsrTime = now;
 
-          console.log(
-            `🎙️ [${callSid || 'no-sid'}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})` +
-              (t.utterance_id ? ` [utt ${t.utterance_id}]` : ''),
-          );
+      console.log(
+        `🎙️ [${callSid}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})` +
+          (t.utterance_id ? ` [utt ${t.utterance_id}]` : ''),
+      );
 
-          this.speaking = false;
-          if (!t.is_final) {
-            console.log(
-              `⏳ [${callSid || 'no-sid'}] Transcripción parcial recibida, esperando final…`,
-            );
-            return;
-          }
-          console.log(
-            `✅ [${callSid || 'no-sid'}] Transcripción final detectada.`,
-          );
-          if (!this.autoRespondEnabled) {
-            console.log(
-              `🤖 [${callSid || 'no-sid'}] Respuesta automática deshabilitada, solo logging.`,
-            );
-            if (callSid) {
-              this.lastUtteranceMeta.delete(callSid);
-            }
-            return;
-          }
-          this.speaking = true;
-          void this.handleGptResponse(text, callSid, t);
-        });
-
-        client.on('message', (raw: Buffer) => {
-          try {
-            const msg = JSON.parse(raw.toString()) as TwilioMsg;
-            console.log('📨 Twilio mensaje recibido:', msg.event);
-            console.log('📋 Datos del mensaje:', JSON.stringify(msg, null, 2));
-
-            if (msg.event === 'start') {
-              callSid = msg.start?.callSid || '';
-              console.log(`🎯 CallSid recibido: ${callSid}`);
-              console.log('🎯 Start data completo:', msg.start);
-            }
-
-            if (msg.event === 'media') {
-              this.speaking = false;
-              this.tts.cancelAll('interrupted-by-user-audio');
-              const pcm = ulawToPcm16(msg.media.payload);
-              this.asr.sendPcm16(pcm);
-            }
-
-            if (msg.event === 'stop') {
-              this.asr.stop();
-              this.tts.cancelAll('call-stop');
-              if (callSid && this.audioBuffers.has(callSid)) {
-                void this.flushAudioBuffer(callSid, true);
-              }
-              client.close();
-              console.log(`🛑 [${callSid}] Llamada terminada.`);
-              if (callSid) {
-                this.lastUtteranceMeta.delete(callSid);
-              }
-            }
-          } catch (err) {
-            console.error('Error procesando mensaje Twilio WS:', err);
-          }
-        });
-      });
+      session.speaking = false;
+      
+      if (!t.is_final) {
+        console.log(`⏳ [${callSid}] Transcripción parcial, esperando final…`);
+        return;
+      }
+      
+      console.log(`✅ [${callSid}] Transcripción final detectada.`);
+      
+      if (!this.autoRespondEnabled) {
+        console.log(`🤖 [${callSid}] Respuesta automática deshabilitada.`);
+        return;
+      }
+      
+      session.speaking = true;
+      void this.handleGptResponse(text, callSid, t);
     });
+  }
+
+  private cleanupSession(callSid: string) {
+    const session = this.sessions.get(callSid);
+    if (!session) return;
+
+    console.log(`🧹 [${callSid}] Limpiando sesión`);
+
+    // Limpiar timer de audio buffer
+    if (session.audioBufferTimer) {
+      clearTimeout(session.audioBufferTimer);
+    }
+
+    // Detener ASR/TTS si están activos
+    if (session.useWebSocket) {
+      this.asr.stop();
+      this.tts.cancelAll('call-stop');
+    }
+
+    this.sessions.delete(callSid);
   }
 
   private async handleGptResponse(
@@ -391,6 +285,12 @@ export class StreamsGateway implements OnGatewayInit {
     callSid: string,
     transcript?: FishAsrTranscript,
   ): Promise<void> {
+    const session = this.sessions.get(callSid);
+    if (!session) {
+      console.warn(`⚠️ [${callSid}] No hay sesión activa para GPT`);
+      return;
+    }
+
     try {
       const gptStart = Date.now();
       const utteranceId = transcript?.utterance_id;
@@ -405,48 +305,33 @@ export class StreamsGateway implements OnGatewayInit {
       let wordCount = 0;
       let chunkIndex = 0;
 
-      if (utteranceId || typeof sequenceId === 'number') {
-        console.log(
-          `🧭 [${callSid}] Procesando respuesta GPT para utt ${
-            utteranceId ?? 'sin-id'
-          }${typeof sequenceId === 'number' ? ` seq ${sequenceId}` : ''}${
-            typeof startMs === 'number' && typeof endMs === 'number'
-              ? ` (${startMs}ms-${endMs}ms)`
-              : ''
-          }`,
-        );
-      }
+      console.log(`🧭 [${callSid}] Procesando respuesta GPT`);
 
       for await (const token of this.gpt.streamReply(text)) {
-        if (!this.speaking) break;
+        if (!session.speaking) break;
+        
         if (!firstToken) {
           firstToken = Date.now();
           recordMetric('gpt', firstToken - gptStart);
-          console.log(
-            `⚡ [${callSid}] GPT primer token tras ${firstToken - gptStart}ms`,
-          );
+          console.log(`⚡ [${callSid}] GPT primer token tras ${firstToken - gptStart}ms`);
         }
 
         wordBuffer += token;
 
-        // Cuando tenemos una palabra completa (termina con espacio o puntuación)
         if (/[\s.!?,:;]/.test(token)) {
           sentenceBuffer += wordBuffer;
           wordBuffer = '';
           wordCount++;
 
-          // Enviar cada 5-10 palabras o al finalizar oración (según mejores prácticas de Fish Audio)
-          const shouldSend =
-            wordCount >= 5 || /[.!?]\s*$/.test(sentenceBuffer.trim());
+          const shouldSend = wordCount >= 5 || /[.!?]\s*$/.test(sentenceBuffer.trim());
 
           if (shouldSend && sentenceBuffer.trim()) {
-            // Asegurar que terminamos con espacio (mejor práctica: palabras completas con espacios)
             let textToSend = sentenceBuffer.trim();
-            // Solo agregar espacio si no termina con puntuación
             if (!/[.!?]$/.test(textToSend)) {
               textToSend += ' ';
             }
             console.log(`💬 [${callSid}] GPT streaming: "${textToSend}"`);
+            
             const ttsStart = Date.now();
             const queuedId = this.tts.sendText(textToSend, {
               utteranceId,
@@ -465,14 +350,9 @@ export class StreamsGateway implements OnGatewayInit {
             sentenceBuffer = '';
             wordCount = 0;
             chunkIndex += 1;
+            
             if (queuedId) {
-              const priorityLabel = priority.toString();
-              console.log(
-                '🗂️ [%s] TTS chunk en cola (%s) prioridad %s',
-                callSid,
-                queuedId,
-                priorityLabel,
-              );
+              console.log(`🗂️ [${callSid}] TTS chunk en cola (${queuedId}) prioridad ${priority}`);
             }
           }
         }
@@ -482,9 +362,9 @@ export class StreamsGateway implements OnGatewayInit {
       recordMetric('gpt', total);
       console.log(`✅ [${callSid}] GPT completado en ${total}ms`);
 
-      // Enviar cualquier texto restante
+      // Enviar texto restante
       const remaining = (sentenceBuffer + wordBuffer).trim();
-      if (this.speaking && remaining) {
+      if (session.speaking && remaining) {
         console.log(`💬 [${callSid}] GPT final: "${remaining}"`);
         const ttsStart = Date.now();
         const queuedId = this.tts.sendText(remaining, {
@@ -502,19 +382,10 @@ export class StreamsGateway implements OnGatewayInit {
           },
         });
         recordMetric('tts', Date.now() - ttsStart);
+        
         if (queuedId) {
-          const priorityLabel = priority.toString();
-          console.log(
-            '🗂️ [%s] TTS chunk final en cola (%s) prioridad %s',
-            callSid,
-            queuedId,
-            priorityLabel,
-          );
+          console.log(`🗂️ [${callSid}] TTS chunk final en cola (${queuedId}) prioridad ${priority}`);
         }
-      }
-
-      if (transcript?.is_final && callSid) {
-        this.lastUtteranceMeta.delete(callSid);
       }
     } catch (err) {
       console.error(`❌ [${callSid}] Error procesando respuesta GPT:`, err);
@@ -522,105 +393,46 @@ export class StreamsGateway implements OnGatewayInit {
   }
 
   private processAudioWithHttp(audioPayload: string, callSid: string): void {
+    const session = this.sessions.get(callSid);
+    if (!session) {
+      console.warn(`⚠️ [${callSid}] No hay sesión para procesar audio HTTP`);
+      return;
+    }
+
     try {
-      // Validar que tengamos payload válido
-      if (!audioPayload || typeof audioPayload !== 'string') {
-        console.warn('⚠️ Audio payload inválido o faltante');
+      if (!audioPayload || typeof audioPayload !== 'string' || audioPayload.trim().length === 0) {
+        console.warn('⚠️ Audio payload inválido o vacío');
         return;
       }
 
-      // Validar que el payload no esté vacío
-      if (audioPayload.trim().length === 0) {
-        console.warn('⚠️ Audio payload vacío');
-        return;
-      }
-
-      let pcm: Int16Array;
       let pcmArray: Int16Array;
       try {
-        // Convertir audio de Twilio a formato PCM
-        pcm = ulawToPcm16(audioPayload);
-
-        // Log para debugging y validación
+        const pcm = ulawToPcm16(audioPayload);
+        
         if (!pcm || pcm.length === 0) {
-          console.warn(
-            `⚠️ PCM inválido - length: ${pcm?.length || 0}, payload length: ${audioPayload.length}`,
-          );
+          console.warn(`⚠️ PCM inválido - length: ${pcm?.length || 0}`);
           return;
         }
 
-        // Convertir a Int16Array si es necesario
-        if (!(pcm instanceof Int16Array)) {
-          // mulaw-js puede devolver un array normal, convertirlo a Int16Array
-          const pcmAsAny = pcm as unknown as {
-            constructor?: { name?: string };
-            length?: number;
-          };
-          console.log(
-            `⚠️ PCM no es Int16Array, convirtiendo... tipo: ${pcmAsAny?.constructor?.name || 'unknown'}, length: ${pcmAsAny?.length || 0}`,
-          );
-          try {
-            pcmArray = new Int16Array(pcm as ArrayLike<number>);
-          } catch (error) {
-            console.error(
-              '❌ Error convirtiendo array a Int16Array:',
-              error instanceof Error ? error.message : String(error),
-            );
-            return;
-          }
-        } else {
-          pcmArray = pcm;
-        }
-
-        console.log(
-          `✅ PCM generado: ${pcmArray.length} samples (${(pcmArray.length * 2).toFixed(0)} bytes)`,
-        );
+        pcmArray = pcm instanceof Int16Array ? pcm : new Int16Array(pcm as ArrayLike<number>);
+        console.log(`✅ PCM generado: ${pcmArray.length} samples (${(pcmArray.length * 2).toFixed(0)} bytes)`);
       } catch (error) {
-        console.error(
-          '❌ Error decodificando audio base64:',
-          error instanceof Error ? error.message : String(error),
-        );
+        console.error('❌ Error decodificando audio:', error instanceof Error ? error.message : String(error));
         return;
       }
 
-      // Acumular chunks de audio en el buffer
-      if (!this.audioBuffers.has(callSid)) {
-        this.audioBuffers.set(callSid, Buffer.alloc(0));
-      }
-
-      const currentBuffer = this.audioBuffers.get(callSid)!;
-
-      // Crear Buffer desde Int16Array de forma segura
+      // Crear buffer desde PCM
       let pcmBuffer: Buffer;
       try {
-        if (pcmArray.buffer && pcmArray.buffer instanceof ArrayBuffer) {
-          pcmBuffer = Buffer.from(
-            pcmArray.buffer,
-            pcmArray.byteOffset,
-            pcmArray.byteLength,
-          );
-          console.log(
-            `✅ Buffer creado desde PCM: ${pcmBuffer.length} bytes (offset: ${pcmArray.byteOffset}, length: ${pcmArray.byteLength})`,
-          );
-        } else {
-          console.warn(
-            `⚠️ Usando método alternativo - PCM buffer: ${!!pcmArray.buffer}, buffer type: ${typeof pcmArray.buffer}`,
-          );
-          const tempArray = new Int16Array(pcmArray);
-          pcmBuffer = Buffer.from(tempArray.buffer);
-          console.log(
-            `✅ Buffer alternativo creado: ${pcmBuffer.length} bytes`,
-          );
-        }
+        pcmBuffer = Buffer.from(pcmArray.buffer, pcmArray.byteOffset, pcmArray.byteLength);
+        console.log(`✅ Buffer creado: ${pcmBuffer.length} bytes`);
       } catch (error) {
-        console.error(
-          '❌ Error creando Buffer desde PCM:',
-          error instanceof Error ? error.message : String(error),
-        );
+        console.error('❌ Error creando Buffer:', error instanceof Error ? error.message : String(error));
         return;
       }
 
-      const appendedBuffer = Buffer.concat([currentBuffer, pcmBuffer]);
+      // Acumular en el buffer de la sesión
+      const appendedBuffer = Buffer.concat([session.audioBuffer, pcmBuffer]);
       const chunkSizeBytes = 16000; // 1 segundo a 8kHz 16-bit mono
       const timeoutMs = 1000;
 
@@ -633,39 +445,31 @@ export class StreamsGateway implements OnGatewayInit {
         workingBuffer = workingBuffer.slice(chunkSizeBytes);
       }
 
-      this.audioBuffers.set(callSid, workingBuffer);
+      session.audioBuffer = workingBuffer;
 
       chunks.forEach((chunk, index) => {
-        console.log(
-          `🚀 [${callSid}] Encolando chunk HTTP #${index + 1} (${chunk.length} bytes)`,
-        );
+        console.log(`🚀 [${callSid}] Encolando chunk HTTP #${index + 1} (${chunk.length} bytes)`);
         this.enqueueHttpChunk(callSid, chunk);
       });
 
       const bufferSeconds = (workingBuffer.length / 16000).toFixed(2);
-      console.log(
-        `📦 Buffer restante: ${workingBuffer.length} bytes (${bufferSeconds}s)`,
-      );
+      console.log(`📦 Buffer restante: ${workingBuffer.length} bytes (${bufferSeconds}s)`);
 
-      const existingTimer = this.audioBufferTimers.get(callSid);
-      if (existingTimer) {
-        clearTimeout(existingTimer);
+      // Gestionar timer de timeout
+      if (session.audioBufferTimer) {
+        clearTimeout(session.audioBufferTimer);
       }
 
       if (workingBuffer.length > 0) {
-        const timer = setTimeout(() => {
-          const pending = this.audioBuffers.get(callSid);
-          if (pending && pending.length > 0) {
-            console.log(
-              `⏰ Timeout HTTP — enviando chunk residual de ${pending.length} bytes`,
-            );
-            this.audioBuffers.set(callSid, Buffer.alloc(0));
-            this.enqueueHttpChunk(callSid, Buffer.from(pending));
+        session.audioBufferTimer = setTimeout(() => {
+          const currentSession = this.sessions.get(callSid);
+          if (currentSession && currentSession.audioBuffer.length > 0) {
+            console.log(`⏰ Timeout HTTP — enviando chunk residual de ${currentSession.audioBuffer.length} bytes`);
+            const pending = Buffer.from(currentSession.audioBuffer);
+            currentSession.audioBuffer = Buffer.alloc(0);
+            this.enqueueHttpChunk(callSid, pending);
           }
         }, timeoutMs);
-        this.audioBufferTimers.set(callSid, timer);
-      } else {
-        this.audioBufferTimers.delete(callSid);
       }
     } catch (error) {
       console.error('❌ Error procesando audio con HTTP:', error);
@@ -673,27 +477,27 @@ export class StreamsGateway implements OnGatewayInit {
   }
 
   private flushAudioBuffer(callSid: string, finalize = false): void {
+    const session = this.sessions.get(callSid);
+    if (!session || session.audioBuffer.length === 0) {
+      return;
+    }
+
     try {
-      const buffer = this.audioBuffers.get(callSid);
-      if (!buffer || buffer.length === 0) {
-        return;
-      }
-
-      // Limpiar timers y buffer
-      const timer = this.audioBufferTimers.get(callSid);
-      if (timer) {
-        clearTimeout(timer);
-        this.audioBufferTimers.delete(callSid);
-      }
-      this.audioBuffers.delete(callSid);
-
       console.log(
-        `📤 Enviando buffer residual HTTP: ${buffer.length} bytes (${(
-          buffer.length / 16000
+        `📤 Enviando buffer residual HTTP: ${session.audioBuffer.length} bytes (${(
+          session.audioBuffer.length / 16000
         ).toFixed(1)}s)`,
       );
 
-      this.enqueueHttpChunk(callSid, Buffer.from(buffer), finalize);
+      const buffer = Buffer.from(session.audioBuffer);
+      session.audioBuffer = Buffer.alloc(0);
+      
+      if (session.audioBufferTimer) {
+        clearTimeout(session.audioBufferTimer);
+        session.audioBufferTimer = undefined;
+      }
+
+      this.enqueueHttpChunk(callSid, buffer, finalize);
     } catch (error) {
       console.error('❌ Error flush audio buffer:', error);
     }
@@ -703,17 +507,22 @@ export class StreamsGateway implements OnGatewayInit {
     text: string,
     callSid: string,
   ): Promise<void> {
-    try {
-      console.log('💬 Generando respuesta GPT para:', text);
+    const session = this.sessions.get(callSid);
+    if (!session) {
+      console.warn(`⚠️ [${callSid}] No hay sesión para GPT HTTP`);
+      return;
+    }
 
-      // Generar respuesta completa con GPT
+    try {
+      console.log(`💬 [${callSid}] Generando respuesta GPT:`, text);
+
       let fullResponse = '';
       for await (const token of this.gpt.streamReply(text)) {
         fullResponse += token;
       }
 
       if (fullResponse.trim()) {
-        console.log('💬 Respuesta GPT completa:', fullResponse);
+        console.log(`💬 [${callSid}] Respuesta GPT completa:`, fullResponse);
 
         // Generar audio con TTS HTTP
         const audioUrl = await this.ttsHttp.generateAudioAndUpload(
@@ -723,9 +532,10 @@ export class StreamsGateway implements OnGatewayInit {
 
         // Reproducir con Twilio
         await this.twilioMedia.playUrl(callSid, audioUrl);
+        console.log(`🎧 [${callSid}] Audio enviado a Twilio`);
       }
     } catch (error) {
-      console.error('❌ Error manejando respuesta GPT HTTP:', error);
+      console.error(`❌ [${callSid}] Error manejando respuesta GPT HTTP:`, error);
     }
   }
 
@@ -734,7 +544,13 @@ export class StreamsGateway implements OnGatewayInit {
     chunk: Buffer,
     finalize = false,
   ): void {
-    const previous = this.httpQueues.get(callSid) ?? Promise.resolve();
+    const session = this.sessions.get(callSid);
+    if (!session) {
+      console.warn(`⚠️ [${callSid}] No hay sesión para encolar chunk HTTP`);
+      return;
+    }
+
+    const previous = session.httpQueue;
 
     const next = previous
       .catch((error) => {
@@ -745,13 +561,7 @@ export class StreamsGateway implements OnGatewayInit {
       })
       .then(() => this.processHttpChunk(callSid, chunk, finalize));
 
-    this.httpQueues.set(callSid, next);
-
-    void next.finally(() => {
-      if (this.httpQueues.get(callSid) === next) {
-        this.httpQueues.delete(callSid);
-      }
-    });
+    session.httpQueue = next;
   }
 
   private async processHttpChunk(
@@ -784,40 +594,5 @@ export class StreamsGateway implements OnGatewayInit {
         error instanceof Error ? error.message : String(error),
       );
     }
-  }
-
-  private pcmToWav(pcm: Int16Array): Buffer {
-    // Convertir PCM a WAV básico
-    const sampleRate = 8000;
-    const numChannels = 1;
-    const bitsPerSample = 16;
-    const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
-    const blockAlign = (numChannels * bitsPerSample) / 8;
-    const dataSize = pcm.length * 2;
-    const fileSize = 36 + dataSize;
-
-    const buffer = Buffer.alloc(44 + dataSize);
-
-    // WAV header
-    buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(fileSize, 4);
-    buffer.write('WAVE', 8);
-    buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16);
-    buffer.writeUInt16LE(1, 20);
-    buffer.writeUInt16LE(numChannels, 22);
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(byteRate, 28);
-    buffer.writeUInt16LE(blockAlign, 32);
-    buffer.writeUInt16LE(bitsPerSample, 34);
-    buffer.write('data', 36);
-    buffer.writeUInt32LE(dataSize, 40);
-
-    // PCM data
-    for (let i = 0; i < pcm.length; i++) {
-      buffer.writeInt16LE(pcm[i], 44 + i * 2);
-    }
-
-    return buffer;
   }
 }
