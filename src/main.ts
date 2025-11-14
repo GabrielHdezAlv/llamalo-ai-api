@@ -5,10 +5,13 @@ import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializad
 import * as bodyParser from 'body-parser';
 import * as WebSocket from 'ws';
 import { StreamsGateway } from './streams/streams.gateway';
+import { configureLogging } from './utils/logging';
 
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
   getFirebaseApp();
+
+  configureLogging();
 
   console.log('🌐 Servidor HTTP y WS escuchando en /voice/stream');
 
