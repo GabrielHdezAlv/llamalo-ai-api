@@ -131,15 +131,25 @@ export class StreamsGateway {
 
     client.on('message', (raw: Buffer) => {
       try {
-        const msg = JSON.parse(raw.toString()) as TwilioMsg;
+        const rawString = raw.toString();
+        
+        // Log del primer mensaje raw para debug
+        if (mediaCount === 0 && !currentCallSid) {
+          console.log('🔍 PRIMER MENSAJE RAW:', rawString.substring(0, 500));
+        }
+        
+        const msg = JSON.parse(rawString) as TwilioMsg;
         
         // Incrementar contador de media
         if (msg.event === 'media') {
           mediaCount++;
         }
         
-        // Solo mostrar evento si no es media repetitivo sin start
-        if (!(msg.event === 'media' && !currentCallSid && mediaBeforeStartWarned)) {
+        // Log de eventos no-media sin importar qué
+        if (msg.event !== 'media') {
+          console.log('📨 Twilio mensaje NO-MEDIA recibido:', msg.event);
+          console.log('📋 Contenido completo:', JSON.stringify(msg, null, 2));
+        } else if (!(msg.event === 'media' && !currentCallSid && mediaBeforeStartWarned)) {
           console.log('📨 Twilio mensaje recibido:', msg.event);
         }
 
