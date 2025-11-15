@@ -77,9 +77,59 @@ export class TwilioCallMediaService {
       console.log(`🎧 Audio enviado a llamada ${callSid}: ${audioUrl}`);
       console.log('📡 Twilio Play response:', response.data.sid);
     } catch (err: any) {
+      const status = err.response?.status;
+      const code = err.response?.data?.code;
       console.error(
         '❌ Error al reproducir audio mediante Twilio Call Media API:',
         err.response?.data || err.message,
+      );
+
+      // Plan B: si la Call Media API no está habilitada (20404), actualizar TwiML
+      if (status === 404 && code === 20404) {
+        console.log(
+          `🔁 Call Media API no disponible para ${callSid}, usando fallback TwiML...`,
+        );
+        await this.updateCallWithTwiml(
+          creds.accountSid,
+          creds.authToken,
+          callSid,
+          audioUrl,
+        );
+      }
+    }
+  }
+
+  private async updateCallWithTwiml(
+    accountSid: string,
+    authToken: string,
+    callSid: string,
+    audioUrl: string,
+  ): Promise<void> {
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`;
+    const twiml = `<Response><Play>${audioUrl}</Play></Response>`;
+
+    try {
+      const response = await axios.post(
+        url,
+        new URLSearchParams({ Twiml: twiml }).toString(),
+        {
+          auth: {
+            username: accountSid,
+            password: authToken,
+          },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        },
+      );
+
+      console.log(
+        `🔁 Fallback TwiML aplicado a llamada ${callSid}, estado ${response.data.status}`,
+      );
+    } catch (error: any) {
+      console.error(
+        `❌ Error aplicando fallback TwiML a llamada ${callSid}:`,
+        error.response?.data || error.message,
       );
     }
   }
