@@ -2,6 +2,7 @@ import { Controller, Post, Body, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import * as admin from 'firebase-admin';
+import { TwilioCallMediaService } from '../twilio/twilio-call-media.service';
 
 class IncomingDto {
   To?: string;
@@ -11,7 +12,10 @@ class IncomingDto {
 
 @Controller('voice')
 export class CallsController {
-  constructor(private readonly twilio: TwilioService) {}
+  constructor(
+    private readonly twilio: TwilioService,
+    private readonly twilioCallMedia: TwilioCallMediaService,
+  ) {}
 
   @Post('incoming')
   async incoming(@Body() body: IncomingDto, @Res() res: Response) {
@@ -85,6 +89,13 @@ export class CallsController {
         url: wsUrl,
         track: 'both_tracks' // inbound_track, outbound_track, o both_tracks
       });
+
+      // Registrar credenciales para esta llamada (usar Twilio del agente)
+      this.twilioCallMedia.registerCallCredentials(
+        body.CallSid,
+        twilioConfig.twilioSid as string | undefined,
+        twilioConfig.twilioToken as string | undefined,
+      );
 
       // 🔹 LUEGO reproducir audio o texto de bienvenida del agente
       if (twilioConfig.firstInteractionUrl) {
