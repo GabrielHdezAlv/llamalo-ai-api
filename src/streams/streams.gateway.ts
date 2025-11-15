@@ -551,10 +551,9 @@ export class StreamsGateway {
 
       // VAD: Detectar si hay voz en este chunk
       const audioLevel = this.calculateAudioLevel(pcmBuffer);
-      const speechThreshold = 70; // detecta voz antes
-      const silenceTimeoutMs = 800; // pausa corta para cortar turno
-      const minChunkBytes = 8000; // 0.5s
-      const maxChunkBytes = 24000; // ~1.5s antes de forzar envío
+      const speechThreshold = 90; // más estricto para detectar inicio real
+      const silenceTimeoutMs = 1300; // silencio más largo para cerrar turno
+      const minChunkBytes = 10000; // ~0.6s de audio útil
 
       const isSpeech = audioLevel > speechThreshold;
 
@@ -569,18 +568,6 @@ export class StreamsGateway {
         // Acumular audio en el buffer de speech
         session.speechBuffer = Buffer.concat([session.speechBuffer, pcmBuffer]);
         session.lastSpeechTime = Date.now();
-
-        // Si supera el máximo, dividir en chunks intermedios
-        while (session.speechBuffer.length >= maxChunkBytes) {
-          const chunk = Buffer.from(
-            session.speechBuffer.slice(0, maxChunkBytes),
-          );
-          session.speechBuffer = session.speechBuffer.slice(maxChunkBytes);
-          console.log(
-            `🚀 [${callSid}] Enviando chunk intermedio de ${chunk.length} bytes (forzado por longitud)`,
-          );
-          this.enqueueHttpChunk(callSid, chunk);
-        }
 
         // Cancelar timeout de silencio si existe
         if (session.silenceTimeout) {
@@ -607,7 +594,6 @@ export class StreamsGateway {
                   `🔚 [${callSid}] Usuario terminó de hablar (${duration}s de audio)`,
                 );
 
-                // Enviar todo el buffer acumulado a ASR
                 this.enqueueHttpChunk(callSid, currentSession.speechBuffer);
 
                 currentSession.isSpeaking = false;
