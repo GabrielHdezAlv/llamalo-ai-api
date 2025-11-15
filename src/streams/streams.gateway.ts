@@ -8,7 +8,7 @@ import { GptService } from '../llm/gpt.service';
 import { TwilioCallMediaService } from '../twilio/twilio-call-media.service';
 import type { FishAsrTranscript } from '../fish-audio/realtime/types';
 
-type TwilioMediaIn = { event: 'media'; media: { payload: string } };
+type TwilioMediaIn = { event: 'media'; media: { payload: string; track?: string; chunk?: string; timestamp?: string } };
 type TwilioStart = { 
   event: 'start'; 
   start: { 
@@ -196,6 +196,13 @@ export class StreamsGateway {
           // Validar payload
           if (!msg.media?.payload) {
             console.warn('⚠️ Mensaje de media sin payload válido');
+            return;
+          }
+
+          // 🎯 FILTRO CRÍTICO: Solo procesar audio INBOUND (voz del usuario)
+          // Ignorar audio OUTBOUND (voz del agente reproducida por Twilio)
+          if (msg.media.track !== 'inbound') {
+            // No logear para evitar spam, ya que outbound genera muchos eventos
             return;
           }
 
