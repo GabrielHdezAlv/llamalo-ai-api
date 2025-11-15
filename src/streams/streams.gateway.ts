@@ -9,8 +9,18 @@ import { TwilioCallMediaService } from '../twilio/twilio-call-media.service';
 import type { FishAsrTranscript } from '../fish-audio/realtime/types';
 
 type TwilioMediaIn = { event: 'media'; media: { payload: string } };
-type TwilioStart = { event: 'start'; start: { callSid?: string } };
-type TwilioStop = { event: 'stop' };
+type TwilioStart = { 
+  event: 'start'; 
+  start: { 
+    callSid?: string;
+    streamSid?: string;
+    accountSid?: string;
+    tracks?: string[];
+    customParameters?: Record<string, unknown>;
+    mediaFormat?: Record<string, unknown>;
+  } 
+};
+type TwilioStop = { event: 'stop'; stop?: { accountSid?: string; callSid?: string } };
 type TwilioMsg = TwilioMediaIn | TwilioStart | TwilioStop;
 
 interface WebSocketClient {
@@ -122,17 +132,32 @@ export class StreamsGateway {
         console.log('📨 Twilio mensaje recibido:', msg.event);
 
         if (msg.event === 'start') {
+          // Log completo para debugging
+          console.log('📋 Mensaje completo del start:', JSON.stringify(msg, null, 2));
+          
           currentCallSid = msg.start?.callSid || '';
-          console.log(`🎯 CallSid recibido: ${currentCallSid}`);
+          console.log(`🎯 CallSid recibido: "${currentCallSid}"`);
+          console.log('🎯 StreamSid:', msg.start?.streamSid || 'N/A');
           
           // Crear sesión para esta llamada
-          this.createSession(currentCallSid, client, useWebSocket);
+          if (currentCallSid) {
+            this.createSession(currentCallSid, client, useWebSocket);
+          } else {
+            console.error('❌ No se pudo obtener callSid del evento start');
+          }
         }
 
         if (msg.event === 'media') {
+          // Si aún no tenemos callSid, esperar
+          if (!currentCallSid) {
+            console.warn('⚠️ Recibido evento media antes del start, ignorando...');
+            return;
+          }
+
           const session = this.sessions.get(currentCallSid);
           if (!session) {
-            console.warn(`⚠️ No hay sesión para callSid: ${currentCallSid}`);
+            console.warn(`⚠️ No hay sesión para callSid: "${currentCallSid}"`);
+            console.warn(`⚠️ Sesiones disponibles: ${Array.from(this.sessions.keys()).join(', ')}`);
             return;
           }
 
@@ -144,7 +169,9 @@ export class StreamsGateway {
 
           // Detener TTS cuando el usuario habla
           session.speaking = false;
-          this.tts.cancelAll('interrupted-by-user-audio');
+          if (useWebSocket) {
+            this.tts.cancelAll('interrupted-by-user-audio');
+          }
 
           // Procesar audio según el modo
           if (session.useWebSocket && this.asr) {
@@ -156,8 +183,10 @@ export class StreamsGateway {
         }
 
         if (msg.event === 'stop') {
-          console.log(`🛑 [${currentCallSid}] Llamada terminada.`);
-          this.cleanupSession(currentCallSid);
+          console.log(`🛑 [${currentCallSid || 'unknown'}] Llamada terminada.`);
+          if (currentCallSid) {
+            this.cleanupSession(currentCallSid);
+          }
           client.close();
         }
       } catch (err) {
