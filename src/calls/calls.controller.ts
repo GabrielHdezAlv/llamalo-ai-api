@@ -97,20 +97,25 @@ export class CallsController {
       }
 
       // 🔹 Iniciar streaming de audio hacia tu WS backend
-      const start = r.start();
       const wsUrl =
         process.env.NODE_ENV === 'production'
           ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
           : 'ws://localhost:3000/voice/stream';
 
-      start.stream({ url: wsUrl });
       console.log('🔗 WebSocket URL:', wsUrl);
+      
+      // Crear y agregar el elemento Start con Stream
+      const start = r.start();
+      start.stream({ url: wsUrl });
 
       // 🔹 Mantener llamada viva (10 minutos)
       r.pause({ length: 600 });
 
+      // Debug: mostrar TwiML generado
+      const twimlString = r.toString();
+      console.log('📄 TwiML generado:', twimlString);
       console.log('✅ TwiML generado correctamente.');
-      res.type('text/xml').send(r.toString());
+      res.type('text/xml').send(twimlString);
     } catch (error) {
       console.error('❌ Error al procesar la llamada entrante:', error);
       (r.say as any)(
