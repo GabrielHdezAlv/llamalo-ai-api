@@ -127,7 +127,8 @@ export class StreamsGateway {
 
     let currentCallSid = '';
     let mediaBeforeStartWarned = false; // Para evitar logs repetitivos
-    let mediaCount = 0; // Contador de eventos media
+    let mediaCount = 0; // Contador de eventos media (total)
+    let inboundMediaCount = 0; // Contador de eventos media inbound procesados
 
     client.on('message', (raw: Buffer) => {
       try {
@@ -149,9 +150,8 @@ export class StreamsGateway {
         if (msg.event !== 'media') {
           console.log('📨 Twilio mensaje NO-MEDIA recibido:', msg.event);
           console.log('📋 Contenido completo:', JSON.stringify(msg, null, 2));
-        } else if (!(msg.event === 'media' && !currentCallSid && mediaBeforeStartWarned)) {
-          console.log('📨 Twilio mensaje recibido:', msg.event);
         }
+        // No loguear eventos media individuales para reducir verbosidad
 
         if (msg.event === 'connected') {
           console.log('🔗 Twilio WebSocket conectado:', JSON.stringify(msg, null, 2));
@@ -206,6 +206,16 @@ export class StreamsGateway {
             return;
           }
 
+          // Contador de eventos inbound
+          inboundMediaCount++;
+          
+          // Log de progreso cada 100 eventos inbound (reduce spam considerablemente)
+          if (inboundMediaCount === 1) {
+            console.log(`🎤 Comenzando a recibir audio del usuario (track: inbound)`);
+          } else if (inboundMediaCount % 100 === 0) {
+            console.log(`🎤 Audio del usuario: ${inboundMediaCount} paquetes inbound recibidos`);
+          }
+
           // Detener TTS cuando el usuario habla
           session.speaking = false;
           if (useWebSocket) {
@@ -223,7 +233,7 @@ export class StreamsGateway {
 
         if (msg.event === 'stop') {
           console.log(`🛑 [${currentCallSid || 'unknown'}] Llamada terminada.`);
-          console.log(`📊 Resumen: ${mediaCount} eventos media recibidos, callSid: ${currentCallSid || 'nunca recibido'}`);
+          console.log(`📊 Resumen: ${mediaCount} eventos media totales (${inboundMediaCount} inbound procesados), callSid: ${currentCallSid || 'nunca recibido'}`);
           
           if (currentCallSid) {
             this.cleanupSession(currentCallSid);
@@ -488,7 +498,6 @@ export class StreamsGateway {
         }
 
         pcmArray = pcm instanceof Int16Array ? pcm : new Int16Array(pcm as ArrayLike<number>);
-        console.log(`✅ PCM generado: ${pcmArray.length} samples (${(pcmArray.length * 2).toFixed(0)} bytes)`);
       } catch (error) {
         console.error('❌ Error decodificando audio:', error instanceof Error ? error.message : String(error));
         return;
@@ -498,7 +507,6 @@ export class StreamsGateway {
       let pcmBuffer: Buffer;
       try {
         pcmBuffer = Buffer.from(pcmArray.buffer, pcmArray.byteOffset, pcmArray.byteLength);
-        console.log(`✅ Buffer creado: ${pcmBuffer.length} bytes`);
       } catch (error) {
         console.error('❌ Error creando Buffer:', error instanceof Error ? error.message : String(error));
         return;
@@ -520,13 +528,16 @@ export class StreamsGateway {
 
       session.audioBuffer = workingBuffer;
 
-      chunks.forEach((chunk, index) => {
-        console.log(`🚀 [${callSid}] Encolando chunk HTTP #${index + 1} (${chunk.length} bytes)`);
-        this.enqueueHttpChunk(callSid, chunk);
-      });
-
-      const bufferSeconds = (workingBuffer.length / 16000).toFixed(2);
-      console.log(`📦 Buffer restante: ${workingBuffer.length} bytes (${bufferSeconds}s)`);
+      // Solo loguear cuando hay chunks para enviar
+      if (chunks.length > 0) {
+        console.log(`🚀 [${callSid}] Enviando ${chunks.length} chunk(s) HTTP de ${chunkSizeBytes} bytes cada uno`);
+        chunks.forEach((chunk) => {
+          this.enqueueHttpChunk(callSid, chunk);
+        });
+        
+        const bufferSeconds = (workingBuffer.length / 16000).toFixed(2);
+        console.log(`📦 Buffer restante: ${workingBuffer.length} bytes (${bufferSeconds}s)`);
+      }
 
       // Gestionar timer de timeout
       if (session.audioBufferTimer) {
