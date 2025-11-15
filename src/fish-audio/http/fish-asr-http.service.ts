@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import FormData from 'form-data';
+import { spawn } from 'child_process';
+import * as ffmpeg from '@ffmpeg-installer/ffmpeg';
+
+const ffmpegPath = (ffmpeg as { path: string }).path;
 
 @Injectable()
 export class FishAsrHttpService {
@@ -52,15 +56,17 @@ export class FishAsrHttpService {
         return '';
       }
 
-      // TEMPORAL: Intentar sin resampleo para diagnosticar
+      // Resamplear de 8kHz a 16kHz usando ffmpeg para evitar distorsión
+      console.log(`🔄 Resampling de 8kHz a 16kHz con ffmpeg...`);
+      const pcm16khz = await this.resampleTo16k(audioBuffer);
       console.log(
-        `⚠️ MODO DEBUG: Enviando audio a 8kHz sin resampleo para testing`,
+        `✅ Audio resampled: ${audioBuffer.length} bytes (8kHz) → ${pcm16khz.length} bytes (16kHz)`,
       );
 
-      // Convertir PCM a WAV con sample rate ORIGINAL de 8kHz
-      const wavBuffer = this.pcmToWav(audioBuffer, 8000);
+      // Convertir PCM a WAV con sample rate de 16kHz
+      const wavBuffer = this.pcmToWav(pcm16khz, 16000);
       console.log(
-        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes, 8kHz)`,
+        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes, 16kHz)`,
       );
 
       // Simplificar código de idioma (es-ES → es, en-US → en)
@@ -97,7 +103,7 @@ export class FishAsrHttpService {
 
       console.log('📤 Enviando audio a Fish Audio ASR...');
       console.log(
-        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes, sampleRate=8000Hz`,
+        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes, sampleRate=16000Hz`,
       );
 
       const response = await axios.post(
@@ -130,12 +136,14 @@ export class FishAsrHttpService {
         // Log del contenido del FormData para debugging
         if (error.config?.data instanceof FormData) {
           const simpleLanguage = this.language.split('-')[0];
-          const wavSize = audioBuffer.length + 44; // PCM + header WAV
+          const resampledSize = audioBuffer.length * 2;
+          const wavSize = resampledSize + 44;
           console.error('📋 FormData fields:', {
-            audioSize8kHz: audioBuffer.length,
-            wavSize: wavSize,
+            audioSizeOriginal8kHz: audioBuffer.length,
+            audioSizeResampled16kHz: resampledSize,
+            wavSize,
             language: simpleLanguage,
-            sampleRate: '8000Hz',
+            sampleRate: '16000Hz',
             contentType: 'audio/wav',
             filename: 'audio.wav',
           });
@@ -179,45 +187,59 @@ export class FishAsrHttpService {
   }
 
   /**
-   * Resamplea audio de 8kHz a 16kHz usando interpolación lineal
-   * Fish Audio ASR requiere 16kHz o superior según su documentación
-   * @param pcm8khz Buffer con datos PCM16 a 8kHz
-   * @returns Buffer con datos PCM16 a 16kHz
+   * Resamplea audio de 8kHz a 16kHz utilizando ffmpeg para obtener calidad adecuada.
    */
-  private resample8kTo16k(pcm8khz: Buffer): Buffer {
-    // Convertir buffer a array de samples de 16-bit
-    const samples8k: number[] = [];
-    for (let i = 0; i < pcm8khz.length; i += 2) {
-      samples8k.push(pcm8khz.readInt16LE(i));
-    }
+  private async resampleTo16k(pcm8khz: Buffer): Promise<Buffer> {
+    const ffmpegArgs = [
+      '-loglevel',
+      'error',
+      '-f',
+      's16le',
+      '-ar',
+      '8000',
+      '-ac',
+      '1',
+      '-i',
+      'pipe:0',
+      '-f',
+      's16le',
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      'pipe:1',
+    ];
 
-    // Interpolación lineal para duplicar el sample rate
-    const samples16k: number[] = [];
-    for (let i = 0; i < samples8k.length - 1; i++) {
-      const current = samples8k[i];
-      const next = samples8k[i + 1];
+    return new Promise<Buffer>((resolve, reject) => {
+      const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
 
-      // Muestra original
-      samples16k.push(current);
+      const chunks: Buffer[] = [];
 
-      // Muestra interpolada (promedio entre current y next)
-      const interpolated = Math.round((current + next) / 2);
-      samples16k.push(interpolated);
-    }
+      ffmpegProcess.stdout.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
 
-    // Agregar la última muestra
-    if (samples8k.length > 0) {
-      samples16k.push(samples8k[samples8k.length - 1]);
-      samples16k.push(samples8k[samples8k.length - 1]); // Duplicar última muestra
-    }
+      ffmpegProcess.stderr.on('data', (data: Buffer) => {
+        console.error('⚠️ ffmpeg stderr:', data.toString());
+      });
 
-    // Convertir de vuelta a Buffer
-    const buffer16k = Buffer.alloc(samples16k.length * 2);
-    for (let i = 0; i < samples16k.length; i++) {
-      buffer16k.writeInt16LE(samples16k[i], i * 2);
-    }
+      ffmpegProcess.on('error', (error) => {
+        reject(error);
+      });
 
-    return buffer16k;
+      ffmpegProcess.on('close', (code) => {
+        if (code === 0) {
+          resolve(Buffer.concat(chunks));
+        } else {
+          reject(new Error(`ffmpeg exited with code ${code}`));
+        }
+      });
+
+      ffmpegProcess.stdin.write(pcm8khz);
+      ffmpegProcess.stdin.end();
+    });
   }
 
   /**
