@@ -125,11 +125,16 @@ export class StreamsGateway {
     }
 
     let currentCallSid = '';
+    let mediaBeforeStartWarned = false; // Para evitar logs repetitivos
 
     client.on('message', (raw: Buffer) => {
       try {
         const msg = JSON.parse(raw.toString()) as TwilioMsg;
-        console.log('📨 Twilio mensaje recibido:', msg.event);
+        
+        // Solo mostrar evento si no es media repetitivo sin start
+        if (!(msg.event === 'media' && !currentCallSid && mediaBeforeStartWarned)) {
+          console.log('📨 Twilio mensaje recibido:', msg.event);
+        }
 
         if (msg.event === 'start') {
           // Log completo para debugging
@@ -138,6 +143,9 @@ export class StreamsGateway {
           currentCallSid = msg.start?.callSid || '';
           console.log(`🎯 CallSid recibido: "${currentCallSid}"`);
           console.log('🎯 StreamSid:', msg.start?.streamSid || 'N/A');
+          
+          // Reset flag cuando llegue el start
+          mediaBeforeStartWarned = false;
           
           // Crear sesión para esta llamada
           if (currentCallSid) {
@@ -150,7 +158,10 @@ export class StreamsGateway {
         if (msg.event === 'media') {
           // Si aún no tenemos callSid, esperar
           if (!currentCallSid) {
-            console.warn('⚠️ Recibido evento media antes del start, ignorando...');
+            if (!mediaBeforeStartWarned) {
+              console.warn('⚠️ Recibiendo eventos media antes del start, esperando evento start... (este mensaje no se repetirá)');
+              mediaBeforeStartWarned = true;
+            }
             return;
           }
 

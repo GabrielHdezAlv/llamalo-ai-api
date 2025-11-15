@@ -70,7 +70,19 @@ export class CallsController {
       //   }
       // }
 
-      // 🔹 Reproducir audio o texto de bienvenida del agente
+      // 🔹 IMPORTANTE: Start debe ir ANTES de Play para que Twilio envíe el evento "start"
+      const wsUrl =
+        process.env.NODE_ENV === 'production'
+          ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
+          : 'ws://localhost:3000/voice/stream';
+
+      console.log('🔗 WebSocket URL:', wsUrl);
+      
+      // Crear y agregar el elemento Start con Stream PRIMERO
+      const start = r.start();
+      start.stream({ url: wsUrl });
+
+      // 🔹 LUEGO reproducir audio o texto de bienvenida del agente
       if (twilioConfig.firstInteractionUrl) {
         console.log(
           '🔊 Reproduciendo audio personalizado:',
@@ -95,18 +107,6 @@ export class CallsController {
           'https://storage.googleapis.com/llamaloio.firebasestorage.app/audios/default.mp3',
         );
       }
-
-      // 🔹 Iniciar streaming de audio hacia tu WS backend
-      const wsUrl =
-        process.env.NODE_ENV === 'production'
-          ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
-          : 'ws://localhost:3000/voice/stream';
-
-      console.log('🔗 WebSocket URL:', wsUrl);
-      
-      // Crear y agregar el elemento Start con Stream
-      const start = r.start();
-      start.stream({ url: wsUrl });
 
       // 🔹 Mantener llamada viva (10 minutos)
       r.pause({ length: 600 });
