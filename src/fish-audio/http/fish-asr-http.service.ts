@@ -52,17 +52,15 @@ export class FishAsrHttpService {
         return '';
       }
 
-      // Resamplear de 8kHz a 16kHz (Fish Audio ASR requiere 16kHz mínimo)
-      console.log(`🔄 Resampling de 8kHz a 16kHz...`);
-      const pcm16khz = this.resample8kTo16k(audioBuffer);
+      // TEMPORAL: Intentar sin resampleo para diagnosticar
       console.log(
-        `✅ Audio resampled: ${audioBuffer.length} bytes (8kHz) → ${pcm16khz.length} bytes (16kHz)`,
+        `⚠️ MODO DEBUG: Enviando audio a 8kHz sin resampleo para testing`,
       );
 
-      // Convertir PCM a WAV con sample rate de 16kHz
-      const wavBuffer = this.pcmToWav(pcm16khz, 16000);
+      // Convertir PCM a WAV con sample rate ORIGINAL de 8kHz
+      const wavBuffer = this.pcmToWav(audioBuffer, 8000);
       console.log(
-        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes, 16kHz)`,
+        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes, 8kHz)`,
       );
 
       // Simplificar código de idioma (es-ES → es, en-US → en)
@@ -99,7 +97,7 @@ export class FishAsrHttpService {
 
       console.log('📤 Enviando audio a Fish Audio ASR...');
       console.log(
-        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes, sampleRate=16000Hz`,
+        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes, sampleRate=8000Hz`,
       );
 
       const response = await axios.post(
@@ -132,14 +130,12 @@ export class FishAsrHttpService {
         // Log del contenido del FormData para debugging
         if (error.config?.data instanceof FormData) {
           const simpleLanguage = this.language.split('-')[0];
-          const pcm16khzSize = audioBuffer.length * 2; // Duplicado por resample
-          const wavSize = pcm16khzSize + 44; // + header WAV
+          const wavSize = audioBuffer.length + 44; // PCM + header WAV
           console.error('📋 FormData fields:', {
-            audioSizeOriginal8kHz: audioBuffer.length,
-            audioSizeResampled16kHz: pcm16khzSize,
+            audioSize8kHz: audioBuffer.length,
             wavSize: wavSize,
             language: simpleLanguage,
-            sampleRate: '16000Hz',
+            sampleRate: '8000Hz',
             contentType: 'audio/wav',
             filename: 'audio.wav',
           });
