@@ -45,19 +45,17 @@ export class FishAsrHttpService {
         `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes)`,
       );
 
-      // Enviar como WAV
+      // Simplificar código de idioma (es-ES → es, en-US → en)
+      const simpleLanguage = this.language.split('-')[0]; // "es-ES" → "es"
+
+      // Enviar como WAV - SOLO parámetros documentados
       formData.append('audio', wavBuffer, {
         filename: 'audio.wav',
         contentType: 'audio/wav',
       });
-      formData.append('language', this.language);
-      formData.append('sample_rate', this.sampleRate);
-      if (this.model) {
-        formData.append('model', this.model);
-      }
-      if (this.latency) {
-        formData.append('latency', this.latency);
-      }
+      formData.append('language', simpleLanguage);
+
+      // Solo agregar parámetros extras si están explícitamente configurados
       if (this.enablePunctuation !== undefined) {
         formData.append(
           'enable_punctuation',
@@ -70,6 +68,7 @@ export class FishAsrHttpService {
           this.enableTimestamps ? 'true' : 'false',
         );
       }
+      // Permitir parámetros extra solo si están en la configuración JSON
       for (const [key, value] of Object.entries(this.extraFormFields)) {
         if (value !== undefined && value !== null) {
           const normalized =
@@ -80,7 +79,7 @@ export class FishAsrHttpService {
 
       console.log('📤 Enviando audio a Fish Audio ASR...');
       console.log(
-        `📋 Parámetros: language=${this.language}, sample_rate=${this.sampleRate}, model=${this.model ?? 'default'}, latency=${this.latency ?? 'default'}, filename=audio.wav`,
+        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes`,
       );
 
       const response = await axios.post(
@@ -112,11 +111,11 @@ export class FishAsrHttpService {
 
         // Log del contenido del FormData para debugging
         if (error.config?.data instanceof FormData) {
+          const simpleLanguage = this.language.split('-')[0];
           console.error('📋 FormData fields:', {
             audioSize: audioBuffer.length,
             wavSize: audioBuffer.length + 44,
-            language: this.language,
-            sample_rate: this.sampleRate,
+            language: simpleLanguage,
             contentType: 'audio/wav',
             filename: 'audio.wav',
           });
