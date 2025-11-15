@@ -39,6 +39,19 @@ export class FishAsrHttpService {
 
       const formData = new FormData();
 
+      // Verificar que el audio no sea silencio
+      const audioLevel = this.calculateAudioLevel(audioBuffer);
+      console.log(
+        `📊 Nivel de audio: ${audioLevel.toFixed(2)} (umbral mínimo: 100)`,
+      );
+
+      if (audioLevel < 100) {
+        console.log(
+          '🔇 Audio es silencio o muy bajo, omitiendo transcripción...',
+        );
+        return '';
+      }
+
       // Resamplear de 8kHz a 16kHz (Fish Audio ASR requiere 16kHz mínimo)
       console.log(`🔄 Resampling de 8kHz a 16kHz...`);
       const pcm16khz = this.resample8kTo16k(audioBuffer);
@@ -149,6 +162,24 @@ export class FishAsrHttpService {
       console.error('❌ Error transcribiendo desde base64:', error);
       throw error;
     }
+  }
+
+  /**
+   * Calcula el nivel RMS (Root Mean Square) del audio para detectar silencio
+   * @param pcmBuffer Buffer con datos PCM16
+   * @returns Nivel RMS del audio
+   */
+  private calculateAudioLevel(pcmBuffer: Buffer): number {
+    let sum = 0;
+    const sampleCount = pcmBuffer.length / 2; // 16-bit = 2 bytes por muestra
+
+    for (let i = 0; i < pcmBuffer.length; i += 2) {
+      const sample = pcmBuffer.readInt16LE(i);
+      sum += sample * sample;
+    }
+
+    const rms = Math.sqrt(sum / sampleCount);
+    return rms;
   }
 
   /**
