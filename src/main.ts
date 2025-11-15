@@ -63,27 +63,52 @@ async function bootstrap() {
     console.log('🌐 URL:', req.url);
     console.log('📋 Headers:', req.headers);
 
+    // Buffer para almacenar mensajes tempranos
+    const earlyMessages: Buffer[] = [];
+    let handlerRegistered = false;
+
+    // Registrar listener INMEDIATAMENTE para capturar TODOS los mensajes
+    ws.on('message', (data: WebSocket.Data) => {
+      let buffer: Buffer;
+      if (data instanceof Buffer) {
+        buffer = data;
+      } else if (typeof data === 'string') {
+        buffer = Buffer.from(data, 'utf8');
+      } else if (data instanceof ArrayBuffer) {
+        buffer = Buffer.from(data);
+      } else {
+        buffer = Buffer.from(JSON.stringify(data), 'utf8');
+      }
+
+      // Si el handler ya está registrado, procesarlo directamente
+      if (handlerRegistered && messageHandler) {
+        messageHandler(buffer);
+      } else {
+        // Sino, guardarlo en el buffer
+        earlyMessages.push(buffer);
+      }
+    });
+
     // Obtener instancia del StreamsGateway
     const streamsGateway = app.get(StreamsGateway);
+
+    let messageHandler: ((data: Buffer) => void) | null = null;
 
     // Crear un objeto cliente compatible con StreamsGateway
     const client = {
       send: (data: string) => ws.send(data),
       on: (event: string, callback: (data: Buffer) => void) => {
         if (event === 'message') {
-          ws.on('message', (data: WebSocket.Data) => {
-            let buffer: Buffer;
-            if (data instanceof Buffer) {
-              buffer = data;
-            } else if (typeof data === 'string') {
-              buffer = Buffer.from(data, 'utf8');
-            } else if (data instanceof ArrayBuffer) {
-              buffer = Buffer.from(data);
-            } else {
-              buffer = Buffer.from(JSON.stringify(data), 'utf8');
-            }
-            callback(buffer);
-          });
+          // Guardar el callback
+          messageHandler = callback;
+          handlerRegistered = true;
+
+          // Procesar mensajes acumulados
+          console.log(`📬 Procesando ${earlyMessages.length} mensajes tempranos acumulados`);
+          for (const msg of earlyMessages) {
+            callback(msg);
+          }
+          earlyMessages.length = 0; // Limpiar el buffer
         }
       },
       close: () => ws.close(),
