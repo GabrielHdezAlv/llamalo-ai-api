@@ -39,19 +39,24 @@ export class TwilioCallMediaService {
     }
   }
 
-  /**
-   * Reproduce un audio (MP3 o WAV) en una llamada activa usando la Twilio Call Media API.
-   * Docs: https://www.twilio.com/docs/voice/api/call-resource#play-call
-   */
-  async playUrl(callSid: string, audioUrl: string): Promise<void> {
-    const creds =
+  private getCredentials(callSid: string): TwilioCredentials | null {
+    return (
       this.callCredentials.get(callSid) ||
       (this.defaultAccountSid && this.defaultAuthToken
         ? {
             accountSid: this.defaultAccountSid,
             authToken: this.defaultAuthToken,
           }
-        : null);
+        : null)
+    );
+  }
+
+  /**
+   * Reproduce un audio (MP3 o WAV) en una llamada activa usando la Twilio Call Media API.
+   * Docs: https://www.twilio.com/docs/voice/api/call-resource#play-call
+   */
+  async playUrl(callSid: string, audioUrl: string): Promise<void> {
+    const creds = this.getCredentials(callSid);
 
     if (!creds) {
       console.error(
@@ -99,6 +104,42 @@ export class TwilioCallMediaService {
           audioUrl,
         );
       }
+    }
+  }
+
+  async hangup(callSid: string): Promise<void> {
+    const creds = this.getCredentials(callSid);
+    if (!creds) {
+      console.error(
+        `❌ No hay credenciales Twilio para colgar la llamada ${callSid}`,
+      );
+      return;
+    }
+
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Calls/${callSid}.json`;
+
+    try {
+      await axios.post(
+        url,
+        new URLSearchParams({ Status: 'completed' }).toString(),
+        {
+          auth: {
+            username: creds.accountSid,
+            password: creds.authToken,
+          },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        },
+      );
+
+      console.log(`📞 Llamada ${callSid} finalizada correctamente.`);
+      this.clearCallCredentials(callSid);
+    } catch (error: any) {
+      console.error(
+        `❌ Error colgando la llamada ${callSid}:`,
+        error.response?.data || error.message,
+      );
     }
   }
 

@@ -44,6 +44,7 @@ interface CallSession {
   speechBuffer: Buffer;
   lastSpeechTime: number;
   silenceTimeout?: NodeJS.Timeout;
+  ending: boolean;
 }
 
 // 🧠 Métricas acumuladas globales
@@ -273,6 +274,7 @@ export class StreamsGateway {
       isSpeaking: false,
       speechBuffer: Buffer.alloc(0),
       lastSpeechTime: 0,
+      ending: false,
     };
 
     this.sessions.set(callSid, session);
@@ -552,7 +554,7 @@ export class StreamsGateway {
       // VAD: Detectar si hay voz en este chunk
       const audioLevel = this.calculateAudioLevel(pcmBuffer);
       const speechThreshold = 90; // más estricto para detectar inicio real
-      const silenceTimeoutMs = 1300; // silencio más largo para cerrar turno
+      const silenceTimeoutMs = 650; // medio segundo largo para cerrar turno
       const minChunkBytes = 10000; // ~0.6s de audio útil
 
       const isSpeech = audioLevel > speechThreshold;
@@ -658,20 +660,24 @@ export class StreamsGateway {
 
       if (fullResponse.trim()) {
         console.log(`💬 [${callSid}] Respuesta GPT completa:`, fullResponse);
-
-        // Generar audio con TTS HTTP
-        const audioUrl = await this.ttsHttp.generateAudioAndUpload(
-          fullResponse,
-          'realtime',
-        );
-
-        // Reproducir con Twilio
-        await this.twilioMedia.playUrl(callSid, audioUrl);
-        console.log(`🎧 [${callSid}] Audio enviado a Twilio`);
+        await this.sendTtsResponse(callSid, fullResponse);
       }
     } catch (error) {
       console.error(`❌ [${callSid}] Error manejando respuesta GPT HTTP:`, error);
     }
+  }
+
+  private async sendTtsResponse(callSid: string, text: string): Promise<void> {
+    const audioUrl = await this.ttsHttp.generateAudioAndUpload(text, 'realtime');
+    await this.twilioMedia.playUrl(callSid, audioUrl);
+    console.log(`🎧 [${callSid}] Audio enviado a Twilio`);
+  }
+
+  private async handleFarewell(callSid: string): Promise<void> {
+    const farewell =
+      'Gracias por llamar. Fue un placer hablar contigo. ¡Hasta luego!';
+    await this.sendTtsResponse(callSid, farewell);
+    await this.twilioMedia.hangup(callSid);
   }
 
   private enqueueHttpChunk(
@@ -705,6 +711,18 @@ export class StreamsGateway {
     finalize: boolean,
   ): Promise<void> {
     try {
+      const session = this.sessions.get(callSid);
+      if (!session) {
+        console.warn(`⚠️ [${callSid}] No hay sesión para procesar chunk HTTP`);
+        return;
+      }
+      if (session.ending) {
+        console.log(
+          `ℹ️ [${callSid}] Ignorando chunk porque la llamada está finalizando.`,
+        );
+        return;
+      }
+
       console.log(
         `📤 [${callSid}] Enviando chunk HTTP de ${chunk.length} bytes (${(
           chunk.length / 16000
@@ -715,6 +733,17 @@ export class StreamsGateway {
 
       if (transcript && transcript.trim()) {
         console.log(`🎙️ [${callSid}] ASR HTTP chunk: "${transcript}"`);
+        const normalized = transcript
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '');
+
+        if (normalized.includes('adios')) {
+          session.ending = true;
+          await this.handleFarewell(callSid);
+          return;
+        }
+
         await this.handleGptResponseHttp(transcript, callSid);
       } else {
         console.log(`🕸️ [${callSid}] Chunk HTTP sin transcripción utilizable.`);
