@@ -79,8 +79,12 @@ export class CallsController {
       console.log('🔗 WebSocket URL:', wsUrl);
       
       // Crear y agregar el elemento Start con Stream PRIMERO
+      // Especificar tracks: inbound (audio del usuario) y outbound (audio hacia el usuario)
       const start = r.start();
-      start.stream({ url: wsUrl });
+      start.stream({ 
+        url: wsUrl,
+        track: 'both_tracks' // inbound_track, outbound_track, o both_tracks
+      });
 
       // 🔹 LUEGO reproducir audio o texto de bienvenida del agente
       if (twilioConfig.firstInteractionUrl) {

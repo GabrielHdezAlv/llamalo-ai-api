@@ -21,7 +21,8 @@ type TwilioStart = {
   } 
 };
 type TwilioStop = { event: 'stop'; stop?: { accountSid?: string; callSid?: string } };
-type TwilioMsg = TwilioMediaIn | TwilioStart | TwilioStop;
+type TwilioConnected = { event: 'connected'; protocol?: string; version?: string };
+type TwilioMsg = TwilioMediaIn | TwilioStart | TwilioStop | TwilioConnected;
 
 interface WebSocketClient {
   send: (data: string) => void;
@@ -126,14 +127,24 @@ export class StreamsGateway {
 
     let currentCallSid = '';
     let mediaBeforeStartWarned = false; // Para evitar logs repetitivos
+    let mediaCount = 0; // Contador de eventos media
 
     client.on('message', (raw: Buffer) => {
       try {
         const msg = JSON.parse(raw.toString()) as TwilioMsg;
         
+        // Incrementar contador de media
+        if (msg.event === 'media') {
+          mediaCount++;
+        }
+        
         // Solo mostrar evento si no es media repetitivo sin start
         if (!(msg.event === 'media' && !currentCallSid && mediaBeforeStartWarned)) {
           console.log('📨 Twilio mensaje recibido:', msg.event);
+        }
+
+        if (msg.event === 'connected') {
+          console.log('🔗 Twilio WebSocket conectado:', JSON.stringify(msg, null, 2));
         }
 
         if (msg.event === 'start') {
@@ -195,8 +206,13 @@ export class StreamsGateway {
 
         if (msg.event === 'stop') {
           console.log(`🛑 [${currentCallSid || 'unknown'}] Llamada terminada.`);
+          console.log(`📊 Resumen: ${mediaCount} eventos media recibidos, callSid: ${currentCallSid || 'nunca recibido'}`);
+          
           if (currentCallSid) {
             this.cleanupSession(currentCallSid);
+          } else {
+            console.error('❌ PROBLEMA: La llamada terminó sin haber recibido el evento "start" de Twilio');
+            console.error('📋 Esto indica que Twilio no está enviando el evento start correctamente');
           }
           client.close();
         }
