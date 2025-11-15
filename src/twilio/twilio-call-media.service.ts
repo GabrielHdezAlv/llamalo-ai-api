@@ -11,6 +11,9 @@ export class TwilioCallMediaService {
   private readonly defaultAccountSid = process.env.TWILIO_ACCOUNT_SID;
   private readonly defaultAuthToken = process.env.TWILIO_AUTH_TOKEN;
   private readonly callCredentials = new Map<string, TwilioCredentials>();
+  private readonly baseUrl =
+    process.env.PUBLIC_BASE_URL?.replace(/\/$/, '') ||
+    'https://llamaloiabackend-5294.onrender.com';
 
   registerCallCredentials(
     callSid: string | undefined,
@@ -106,7 +109,10 @@ export class TwilioCallMediaService {
     audioUrl: string,
   ): Promise<void> {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`;
-    const twiml = `<Response><Play>${audioUrl}</Play></Response>`;
+    const redirectUrl = `${this.baseUrl}/voice/resume?callSid=${encodeURIComponent(
+      callSid,
+    )}`;
+    const twiml = `<Response><Play>${audioUrl}</Play><Redirect method="POST">${redirectUrl}</Redirect></Response>`;
 
     try {
       const response = await axios.post(

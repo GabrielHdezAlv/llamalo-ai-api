@@ -247,7 +247,6 @@ export class StreamsGateway {
           
           if (currentCallSid) {
             this.cleanupSession(currentCallSid);
-            this.twilioMedia.clearCallCredentials(currentCallSid);
           } else {
             console.error('❌ PROBLEMA: La llamada terminó sin haber recibido el evento "start" de Twilio');
             console.error('📋 Esto indica que Twilio no está enviando el evento start correctamente');

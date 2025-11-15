@@ -143,4 +143,28 @@ export class CallsController {
       res.type('text/xml').send(r.toString());
     }
   }
+
+  @Post('resume')
+  async resume(@Body() body: Record<string, unknown>, @Res() res: Response) {
+    const r = this.twilio.newVoiceResponse();
+    const wsUrl =
+      process.env.NODE_ENV === 'production'
+        ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
+        : 'ws://localhost:3000/voice/stream';
+
+    console.log('🔄 Reanudando stream Twilio');
+    console.log('🔁 CallSid reanudado:', body?.CallSid || 'desconocido');
+
+    const start = r.start();
+    start.stream({
+      url: wsUrl,
+      track: 'both_tracks',
+    });
+
+    r.pause({ length: 600 });
+
+    const twimlString = r.toString();
+    console.log('📄 TwiML resume generado:', twimlString);
+    res.type('text/xml').send(twimlString);
+  }
 }
