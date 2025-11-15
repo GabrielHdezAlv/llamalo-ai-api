@@ -1,45 +1,56 @@
 import { Injectable } from '@nestjs/common';
-import axios from 'axios';
-import FormData from 'form-data';
 import { spawn } from 'child_process';
 import * as ffmpeg from '@ffmpeg-installer/ffmpeg';
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { createClient, DeepgramClient } from '@deepgram/sdk';
 
 const ffmpegPath = (ffmpeg as { path: string }).path;
 
 @Injectable()
-export class FishAsrHttpService {
-  private fishApiKey = process.env.FISH_API_KEY;
-  private language = process.env.FISH_LANG || 'es-ES';
-  private sampleRate = Number.parseInt(
-    process.env.FISH_ASR_SAMPLE_RATE ?? '8000',
+export class DeepgramAsrHttpService {
+  private readonly deepgram: DeepgramClient | null;
+  private readonly language = process.env.DG_LANGUAGE || 'es';
+  private readonly model = process.env.DG_MODEL || 'nova-2';
+  private readonly tier = process.env.DG_TIER;
+  private readonly smartFormat = parseBoolean(
+    process.env.DG_SMART_FORMAT,
+    true,
+  );
+  private readonly punctuate = parseBoolean(process.env.DG_PUNCTUATE, true);
+  private readonly diarize = parseBoolean(process.env.DG_DIARIZE, false);
+  private readonly sampleRate = Number.parseInt(
+    process.env.DG_SAMPLE_RATE ?? '16000',
     10,
   );
-  private model = process.env.FISH_ASR_MODEL;
-  private latency = process.env.FISH_ASR_LATENCY_MODE;
-  private enablePunctuation = parseBoolean(
-    process.env.FISH_ASR_ENABLE_PUNCTUATION,
-  );
-  private enableTimestamps = parseBoolean(
-    process.env.FISH_ASR_ENABLE_WORD_TIMESTAMPS,
-  );
-  private readonly extraFormFields = parseJsonEnv(
-    process.env.FISH_ASR_HTTP_OPTIONS_JSON,
-  );
   private readonly debugSaveWav =
-    process.env.FISH_DEBUG_SAVE_WAV === 'true' ||
-    process.env.FISH_DEBUG_SAVE_WAV === '1';
+    process.env.DG_DEBUG_SAVE_WAV === 'true' ||
+    process.env.DG_DEBUG_SAVE_WAV === '1';
   private readonly debugWavDir =
-    process.env.FISH_DEBUG_WAV_DIR || '/tmp/fish-wavs';
+    process.env.DG_DEBUG_WAV_DIR || '/tmp/deepgram-wavs';
+
+  constructor() {
+    const apiKey = process.env.DG_API_KEY;
+    if (!apiKey) {
+      console.error(
+        '❌ DG_API_KEY no configurado. Deepgram ASR HTTP no funcionará.',
+      );
+      this.deepgram = null;
+      return;
+    }
+    this.deepgram = createClient(apiKey);
+  }
 
   async transcribeAudio(audioBuffer: Buffer): Promise<string> {
-    try {
-      console.log('🎙️ Transcribiendo audio ASR HTTP...');
-      console.log('📊 Tamaño del buffer PCM:', audioBuffer.length, 'bytes');
-      console.log('📊 Tamaño estimado WAV:', audioBuffer.length + 44, 'bytes');
+    if (!this.deepgram) {
+      console.error('❌ Deepgram client no inicializado.');
+      return '';
+    }
 
-      // Verificar que tengamos suficiente audio
+    try {
+      console.log('🎙️ Transcribiendo audio con Deepgram...');
+      console.log('📊 Tamaño del buffer PCM:', audioBuffer.length, 'bytes');
+
       const minAudioSize = 16000; // 1 segundo a 8kHz 16-bit mono
       if (audioBuffer.length < minAudioSize) {
         console.log(
@@ -48,14 +59,10 @@ export class FishAsrHttpService {
         return '';
       }
 
-      const formData = new FormData();
-
-      // Verificar que el audio no sea silencio
       const audioLevel = this.calculateAudioLevel(audioBuffer);
       console.log(
         `📊 Nivel de audio: ${audioLevel.toFixed(2)} (umbral mínimo: 100)`,
       );
-
       if (audioLevel < 100) {
         console.log(
           '🔇 Audio es silencio o muy bajo, omitiendo transcripción...',
@@ -63,106 +70,50 @@ export class FishAsrHttpService {
         return '';
       }
 
-      // Resamplear de 8kHz a 16kHz usando ffmpeg para evitar distorsión
       console.log(`🔄 Resampling de 8kHz a 16kHz con ffmpeg...`);
       const pcm16khz = await this.resampleTo16k(audioBuffer);
       console.log(
         `✅ Audio resampled: ${audioBuffer.length} bytes (8kHz) → ${pcm16khz.length} bytes (16kHz)`,
       );
 
-      // Convertir PCM a WAV con sample rate de 16kHz
-      const wavBuffer = this.pcmToWav(pcm16khz, 16000);
+      const wavBuffer = this.pcmToWav(pcm16khz, this.sampleRate);
       console.log(
-        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes, 16kHz)`,
+        `🔄 WAV generado: ${wavBuffer.length} bytes (header + datos, 16kHz)`,
       );
 
       await this.saveDebugWav(wavBuffer);
 
-      // Simplificar código de idioma (es-ES → es, en-US → en)
-      const simpleLanguage = this.language.split('-')[0]; // "es-ES" → "es"
-
-      // Enviar como WAV - SOLO parámetros documentados
-      formData.append('audio', wavBuffer, {
-        filename: 'audio.wav',
-        contentType: 'audio/wav',
-      });
-      formData.append('language', simpleLanguage);
-
-      // Solo agregar parámetros extras si están explícitamente configurados
-      if (this.enablePunctuation !== undefined) {
-        formData.append(
-          'enable_punctuation',
-          this.enablePunctuation ? 'true' : 'false',
-        );
-      }
-      if (this.enableTimestamps !== undefined) {
-        formData.append(
-          'enable_word_timestamps',
-          this.enableTimestamps ? 'true' : 'false',
-        );
-      }
-      // Permitir parámetros extra solo si están en la configuración JSON
-      for (const [key, value] of Object.entries(this.extraFormFields)) {
-        if (value !== undefined && value !== null) {
-          const normalized =
-            typeof value === 'string' ? value : JSON.stringify(value);
-          formData.append(key, normalized);
-        }
+      const options: Record<string, unknown> = {
+        mimetype: 'audio/wav',
+        model: this.model,
+        language: this.language,
+        smart_format: this.smartFormat,
+        punctuate: this.punctuate,
+        diarize: this.diarize,
+        encoding: 'linear16',
+        sample_rate: this.sampleRate,
+      };
+      if (this.tier) {
+        options.tier = this.tier;
       }
 
-      console.log('📤 Enviando audio a Fish Audio ASR...');
+      const start = Date.now();
+      const response = await this.deepgram.listen.prerecorded.transcribeFile(
+        wavBuffer,
+        options,
+      );
+      const elapsed = Date.now() - start;
+
+      const transcript =
+        response.result?.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ||
+        '';
       console.log(
-        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes, sampleRate=16000Hz`,
+        `✅ Deepgram transcript (${elapsed}ms):`,
+        transcript || '[vacío]',
       );
-
-      const response = await axios.post(
-        'https://api.fish.audio/v1/asr',
-        formData,
-        {
-          headers: {
-            Authorization: `Bearer ${this.fishApiKey}`,
-            ...formData.getHeaders(), // Incluir headers de FormData (boundary, etc.)
-          },
-        },
-      );
-
-      const transcript = response.data?.text || '';
-      console.log('✅ Audio transcrito:', transcript);
-
       return transcript;
     } catch (error) {
-      console.error('❌ Error transcribiendo audio ASR:', error);
-      if (axios.isAxiosError(error)) {
-        console.error('📋 Status:', error.response?.status);
-        console.error('📋 Status Text:', error.response?.statusText);
-        console.error(
-          '📋 Response Data:',
-          JSON.stringify(error.response?.data, null, 2),
-        );
-        console.error('📋 Request URL:', error.config?.url);
-        console.error('📋 Request Method:', error.config?.method);
-
-        // Log del contenido del FormData para debugging
-        if (error.config?.data instanceof FormData) {
-          const simpleLanguage = this.language.split('-')[0];
-          const resampledSize = audioBuffer.length * 2;
-          const wavSize = resampledSize + 44;
-          console.error('📋 FormData fields:', {
-            audioSizeOriginal8kHz: audioBuffer.length,
-            audioSizeResampled16kHz: resampledSize,
-            wavSize,
-            language: simpleLanguage,
-            sampleRate: '16000Hz',
-            contentType: 'audio/wav',
-            filename: 'audio.wav',
-          });
-        }
-
-        // Log adicional de la respuesta del servidor
-        if (error.response?.data) {
-          console.error('📋 Fish Audio API Response:', error.response.data);
-        }
-      }
+      console.error('❌ Error transcribiendo con Deepgram:', error);
       throw error;
     }
   }
@@ -183,7 +134,7 @@ export class FishAsrHttpService {
     }
     try {
       await fs.mkdir(this.debugWavDir, { recursive: true });
-      const fileName = `fish-asr-${Date.now()}.wav`;
+      const fileName = `deepgram-asr-${Date.now()}.wav`;
       const filePath = path.join(this.debugWavDir, fileName);
       await fs.writeFile(filePath, wavBuffer);
       console.log(
@@ -307,25 +258,12 @@ export class FishAsrHttpService {
   }
 }
 
-function parseBoolean(value: string | undefined): boolean | undefined {
-  if (value === undefined) return undefined;
+function parseBoolean(
+  value: string | undefined,
+  defaultValue = false,
+): boolean {
+  if (value === undefined) return defaultValue;
   if (value === 'true' || value === '1') return true;
   if (value === 'false' || value === '0') return false;
-  return undefined;
-}
-
-function parseJsonEnv(raw?: string): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch (error) {
-    console.error(
-      'No se pudo parsear FISH_ASR_HTTP_OPTIONS_JSON:',
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  return {};
+  return defaultValue;
 }

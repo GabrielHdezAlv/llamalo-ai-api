@@ -3,7 +3,7 @@ import { ulawToPcm16, pcm16ToUlawB64 } from './audio.utils';
 import { FishAsrService } from '../fish-audio/realtime/fish-asr.service';
 import { FishTtsService } from '../fish-audio/realtime/fish-tts.service';
 import { FishTtsHttpService } from '../fish-audio/http/fish-tts-http.service';
-import { FishAsrHttpService } from '../fish-audio/http/fish-asr-http.service';
+import { DeepgramAsrHttpService } from '../deepgram/deepgram-asr-http.service';
 import { GptService } from '../llm/gpt.service';
 import { TwilioCallMediaService } from '../twilio/twilio-call-media.service';
 import type { FishAsrTranscript } from '../fish-audio/realtime/types';
@@ -96,7 +96,7 @@ export class StreamsGateway {
     private readonly asr: FishAsrService,
     private readonly tts: FishTtsService,
     private readonly ttsHttp: FishTtsHttpService,
-    private readonly asrHttp: FishAsrHttpService,
+    private readonly asrHttp: DeepgramAsrHttpService,
     private readonly gpt: GptService,
     private readonly twilioMedia: TwilioCallMediaService,
   ) {}
@@ -107,7 +107,7 @@ export class StreamsGateway {
 
     // Verificar variables de entorno
     console.log(
-      '🔑 FISH_API_KEY:',
+      '🔑 FISH_API_KEY (TTS):',
       process.env.FISH_API_KEY ? '✅ Configurado' : '❌ No configurado',
     );
     console.log(
@@ -115,6 +115,11 @@ export class StreamsGateway {
       process.env.FISH_TTS_VOICE_ID || '❌ No configurado',
     );
     console.log('🌍 FISH_LANG:', process.env.FISH_LANG || '❌ No configurado');
+    console.log(
+      '🧠 DG_API_KEY (ASR):',
+      process.env.DG_API_KEY ? '✅ Configurado' : '❌ No configurado',
+    );
+    console.log('🧠 DG_MODEL:', process.env.DG_MODEL || 'nova-2');
 
     const startTime = Date.now();
 
