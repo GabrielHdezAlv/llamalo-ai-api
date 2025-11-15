@@ -39,6 +39,11 @@ interface CallSession {
   audioBufferTimer?: NodeJS.Timeout;
   httpQueue: Promise<void>;
   lastAsrTime: number;
+  // VAD (Voice Activity Detection) para control de turnos
+  isSpeaking: boolean;
+  speechBuffer: Buffer;
+  lastSpeechTime: number;
+  silenceTimeout?: NodeJS.Timeout;
 }
 
 // 🧠 Métricas acumuladas globales
@@ -259,6 +264,10 @@ export class StreamsGateway {
       audioBuffer: Buffer.alloc(0),
       httpQueue: Promise.resolve(),
       lastAsrTime: 0,
+      // VAD (Voice Activity Detection)
+      isSpeaking: false,
+      speechBuffer: Buffer.alloc(0),
+      lastSpeechTime: 0,
     };
 
     this.sessions.set(callSid, session);
@@ -349,9 +358,12 @@ export class StreamsGateway {
 
     console.log(`🧹 [${callSid}] Limpiando sesión`);
 
-    // Limpiar timer de audio buffer
+    // Limpiar timers
     if (session.audioBufferTimer) {
       clearTimeout(session.audioBufferTimer);
+    }
+    if (session.silenceTimeout) {
+      clearTimeout(session.silenceTimeout);
     }
 
     // Detener ASR/TTS si están activos
@@ -475,6 +487,25 @@ export class StreamsGateway {
     }
   }
 
+  /**
+   * Calcula el nivel RMS del audio para VAD (Voice Activity Detection)
+   */
+  private calculateAudioLevel(pcmBuffer: Buffer): number {
+    let sum = 0;
+    const sampleCount = pcmBuffer.length / 2;
+
+    for (let i = 0; i < pcmBuffer.length; i += 2) {
+      const sample = pcmBuffer.readInt16LE(i);
+      sum += sample * sample;
+    }
+
+    return Math.sqrt(sum / sampleCount);
+  }
+
+  /**
+   * Procesa audio con VAD (Voice Activity Detection) y control de turnos.
+   * Solo envía a ASR cuando el usuario termina de hablar (pausa prolongada).
+   */
   private processAudioWithHttp(audioPayload: string, callSid: string): void {
     const session = this.sessions.get(callSid);
     if (!session) {
@@ -488,6 +519,7 @@ export class StreamsGateway {
         return;
       }
 
+      // Decodificar audio
       let pcmArray: Int16Array;
       try {
         const pcm = ulawToPcm16(audioPayload);
@@ -512,49 +544,56 @@ export class StreamsGateway {
         return;
       }
 
-      // Acumular en el buffer de la sesión
-      const appendedBuffer = Buffer.concat([session.audioBuffer, pcmBuffer]);
-      const chunkSizeBytes = 16000; // 1 segundo a 8kHz 16-bit mono
-      const timeoutMs = 1000;
+      // VAD: Detectar si hay voz en este chunk
+      const audioLevel = this.calculateAudioLevel(pcmBuffer);
+      const speechThreshold = 100; // Umbral para detectar voz
+      const silenceTimeoutMs = 1500; // 1.5 segundos de silencio para confirmar fin de habla
 
-      const chunks: Buffer[] = [];
-      let workingBuffer = appendedBuffer;
+      const isSpeech = audioLevel > speechThreshold;
 
-      while (workingBuffer.length >= chunkSizeBytes) {
-        const chunk = Buffer.from(workingBuffer.slice(0, chunkSizeBytes));
-        chunks.push(chunk);
-        workingBuffer = workingBuffer.slice(chunkSizeBytes);
-      }
+      if (isSpeech) {
+        // HAY VOZ: acumular audio
+        if (!session.isSpeaking) {
+          console.log(`🎤 [${callSid}] Usuario empezó a hablar (nivel: ${audioLevel.toFixed(0)})`);
+          session.isSpeaking = true;
+          session.speechBuffer = Buffer.alloc(0);
+        }
 
-      session.audioBuffer = workingBuffer;
+        // Acumular audio en el buffer de speech
+        session.speechBuffer = Buffer.concat([session.speechBuffer, pcmBuffer]);
+        session.lastSpeechTime = Date.now();
 
-      // Solo loguear cuando hay chunks para enviar
-      if (chunks.length > 0) {
-        console.log(`🚀 [${callSid}] Enviando ${chunks.length} chunk(s) HTTP de ${chunkSizeBytes} bytes cada uno`);
-        chunks.forEach((chunk) => {
-          this.enqueueHttpChunk(callSid, chunk);
-        });
-        
-        const bufferSeconds = (workingBuffer.length / 16000).toFixed(2);
-        console.log(`📦 Buffer restante: ${workingBuffer.length} bytes (${bufferSeconds}s)`);
-      }
+        // Cancelar timeout de silencio si existe
+        if (session.silenceTimeout) {
+          clearTimeout(session.silenceTimeout);
+          session.silenceTimeout = undefined;
+        }
 
-      // Gestionar timer de timeout
-      if (session.audioBufferTimer) {
-        clearTimeout(session.audioBufferTimer);
-      }
+      } else {
+        // SILENCIO
+        if (session.isSpeaking) {
+          // Estábamos hablando, iniciar countdown para enviar a ASR
+          if (!session.silenceTimeout) {
+            session.silenceTimeout = setTimeout(() => {
+              const currentSession = this.sessions.get(callSid);
+              if (currentSession && currentSession.isSpeaking && currentSession.speechBuffer.length > 0) {
+                const duration = (currentSession.speechBuffer.length / 16000).toFixed(2);
+                console.log(`🔚 [${callSid}] Usuario terminó de hablar (${duration}s de audio)`);
 
-      if (workingBuffer.length > 0) {
-        session.audioBufferTimer = setTimeout(() => {
-          const currentSession = this.sessions.get(callSid);
-          if (currentSession && currentSession.audioBuffer.length > 0) {
-            console.log(`⏰ Timeout HTTP — enviando chunk residual de ${currentSession.audioBuffer.length} bytes`);
-            const pending = Buffer.from(currentSession.audioBuffer);
-            currentSession.audioBuffer = Buffer.alloc(0);
-            this.enqueueHttpChunk(callSid, pending);
+                // Enviar todo el buffer acumulado a ASR
+                this.enqueueHttpChunk(callSid, currentSession.speechBuffer);
+
+                // Resetear estado
+                currentSession.isSpeaking = false;
+                currentSession.speechBuffer = Buffer.alloc(0);
+                currentSession.silenceTimeout = undefined;
+              }
+            }, silenceTimeoutMs);
           }
-        }, timeoutMs);
+        }
+        // Si no estábamos hablando, simplemente ignorar el silencio
       }
+
     } catch (error) {
       console.error('❌ Error procesando audio con HTTP:', error);
     }
