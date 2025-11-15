@@ -51,7 +51,7 @@ export class DeepgramAsrHttpService {
       console.log('🎙️ Transcribiendo audio con Deepgram...');
       console.log('📊 Tamaño del buffer PCM:', audioBuffer.length, 'bytes');
 
-      const minAudioSize = 16000; // 1 segundo a 8kHz 16-bit mono
+      const minAudioSize = 8000; // ~0.5 segundos a 8kHz 16-bit mono
       if (audioBuffer.length < minAudioSize) {
         console.log(
           `⏳ Audio demasiado corto (${audioBuffer.length} bytes), esperando más...`,
@@ -63,7 +63,7 @@ export class DeepgramAsrHttpService {
       console.log(
         `📊 Nivel de audio: ${audioLevel.toFixed(2)} (umbral mínimo: 100)`,
       );
-      if (audioLevel < 100) {
+      if (audioLevel < 60) {
         console.log(
           '🔇 Audio es silencio o muy bajo, omitiendo transcripción...',
         );
@@ -92,6 +92,8 @@ export class DeepgramAsrHttpService {
         diarize: this.diarize,
         encoding: 'linear16',
         sample_rate: this.sampleRate,
+        endpointing: 300,
+        utt_split_ms: 700,
       };
       if (this.tier) {
         options.tier = this.tier;

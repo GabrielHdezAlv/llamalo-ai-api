@@ -551,8 +551,10 @@ export class StreamsGateway {
 
       // VAD: Detectar si hay voz en este chunk
       const audioLevel = this.calculateAudioLevel(pcmBuffer);
-      const speechThreshold = 100; // Umbral para detectar voz
-      const silenceTimeoutMs = 1500; // 1.5 segundos de silencio para confirmar fin de habla
+      const speechThreshold = 70; // detecta voz antes
+      const silenceTimeoutMs = 800; // pausa corta para cortar turno
+      const minChunkBytes = 8000; // 0.5s
+      const maxChunkBytes = 24000; // ~1.5s antes de forzar envío
 
       const isSpeech = audioLevel > speechThreshold;
 
@@ -568,6 +570,18 @@ export class StreamsGateway {
         session.speechBuffer = Buffer.concat([session.speechBuffer, pcmBuffer]);
         session.lastSpeechTime = Date.now();
 
+        // Si supera el máximo, dividir en chunks intermedios
+        while (session.speechBuffer.length >= maxChunkBytes) {
+          const chunk = Buffer.from(
+            session.speechBuffer.slice(0, maxChunkBytes),
+          );
+          session.speechBuffer = session.speechBuffer.slice(maxChunkBytes);
+          console.log(
+            `🚀 [${callSid}] Enviando chunk intermedio de ${chunk.length} bytes (forzado por longitud)`,
+          );
+          this.enqueueHttpChunk(callSid, chunk);
+        }
+
         // Cancelar timeout de silencio si existe
         if (session.silenceTimeout) {
           clearTimeout(session.silenceTimeout);
@@ -581,14 +595,21 @@ export class StreamsGateway {
           if (!session.silenceTimeout) {
             session.silenceTimeout = setTimeout(() => {
               const currentSession = this.sessions.get(callSid);
-              if (currentSession && currentSession.isSpeaking && currentSession.speechBuffer.length > 0) {
-                const duration = (currentSession.speechBuffer.length / 16000).toFixed(2);
-                console.log(`🔚 [${callSid}] Usuario terminó de hablar (${duration}s de audio)`);
+              if (
+                currentSession &&
+                currentSession.isSpeaking &&
+                currentSession.speechBuffer.length >= minChunkBytes
+              ) {
+                const duration = (
+                  currentSession.speechBuffer.length / 16000
+                ).toFixed(2);
+                console.log(
+                  `🔚 [${callSid}] Usuario terminó de hablar (${duration}s de audio)`,
+                );
 
                 // Enviar todo el buffer acumulado a ASR
                 this.enqueueHttpChunk(callSid, currentSession.speechBuffer);
 
-                // Resetear estado
                 currentSession.isSpeaking = false;
                 currentSession.speechBuffer = Buffer.alloc(0);
                 currentSession.silenceTimeout = undefined;
