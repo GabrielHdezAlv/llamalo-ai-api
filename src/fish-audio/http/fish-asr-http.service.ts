@@ -3,6 +3,8 @@ import axios from 'axios';
 import FormData from 'form-data';
 import { spawn } from 'child_process';
 import * as ffmpeg from '@ffmpeg-installer/ffmpeg';
+import { promises as fs } from 'fs';
+import * as path from 'path';
 
 const ffmpegPath = (ffmpeg as { path: string }).path;
 
@@ -25,6 +27,11 @@ export class FishAsrHttpService {
   private readonly extraFormFields = parseJsonEnv(
     process.env.FISH_ASR_HTTP_OPTIONS_JSON,
   );
+  private readonly debugSaveWav =
+    process.env.FISH_DEBUG_SAVE_WAV === 'true' ||
+    process.env.FISH_DEBUG_SAVE_WAV === '1';
+  private readonly debugWavDir =
+    process.env.FISH_DEBUG_WAV_DIR || '/tmp/fish-wavs';
 
   async transcribeAudio(audioBuffer: Buffer): Promise<string> {
     try {
@@ -68,6 +75,8 @@ export class FishAsrHttpService {
       console.log(
         `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes, 16kHz)`,
       );
+
+      await this.saveDebugWav(wavBuffer);
 
       // Simplificar código de idioma (es-ES → es, en-US → en)
       const simpleLanguage = this.language.split('-')[0]; // "es-ES" → "es"
@@ -165,6 +174,23 @@ export class FishAsrHttpService {
     } catch (error) {
       console.error('❌ Error transcribiendo desde base64:', error);
       throw error;
+    }
+  }
+
+  private async saveDebugWav(wavBuffer: Buffer): Promise<void> {
+    if (!this.debugSaveWav) {
+      return;
+    }
+    try {
+      await fs.mkdir(this.debugWavDir, { recursive: true });
+      const fileName = `fish-asr-${Date.now()}.wav`;
+      const filePath = path.join(this.debugWavDir, fileName);
+      await fs.writeFile(filePath, wavBuffer);
+      console.log(
+        `💾 WAV de debug guardado (${wavBuffer.length} bytes) en: ${filePath}`,
+      );
+    } catch (error) {
+      console.error('⚠️ No se pudo guardar WAV de debug:', error);
     }
   }
 
