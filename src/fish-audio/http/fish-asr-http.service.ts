@@ -39,10 +39,15 @@ export class FishAsrHttpService {
 
       const formData = new FormData();
 
-      // Convertir PCM a WAV (formato más compatible)
-      const wavBuffer = this.pcmToWav(audioBuffer);
+      // Resamplear de 8kHz a 16kHz (Fish Audio ASR requiere 16kHz mínimo)
+      console.log(`🔄 Resampling de 8kHz a 16kHz...`);
+      const pcm16khz = this.resample8kTo16k(audioBuffer);
+      console.log(`✅ Audio resampled: ${audioBuffer.length} bytes (8kHz) → ${pcm16khz.length} bytes (16kHz)`);
+
+      // Convertir PCM a WAV con sample rate de 16kHz
+      const wavBuffer = this.pcmToWav(pcm16khz, 16000);
       console.log(
-        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes)`,
+        `🔄 WAV generado: ${wavBuffer.length} bytes (header: 44 bytes, data: ${wavBuffer.length - 44} bytes, 16kHz)`,
       );
 
       // Simplificar código de idioma (es-ES → es, en-US → en)
@@ -79,7 +84,7 @@ export class FishAsrHttpService {
 
       console.log('📤 Enviando audio a Fish Audio ASR...');
       console.log(
-        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes`,
+        `📋 Parámetros: language=${simpleLanguage}, filename=audio.wav, size=${wavBuffer.length} bytes, sampleRate=16000Hz`,
       );
 
       const response = await axios.post(
@@ -112,10 +117,14 @@ export class FishAsrHttpService {
         // Log del contenido del FormData para debugging
         if (error.config?.data instanceof FormData) {
           const simpleLanguage = this.language.split('-')[0];
+          const pcm16khzSize = audioBuffer.length * 2; // Duplicado por resample
+          const wavSize = pcm16khzSize + 44; // + header WAV
           console.error('📋 FormData fields:', {
-            audioSize: audioBuffer.length,
-            wavSize: audioBuffer.length + 44,
+            audioSizeOriginal8kHz: audioBuffer.length,
+            audioSizeResampled16kHz: pcm16khzSize,
+            wavSize: wavSize,
             language: simpleLanguage,
+            sampleRate: '16000Hz',
             contentType: 'audio/wav',
             filename: 'audio.wav',
           });
@@ -141,12 +150,55 @@ export class FishAsrHttpService {
   }
 
   /**
+   * Resamplea audio de 8kHz a 16kHz usando interpolación lineal
+   * Fish Audio ASR requiere 16kHz o superior según su documentación
+   * @param pcm8khz Buffer con datos PCM16 a 8kHz
+   * @returns Buffer con datos PCM16 a 16kHz
+   */
+  private resample8kTo16k(pcm8khz: Buffer): Buffer {
+    // Convertir buffer a array de samples de 16-bit
+    const samples8k = [];
+    for (let i = 0; i < pcm8khz.length; i += 2) {
+      samples8k.push(pcm8khz.readInt16LE(i));
+    }
+
+    // Interpolación lineal para duplicar el sample rate
+    const samples16k: number[] = [];
+    for (let i = 0; i < samples8k.length - 1; i++) {
+      const current = samples8k[i];
+      const next = samples8k[i + 1];
+      
+      // Muestra original
+      samples16k.push(current);
+      
+      // Muestra interpolada (promedio entre current y next)
+      const interpolated = Math.round((current + next) / 2);
+      samples16k.push(interpolated);
+    }
+    
+    // Agregar la última muestra
+    if (samples8k.length > 0) {
+      samples16k.push(samples8k[samples8k.length - 1]);
+      samples16k.push(samples8k[samples8k.length - 1]); // Duplicar última muestra
+    }
+
+    // Convertir de vuelta a Buffer
+    const buffer16k = Buffer.alloc(samples16k.length * 2);
+    for (let i = 0; i < samples16k.length; i++) {
+      buffer16k.writeInt16LE(samples16k[i], i * 2);
+    }
+
+    return buffer16k;
+  }
+
+  /**
    * Convierte un Buffer PCM16 a formato WAV
    * @param pcmBuffer Buffer con datos PCM16 (16-bit signed integers, little-endian)
+   * @param sampleRateOverride Sample rate a usar (por defecto usa this.sampleRate)
    * @returns Buffer con formato WAV
    */
-  private pcmToWav(pcmBuffer: Buffer): Buffer {
-    const sampleRate = this.sampleRate;
+  private pcmToWav(pcmBuffer: Buffer, sampleRateOverride?: number): Buffer {
+    const sampleRate = sampleRateOverride || this.sampleRate;
     const numChannels = 1;
     const bitsPerSample = 16;
     const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
