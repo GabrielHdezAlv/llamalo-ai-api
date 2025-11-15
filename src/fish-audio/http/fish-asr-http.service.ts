@@ -42,7 +42,9 @@ export class FishAsrHttpService {
       // Resamplear de 8kHz a 16kHz (Fish Audio ASR requiere 16kHz mínimo)
       console.log(`🔄 Resampling de 8kHz a 16kHz...`);
       const pcm16khz = this.resample8kTo16k(audioBuffer);
-      console.log(`✅ Audio resampled: ${audioBuffer.length} bytes (8kHz) → ${pcm16khz.length} bytes (16kHz)`);
+      console.log(
+        `✅ Audio resampled: ${audioBuffer.length} bytes (8kHz) → ${pcm16khz.length} bytes (16kHz)`,
+      );
 
       // Convertir PCM a WAV con sample rate de 16kHz
       const wavBuffer = this.pcmToWav(pcm16khz, 16000);
@@ -157,7 +159,7 @@ export class FishAsrHttpService {
    */
   private resample8kTo16k(pcm8khz: Buffer): Buffer {
     // Convertir buffer a array de samples de 16-bit
-    const samples8k = [];
+    const samples8k: number[] = [];
     for (let i = 0; i < pcm8khz.length; i += 2) {
       samples8k.push(pcm8khz.readInt16LE(i));
     }
@@ -167,15 +169,15 @@ export class FishAsrHttpService {
     for (let i = 0; i < samples8k.length - 1; i++) {
       const current = samples8k[i];
       const next = samples8k[i + 1];
-      
+
       // Muestra original
       samples16k.push(current);
-      
+
       // Muestra interpolada (promedio entre current y next)
       const interpolated = Math.round((current + next) / 2);
       samples16k.push(interpolated);
     }
-    
+
     // Agregar la última muestra
     if (samples8k.length > 0) {
       samples16k.push(samples8k[samples8k.length - 1]);
