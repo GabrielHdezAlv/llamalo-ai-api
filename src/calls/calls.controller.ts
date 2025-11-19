@@ -80,7 +80,7 @@ export class CallsController {
       const connect = r.connect();
       const stream = connect.stream({
         url: wsUrl,
-        track: 'both_tracks',
+        track: 'inbound_track',
       });
 
       const addStreamParameter = (name: string, value?: string) => {
@@ -155,7 +155,7 @@ export class CallsController {
     const connect = r.connect();
     connect.stream({
       url: wsUrl,
-      track: 'both_tracks',
+      track: 'inbound_track',
     });
 
     const twimlString = r.toString();
