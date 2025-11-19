@@ -7,8 +7,6 @@ import {
   FishAsrStop,
   FishAsrTranscript,
   FishAsrIncoming,
-  FishAsrStopNotice,
-  FishAsrCloseNotice,
 } from './types';
 
 @Injectable()
@@ -82,7 +80,12 @@ export class FishAsrService implements OnModuleDestroy {
           this.ws!.send(JSON.stringify(init));
         } catch (error) {
           settled = true;
-          this.cleanupListeners(handleOpen, handleMessage, handleError, handleClose);
+          this.cleanupListeners(
+            handleOpen,
+            handleMessage,
+            handleError,
+            handleClose,
+          );
           reject(error instanceof Error ? error : new Error(String(error)));
         }
       };
@@ -123,11 +126,11 @@ export class FishAsrService implements OnModuleDestroy {
             }
             case 'asr_transcript':
               if (this.onCb && this.ready) {
-                this.onCb(msg as FishAsrTranscript);
+                this.onCb(msg);
               }
               break;
             case 'asr_stop': {
-              const stopMsg = msg as FishAsrStopNotice;
+              const stopMsg = msg;
               console.log(
                 `Fish Audio ASR indicó stop${
                   stopMsg.reason ? `: ${stopMsg.reason}` : ''
@@ -144,7 +147,7 @@ export class FishAsrService implements OnModuleDestroy {
               break;
             }
             case 'asr_close': {
-              const closeMsg = msg as FishAsrCloseNotice;
+              const closeMsg = msg;
               console.log(
                 `Fish Audio ASR cerró la sesión${
                   closeMsg.reason ? `: ${closeMsg.reason}` : ''
@@ -171,7 +174,12 @@ export class FishAsrService implements OnModuleDestroy {
         const err = error instanceof Error ? error : new Error(String(error));
         if (!settled) {
           settled = true;
-          this.cleanupListeners(handleOpen, handleMessage, handleError, handleClose);
+          this.cleanupListeners(
+            handleOpen,
+            handleMessage,
+            handleError,
+            handleClose,
+          );
           reject(err);
         } else {
           console.error('Fish Audio ASR websocket error:', err);
@@ -184,10 +192,17 @@ export class FishAsrService implements OnModuleDestroy {
         this.stopKeepAlive();
         if (!settled) {
           settled = true;
-          this.cleanupListeners(handleOpen, handleMessage, handleError, handleClose);
+          this.cleanupListeners(
+            handleOpen,
+            handleMessage,
+            handleError,
+            handleClose,
+          );
           reject(new Error('Fish Audio ASR websocket closed before ready'));
         } else if (this.shouldReconnect) {
-          console.warn('Fish Audio ASR websocket closed; intentando reconectar…');
+          console.warn(
+            'Fish Audio ASR websocket closed; intentando reconectar…',
+          );
           this.scheduleReconnect();
         }
       };

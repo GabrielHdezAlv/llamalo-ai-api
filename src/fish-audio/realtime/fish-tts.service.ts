@@ -4,9 +4,7 @@ import WebSocket from 'ws';
 import {
   FishTtsInit,
   FishTtsText,
-  FishTtsAudio,
   FishTtsIncoming,
-  FishTtsEnd,
   FishTtsCancel,
 } from './types';
 import axios from 'axios';
@@ -130,7 +128,12 @@ export class FishTtsService implements OnModuleDestroy {
           this.ws!.send(JSON.stringify(init));
         } catch (error) {
           settled = true;
-          this.cleanupListeners(handleOpen, handleMessage, handleError, handleClose);
+          this.cleanupListeners(
+            handleOpen,
+            handleMessage,
+            handleError,
+            handleClose,
+          );
           reject(error instanceof Error ? error : new Error(String(error)));
         }
       };
@@ -172,7 +175,7 @@ export class FishTtsService implements OnModuleDestroy {
               break;
             }
             case 'tts_end': {
-              const endMsg = msg as FishTtsEnd;
+              const endMsg = msg;
               console.log(
                 `Fish Audio TTS indicó fin de audio${
                   endMsg.reason ? `: ${endMsg.reason}` : ''
@@ -203,7 +206,7 @@ export class FishTtsService implements OnModuleDestroy {
               break;
             }
             case 'tts_audio': {
-              const audioMsg = msg as FishTtsAudio;
+              const audioMsg = msg;
               if (audioMsg.audio) {
                 const buf = Buffer.from(audioMsg.audio, 'base64');
                 const pcm = new Int16Array(
@@ -240,7 +243,12 @@ export class FishTtsService implements OnModuleDestroy {
         const err = error instanceof Error ? error : new Error(String(error));
         if (!settled) {
           settled = true;
-          this.cleanupListeners(handleOpen, handleMessage, handleError, handleClose);
+          this.cleanupListeners(
+            handleOpen,
+            handleMessage,
+            handleError,
+            handleClose,
+          );
           reject(err);
         } else {
           console.error('Fish Audio TTS websocket error:', err);
@@ -253,10 +261,17 @@ export class FishTtsService implements OnModuleDestroy {
         this.stopKeepAlive();
         if (!settled) {
           settled = true;
-          this.cleanupListeners(handleOpen, handleMessage, handleError, handleClose);
+          this.cleanupListeners(
+            handleOpen,
+            handleMessage,
+            handleError,
+            handleClose,
+          );
           reject(new Error('Fish Audio TTS websocket closed before ready'));
         } else if (this.shouldReconnect) {
-          console.warn('Fish Audio TTS websocket closed; intentando reconectar…');
+          console.warn(
+            'Fish Audio TTS websocket closed; intentando reconectar…',
+          );
           this.scheduleReconnect();
         }
       };
@@ -269,13 +284,16 @@ export class FishTtsService implements OnModuleDestroy {
   }
 
   onAudio(
-    cb: (pcm: Int16Array, info: {
-      isFinal?: boolean;
-      utteranceId?: string;
-      sequenceId?: number;
-      startMs?: number;
-      endMs?: number;
-    }) => void,
+    cb: (
+      pcm: Int16Array,
+      info: {
+        isFinal?: boolean;
+        utteranceId?: string;
+        sequenceId?: number;
+        startMs?: number;
+        endMs?: number;
+      },
+    ) => void,
   ) {
     this.listeners.push(cb);
   }
@@ -326,7 +344,11 @@ export class FishTtsService implements OnModuleDestroy {
     });
 
     if (priority > this.currentPriority && this.currentUtteranceId) {
-      this.cancelUtterance(this.currentUtteranceId, 'preempted-by-priority', 'current');
+      this.cancelUtterance(
+        this.currentUtteranceId,
+        'preempted-by-priority',
+        'current',
+      );
     }
 
     this.processQueue();
@@ -344,7 +366,9 @@ export class FishTtsService implements OnModuleDestroy {
       this.currentUtteranceId = undefined;
       this.currentPriority = Number.NEGATIVE_INFINITY;
     } else if (scope === 'pending' && utteranceId) {
-      this.queue = this.queue.filter((item) => item.utteranceId !== utteranceId);
+      this.queue = this.queue.filter(
+        (item) => item.utteranceId !== utteranceId,
+      );
     }
 
     if (!utteranceId && scope === 'current') {
@@ -352,7 +376,9 @@ export class FishTtsService implements OnModuleDestroy {
     }
 
     if (utteranceId) {
-      this.queue = this.queue.filter((item) => item.utteranceId !== utteranceId);
+      this.queue = this.queue.filter(
+        (item) => item.utteranceId !== utteranceId,
+      );
     }
 
     if (utteranceId && utteranceId === this.currentUtteranceId) {
@@ -635,7 +661,11 @@ function mergeExtras(
   if (overrideJson) {
     try {
       const override = JSON.parse(overrideJson);
-      if (override && typeof override === 'object' && !Array.isArray(override)) {
+      if (
+        override &&
+        typeof override === 'object' &&
+        !Array.isArray(override)
+      ) {
         Object.assign(merged, override as Record<string, unknown>);
       }
     } catch (error) {
