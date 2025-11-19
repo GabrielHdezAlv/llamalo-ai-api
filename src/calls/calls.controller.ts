@@ -2,7 +2,6 @@ import { Controller, Post, Body, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import * as admin from 'firebase-admin';
-import { TwilioCallMediaService } from '../twilio/twilio-call-media.service';
 
 class IncomingDto {
   To?: string;
@@ -12,10 +11,7 @@ class IncomingDto {
 
 @Controller('voice')
 export class CallsController {
-  constructor(
-    private readonly twilio: TwilioService,
-    private readonly twilioCallMedia: TwilioCallMediaService,
-  ) {}
+  constructor(private readonly twilio: TwilioService) {}
 
   @Post('incoming')
   async incoming(@Body() body: IncomingDto, @Res() res: Response) {
@@ -74,57 +70,58 @@ export class CallsController {
       //   }
       // }
 
-      // 🔹 IMPORTANTE: Start debe ir ANTES de Play para que Twilio envíe el evento "start"
       const wsUrl =
         process.env.NODE_ENV === 'production'
           ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
           : 'ws://localhost:3000/voice/stream';
 
       console.log('🔗 WebSocket URL:', wsUrl);
-      
-      // Crear y agregar el elemento Start con Stream PRIMERO
-      // Especificar tracks: inbound (audio del usuario) y outbound (audio hacia el usuario)
-      const start = r.start();
-      start.stream({ 
+
+      const connect = r.connect();
+      const stream = connect.stream({
         url: wsUrl,
-        track: 'both_tracks' // inbound_track, outbound_track, o both_tracks
+        track: 'both_tracks',
       });
 
-      // Registrar credenciales para esta llamada (usar Twilio del agente)
-      this.twilioCallMedia.registerCallCredentials(
-        body.CallSid,
-        twilioConfig.twilioSid as string | undefined,
-        twilioConfig.twilioToken as string | undefined,
+      const addStreamParameter = (name: string, value?: string) => {
+        if (!value) return;
+        const normalized = value.trim();
+        if (!normalized) return;
+        stream.parameter({
+          name,
+          value: normalized.slice(0, 450),
+        });
+      };
+
+      const agentProfile =
+        (agent?.agent as Record<string, unknown>) ||
+        ({} as Record<string, unknown>);
+      const agentName =
+        typeof agentProfile.name === 'string'
+          ? agentProfile.name
+          : typeof agent?.name === 'string'
+            ? agent.name
+            : undefined;
+
+      addStreamParameter('agentName', agentName);
+      addStreamParameter(
+        'greeting',
+        typeof twilioConfig.firstInteraction === 'string'
+          ? twilioConfig.firstInteraction
+          : undefined,
       );
-
-      // 🔹 LUEGO reproducir audio o texto de bienvenida del agente
-      if (twilioConfig.firstInteractionUrl) {
-        console.log(
-          '🔊 Reproduciendo audio personalizado:',
-          twilioConfig.firstInteractionUrl,
-        );
-        r.play(
-          typeof twilioConfig.firstInteractionUrl === 'string'
-            ? twilioConfig.firstInteractionUrl
-            : '',
-        );
-      } else if (twilioConfig.firstInteraction) {
-        console.log('🗣️ Reproduciendo texto de bienvenida');
-        (r.say as any)(
-          typeof twilioConfig.firstInteraction === 'string'
-            ? twilioConfig.firstInteraction
-            : 'Bienvenido a LlamaloAI.',
-          { voice: 'alice', language: 'es-ES' },
-        );
-      } else {
-        console.log('⚠️ Sin configuración, usando audio por defecto');
-        r.play(
-          'https://storage.googleapis.com/llamaloio.firebasestorage.app/audios/default.mp3',
-        );
-      }
-
-      // 🔹 Mantener llamada viva (10 minutos)
-      r.pause({ length: 600 });
+      addStreamParameter(
+        'greetingUrl',
+        typeof twilioConfig.firstInteractionUrl === 'string'
+          ? twilioConfig.firstInteractionUrl
+          : undefined,
+      );
+      addStreamParameter(
+        'instructions',
+        typeof twilioConfig.instructions === 'string'
+          ? twilioConfig.instructions
+          : undefined,
+      );
 
       // Debug: mostrar TwiML generado
       const twimlString = r.toString();
@@ -145,7 +142,7 @@ export class CallsController {
   }
 
   @Post('resume')
-  async resume(@Body() body: Record<string, unknown>, @Res() res: Response) {
+  resume(@Body() body: Record<string, unknown>, @Res() res: Response) {
     const r = this.twilio.newVoiceResponse();
     const wsUrl =
       process.env.NODE_ENV === 'production'
@@ -155,13 +152,11 @@ export class CallsController {
     console.log('🔄 Reanudando stream Twilio');
     console.log('🔁 CallSid reanudado:', body?.CallSid || 'desconocido');
 
-    const start = r.start();
-    start.stream({
+    const connect = r.connect();
+    connect.stream({
       url: wsUrl,
       track: 'both_tracks',
     });
-
-    r.pause({ length: 600 });
 
     const twimlString = r.toString();
     console.log('📄 TwiML resume generado:', twimlString);
