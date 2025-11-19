@@ -1,27 +1,38 @@
 import { WebSocketGateway } from '@nestjs/websockets';
-import { ulawToPcm16, pcm16ToUlawB64 } from './audio.utils';
-import { FishAsrService } from '../fish-audio/realtime/fish-asr.service';
-import { FishTtsService } from '../fish-audio/realtime/fish-tts.service';
-import { FishTtsHttpService } from '../fish-audio/http/fish-tts-http.service';
-import { DeepgramAsrHttpService } from '../deepgram/deepgram-asr-http.service';
-import { GptService } from '../llm/gpt.service';
-import { TwilioCallMediaService } from '../twilio/twilio-call-media.service';
-import type { FishAsrTranscript } from '../fish-audio/realtime/types';
+import * as WebSocket from 'ws';
 
-type TwilioMediaIn = { event: 'media'; media: { payload: string; track?: string; chunk?: string; timestamp?: string } };
-type TwilioStart = { 
-  event: 'start'; 
-  start: { 
+type TwilioMediaIn = {
+  event: 'media';
+  media: {
+    payload: string;
+    track?: string;
+    chunk?: string;
+    timestamp?: string;
+  };
+  streamSid?: string;
+};
+
+type TwilioStart = {
+  event: 'start';
+  start: {
     callSid?: string;
     streamSid?: string;
     accountSid?: string;
     tracks?: string[];
     customParameters?: Record<string, unknown>;
     mediaFormat?: Record<string, unknown>;
-  } 
+  };
 };
-type TwilioStop = { event: 'stop'; stop?: { accountSid?: string; callSid?: string } };
-type TwilioConnected = { event: 'connected'; protocol?: string; version?: string };
+
+type TwilioStop = {
+  event: 'stop';
+  stop?: { accountSid?: string; callSid?: string };
+};
+type TwilioConnected = {
+  event: 'connected';
+  protocol?: string;
+  version?: string;
+};
 type TwilioMsg = TwilioMediaIn | TwilioStart | TwilioStop | TwilioConnected;
 
 interface WebSocketClient {
@@ -30,55 +41,13 @@ interface WebSocketClient {
   close: () => void;
 }
 
-// Sesión por llamada para gestionar estado independiente
 interface CallSession {
   callSid: string;
-  speaking: boolean;
-  useWebSocket: boolean;
-  audioBuffer: Buffer;
-  audioBufferTimer?: NodeJS.Timeout;
-  httpQueue: Promise<void>;
-  lastAsrTime: number;
-  // VAD (Voice Activity Detection) para control de turnos
-  isSpeaking: boolean;
-  speechBuffer: Buffer;
-  lastSpeechTime: number;
-  silenceTimeout?: NodeJS.Timeout;
-  ending: boolean;
+  streamSid?: string;
+  client: WebSocketClient;
+  openAiSocket?: WebSocket;
+  customParameters?: Record<string, string>;
 }
-
-// 🧠 Métricas acumuladas globales
-const metrics = {
-  asr: [] as number[],
-  gpt: [] as number[],
-  tts: [] as number[],
-};
-
-function recordMetric(type: keyof typeof metrics, ms: number) {
-  metrics[type].push(ms);
-  if (metrics[type].length > 2000) metrics[type].shift(); // mantiene ventana corta
-}
-
-function percentile95(arr: number[]): number {
-  if (!arr.length) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const idx = Math.floor(0.95 * sorted.length);
-  return sorted[idx];
-}
-
-setInterval(() => {
-  const logSummary = (type: keyof typeof metrics) => {
-    const arr = metrics[type];
-    if (!arr.length) return `0ms`;
-    const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
-    const p95 = percentile95(arr);
-    return `${avg.toFixed(0)}ms (p95 ${p95.toFixed(0)}ms)`;
-  };
-
-  console.log(
-    `📊 Métricas — ASR ${logSummary('asr')} | GPT ${logSummary('gpt')} | TTS ${logSummary('tts')}`,
-  );
-}, 30_000);
 
 @WebSocketGateway({
   path: '/voice/stream',
@@ -88,170 +57,90 @@ setInterval(() => {
   },
 })
 export class StreamsGateway {
-  private readonly autoRespondEnabled =
-    process.env.ENABLE_AUTO_RESPONSE === 'true';
-  // Gestión de sesiones por llamada
+  private readonly openAiApiKey =
+    process.env.OPENAI_API_KEY || process.env.OPENAI_REALTIME_API_KEY;
+  private readonly openAiUrl =
+    process.env.OPENAI_REALTIME_URL || 'wss://api.openai.com/v1/realtime';
+  private readonly openAiModel =
+    process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
+  private readonly openAiVoice = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+  private readonly openAiTemperature = Number(
+    process.env.OPENAI_REALTIME_TEMPERATURE || '0.8',
+  );
+  private readonly defaultInstructions =
+    process.env.OPENAI_REALTIME_SYSTEM_PROMPT ||
+    'Eres un asistente de voz profesional y resolutivo. Responde siempre en español con frases cortas y claras.';
+
   private sessions: Map<string, CallSession> = new Map();
 
-  constructor(
-    private readonly asr: FishAsrService,
-    private readonly tts: FishTtsService,
-    private readonly ttsHttp: FishTtsHttpService,
-    private readonly asrHttp: DeepgramAsrHttpService,
-    private readonly gpt: GptService,
-    private readonly twilioMedia: TwilioCallMediaService,
-  ) {}
-
-  async handleConnection(client: WebSocketClient) {
+  handleConnection(client: WebSocketClient) {
     console.log('🛰️ Twilio WS conectado');
-    console.log('📡 Nueva conexión WebSocket establecida');
 
-    // Verificar variables de entorno
-    console.log(
-      '🔑 FISH_API_KEY (TTS):',
-      process.env.FISH_API_KEY ? '✅ Configurado' : '❌ No configurado',
-    );
-    console.log(
-      '🎤 FISH_TTS_VOICE_ID:',
-      process.env.FISH_TTS_VOICE_ID || '❌ No configurado',
-    );
-    console.log('🌍 FISH_LANG:', process.env.FISH_LANG || '❌ No configurado');
-    console.log(
-      '🧠 DG_API_KEY (ASR):',
-      process.env.DG_API_KEY ? '✅ Configurado' : '❌ No configurado',
-    );
-    console.log('🧠 DG_MODEL:', process.env.DG_MODEL || 'nova-2');
-
-    const startTime = Date.now();
-
-    // Intentar conectar ASR/TTS WebSocket
-    let useWebSocket = false;
-    try {
-      await Promise.all([this.asr.connect(), this.tts.connect()]);
-      console.log(`✅ ASR + TTS conectados en ${Date.now() - startTime}ms`);
-      useWebSocket = true;
-    } catch (error) {
-      console.error('❌ Error conectando ASR/TTS:', error);
-      console.log('🔄 Usando modo fallback HTTP...');
-      useWebSocket = false;
+    if (!this.openAiApiKey) {
+      console.error(
+        '❌ OPENAI_API_KEY/OPENAI_REALTIME_API_KEY no configurado. Cerrando conexión.',
+      );
+      client.close();
+      return;
     }
 
     let currentCallSid = '';
-    let mediaBeforeStartWarned = false; // Para evitar logs repetitivos
-    let mediaCount = 0; // Contador de eventos media (total)
-    let inboundMediaCount = 0; // Contador de eventos media inbound procesados
+    let mediaBeforeStartWarned = false;
 
     client.on('message', (raw: Buffer) => {
       try {
-        const rawString = raw.toString();
-        
-        // Log del primer mensaje raw para debug
-        if (mediaCount === 0 && !currentCallSid) {
-          console.log('🔍 PRIMER MENSAJE RAW:', rawString.substring(0, 500));
-        }
-        
-        const msg = JSON.parse(rawString) as TwilioMsg;
-        
-        // Incrementar contador de media
-        if (msg.event === 'media') {
-          mediaCount++;
-        }
-        
-        // Log de eventos no-media sin importar qué
+        const msg = JSON.parse(raw.toString()) as TwilioMsg;
+
         if (msg.event !== 'media') {
           console.log('📨 Twilio mensaje NO-MEDIA recibido:', msg.event);
           console.log('📋 Contenido completo:', JSON.stringify(msg, null, 2));
         }
-        // No loguear eventos media individuales para reducir verbosidad
 
         if (msg.event === 'connected') {
-          console.log('🔗 Twilio WebSocket conectado:', JSON.stringify(msg, null, 2));
+          console.log(
+            '🔗 Twilio WebSocket conectado:',
+            JSON.stringify(msg, null, 2),
+          );
+          return;
         }
 
         if (msg.event === 'start') {
-          // Log completo para debugging
-          console.log('📋 Mensaje completo del start:', JSON.stringify(msg, null, 2));
-          
+          console.log(
+            '📋 Mensaje completo del start:',
+            JSON.stringify(msg, null, 2),
+          );
           currentCallSid = msg.start?.callSid || '';
           console.log(`🎯 CallSid recibido: "${currentCallSid}"`);
           console.log('🎯 StreamSid:', msg.start?.streamSid || 'N/A');
-          
-          // Reset flag cuando llegue el start
           mediaBeforeStartWarned = false;
-          
-          // Crear sesión para esta llamada
-          if (currentCallSid) {
-            this.createSession(currentCallSid, client, useWebSocket);
-          } else {
+
+          if (!currentCallSid) {
             console.error('❌ No se pudo obtener callSid del evento start');
+            return;
           }
+
+          this.createSession(currentCallSid, client, msg.start);
+          return;
         }
 
         if (msg.event === 'media') {
-          // Si aún no tenemos callSid, esperar
           if (!currentCallSid) {
             if (!mediaBeforeStartWarned) {
-              console.warn('⚠️ Recibiendo eventos media antes del start, esperando evento start... (este mensaje no se repetirá)');
+              console.warn(
+                '⚠️ Recibiendo eventos media antes del start, esperando evento start... (este mensaje no se repetirá)',
+              );
               mediaBeforeStartWarned = true;
             }
             return;
           }
 
-          const session = this.sessions.get(currentCallSid);
-          if (!session) {
-            console.warn(`⚠️ No hay sesión para callSid: "${currentCallSid}"`);
-            console.warn(`⚠️ Sesiones disponibles: ${Array.from(this.sessions.keys()).join(', ')}`);
-            return;
-          }
-
-          // Validar payload
-          if (!msg.media?.payload) {
-            console.warn('⚠️ Mensaje de media sin payload válido');
-            return;
-          }
-
-          // 🎯 FILTRO CRÍTICO: Solo procesar audio INBOUND (voz del usuario)
-          // Ignorar audio OUTBOUND (voz del agente reproducida por Twilio)
-          if (msg.media.track !== 'inbound') {
-            // No logear para evitar spam, ya que outbound genera muchos eventos
-            return;
-          }
-
-          // Contador de eventos inbound
-          inboundMediaCount++;
-          
-          // Log de progreso cada 100 eventos inbound (reduce spam considerablemente)
-          if (inboundMediaCount === 1) {
-            console.log(`🎤 Comenzando a recibir audio del usuario (track: inbound)`);
-          } else if (inboundMediaCount % 100 === 0) {
-            console.log(`🎤 Audio del usuario: ${inboundMediaCount} paquetes inbound recibidos`);
-          }
-
-          // Detener TTS cuando el usuario habla
-          session.speaking = false;
-          if (useWebSocket) {
-            this.tts.cancelAll('interrupted-by-user-audio');
-          }
-
-          // Procesar audio según el modo
-          if (session.useWebSocket && this.asr) {
-            const pcm = ulawToPcm16(msg.media.payload);
-            this.asr.sendPcm16(pcm);
-          } else {
-            void this.processAudioWithHttp(msg.media.payload, currentCallSid);
-          }
+          this.forwardInboundAudio(currentCallSid, msg);
+          return;
         }
 
         if (msg.event === 'stop') {
           console.log(`🛑 [${currentCallSid || 'unknown'}] Llamada terminada.`);
-          console.log(`📊 Resumen: ${mediaCount} eventos media totales (${inboundMediaCount} inbound procesados), callSid: ${currentCallSid || 'nunca recibido'}`);
-          
-          if (currentCallSid) {
-            this.cleanupSession(currentCallSid);
-          } else {
-            console.error('❌ PROBLEMA: La llamada terminó sin haber recibido el evento "start" de Twilio');
-            console.error('📋 Esto indica que Twilio no está enviando el evento start correctamente');
-          }
+          this.cleanupSession(currentCallSid);
           client.close();
         }
       } catch (err) {
@@ -260,103 +149,236 @@ export class StreamsGateway {
     });
   }
 
-  private createSession(callSid: string, client: WebSocketClient, useWebSocket: boolean) {
-    console.log(`📝 [${callSid}] Creando nueva sesión`);
+  private createSession(
+    callSid: string,
+    client: WebSocketClient,
+    start?: TwilioStart['start'],
+  ) {
+    const existing = this.sessions.get(callSid);
+    if (existing) {
+      this.cleanupSession(callSid);
+    }
+
+    const customParameters = this.extractCustomParameters(
+      start?.customParameters,
+    );
 
     const session: CallSession = {
       callSid,
-      speaking: false,
-      useWebSocket,
-      audioBuffer: Buffer.alloc(0),
-      httpQueue: Promise.resolve(),
-      lastAsrTime: 0,
-      // VAD (Voice Activity Detection)
-      isSpeaking: false,
-      speechBuffer: Buffer.alloc(0),
-      lastSpeechTime: 0,
-      ending: false,
+      streamSid: start?.streamSid,
+      client,
+      customParameters,
     };
 
     this.sessions.set(callSid, session);
+    console.log(
+      `📝 [${callSid}] Sesión creada. Conectando con OpenAI Realtime...`,
+    );
+    void this.connectToOpenAi(session);
+  }
 
-    // Configurar callbacks de ASR y TTS solo si usamos WebSocket
-    if (useWebSocket) {
-      this.setupWebSocketCallbacks(callSid, client);
+  private extractCustomParameters(
+    params?: Record<string, unknown>,
+  ): Record<string, string> | undefined {
+    if (!params) return undefined;
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null) continue;
+      normalized[key] =
+        typeof value === 'string' ? value : JSON.stringify(value);
+    }
+    return Object.keys(normalized).length ? normalized : undefined;
+  }
+
+  private connectToOpenAi(session: CallSession) {
+    const url = `${this.openAiUrl}?model=${encodeURIComponent(
+      this.openAiModel,
+    )}&voice=${encodeURIComponent(this.openAiVoice)}&temperature=${encodeURIComponent(
+      String(this.openAiTemperature),
+    )}`;
+
+    const ws = new WebSocket(url, {
+      headers: {
+        Authorization: `Bearer ${this.openAiApiKey}`,
+      },
+    });
+
+    session.openAiSocket = ws;
+
+    ws.on('open', () => {
+      console.log(`🧠 [${session.callSid}] OpenAI Realtime conectado`);
+      this.sendSessionUpdate(session);
+      this.triggerInitialGreeting(session);
+    });
+
+    ws.on('message', (data) =>
+      this.handleOpenAiMessage(session, this.rawDataToString(data)),
+    );
+    ws.on('close', () => {
+      console.log(`🔌 [${session.callSid}] Conexión OpenAI cerrada`);
+    });
+    ws.on('error', (error) => {
+      console.error(`❌ [${session.callSid}] Error en OpenAI WS:`, error);
+    });
+  }
+
+  private sendSessionUpdate(session: CallSession) {
+    const instructions =
+      session.customParameters?.instructions || this.defaultInstructions;
+
+    const payload = {
+      type: 'session.update',
+      session: {
+        type: 'realtime',
+        model: this.openAiModel,
+        instructions,
+        modalities: ['audio'],
+        audio: {
+          input: {
+            format: { type: 'audio/pcmu' },
+            turn_detection: { type: 'server_vad' },
+          },
+          output: {
+            format: { type: 'audio/pcmu' },
+            voice: this.openAiVoice,
+          },
+        },
+      },
+    };
+
+    this.sendToOpenAi(session, payload);
+  }
+
+  private triggerInitialGreeting(session: CallSession) {
+    const agentName =
+      session.customParameters?.agentName?.trim() || 'tu asistente virtual';
+
+    const greeting =
+      session.customParameters?.greeting?.trim() ||
+      `Hola, soy ${agentName}. ¿En qué puedo ayudarte hoy?`;
+
+    const message = {
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: greeting,
+          },
+        ],
+      },
+    };
+
+    this.sendToOpenAi(session, message);
+    this.sendToOpenAi(session, { type: 'response.create' });
+  }
+
+  private handleOpenAiMessage(session: CallSession, raw: string) {
+    try {
+      const message = JSON.parse(raw);
+
+      if (message.type === 'response.output_audio.delta' && message.delta) {
+        this.sendAudioToTwilio(session, message.delta as string);
+        return;
+      }
+
+      if (message.type === 'input_audio_buffer.speech_stopped') {
+        this.sendToOpenAi(session, { type: 'response.create' });
+        return;
+      }
+
+      if (message.type === 'error') {
+        console.error(`❌ [${session.callSid}] Error desde OpenAI:`, message);
+        return;
+      }
+
+      if (message.type === 'response.completed') {
+        console.log(`✅ [${session.callSid}] Respuesta OpenAI completada.`);
+        return;
+      }
+
+      if (message.type === 'rate_limits.updated') {
+        console.log(
+          `📉 [${session.callSid}] Rate limits actualizados`,
+          message,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error interpretando mensaje OpenAI:`,
+        error,
+      );
     }
   }
 
-  private setupWebSocketCallbacks(callSid: string, client: WebSocketClient) {
-    // Callback para audio TTS
-    this.tts.onAudio(
-      (
-        pcm: Int16Array,
-        info: {
-          isFinal?: boolean;
-          utteranceId?: string;
-          sequenceId?: number;
-          startMs?: number;
-          endMs?: number;
-        },
-      ) => {
-        const session = this.sessions.get(callSid);
-        if (!session || !session.speaking) return;
-
-        const ulawB64 = pcm16ToUlawB64(pcm);
-        client.send(
-          JSON.stringify({ event: 'media', media: { payload: ulawB64 } }),
-        );
-        recordMetric('tts', pcm.length / 8);
-        
-        const metaBits: string[] = [];
-        if (info?.utteranceId) metaBits.push(`utt ${info.utteranceId}`);
-        if (typeof info?.sequenceId === 'number') metaBits.push(`seq ${info.sequenceId}`);
-        if (typeof info?.startMs === 'number' && typeof info?.endMs === 'number') {
-          metaBits.push(`win ${info.startMs}-${info.endMs}ms`);
-        }
-        if (info?.isFinal) metaBits.push('final');
-        
-        console.log(
-          `🔊 [${callSid}] Audio TTS emitido (${pcm.length} samples)${
-            metaBits.length ? ` [${metaBits.join(' | ')}]` : ''
-          }`,
-        );
-      },
-    );
-
-    // Callback para transcripción ASR
-    this.asr.onTranscript((t) => {
-      const text = (t.text || '').trim();
-      if (!text) return;
-
-      const session = this.sessions.get(callSid);
-      if (!session) return;
-
-      const now = Date.now();
-      if (session.lastAsrTime) recordMetric('asr', now - session.lastAsrTime);
-      session.lastAsrTime = now;
-
-      console.log(
-        `🎙️ [${callSid}] ASR: "${text}" (${t.is_final ? 'final' : 'partial'})` +
-          (t.utterance_id ? ` [utt ${t.utterance_id}]` : ''),
+  private sendAudioToTwilio(session: CallSession, payload: string) {
+    if (!session.streamSid) {
+      console.warn(
+        `⚠️ [${session.callSid}] No hay streamSid para enviar audio a Twilio`,
       );
+      return;
+    }
 
-      session.speaking = false;
-      
-      if (!t.is_final) {
-        console.log(`⏳ [${callSid}] Transcripción parcial, esperando final…`);
-        return;
-      }
-      
-      console.log(`✅ [${callSid}] Transcripción final detectada.`);
-      
-      if (!this.autoRespondEnabled) {
-        console.log(`🤖 [${callSid}] Respuesta automática deshabilitada.`);
-        return;
-      }
-      
-      session.speaking = true;
-      void this.handleGptResponse(text, callSid, t);
-    });
+    try {
+      session.client.send(
+        JSON.stringify({
+          event: 'media',
+          streamSid: session.streamSid,
+          media: { payload },
+        }),
+      );
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando audio a Twilio:`,
+        error,
+      );
+    }
+  }
+
+  private forwardInboundAudio(callSid: string, msg: TwilioMediaIn) {
+    const session = this.sessions.get(callSid);
+    if (!session) {
+      console.warn(
+        `⚠️ [${callSid}] No hay sesión registrada para media inbound`,
+      );
+      return;
+    }
+
+    if (!msg.media || !msg.media.payload) {
+      console.warn(`⚠️ [${callSid}] Media sin payload`);
+      return;
+    }
+
+    if (msg.media.track && msg.media.track !== 'inbound') {
+      return;
+    }
+
+    const payload = {
+      type: 'input_audio_buffer.append',
+      audio: msg.media.payload,
+    };
+
+    this.sendToOpenAi(session, payload);
+  }
+
+  private sendToOpenAi(session: CallSession, payload: unknown) {
+    if (
+      !session.openAiSocket ||
+      session.openAiSocket.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    try {
+      session.openAiSocket.send(JSON.stringify(payload));
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando mensaje a OpenAI:`,
+        error,
+      );
+    }
   }
 
   private cleanupSession(callSid: string) {
@@ -365,398 +387,26 @@ export class StreamsGateway {
 
     console.log(`🧹 [${callSid}] Limpiando sesión`);
 
-    // Limpiar timers
-    if (session.audioBufferTimer) {
-      clearTimeout(session.audioBufferTimer);
-    }
-    if (session.silenceTimeout) {
-      clearTimeout(session.silenceTimeout);
-    }
-
-    // Detener ASR/TTS si están activos
-    if (session.useWebSocket) {
-      this.asr.stop();
-      this.tts.cancelAll('call-stop');
+    if (
+      session.openAiSocket &&
+      session.openAiSocket.readyState === WebSocket.OPEN
+    ) {
+      session.openAiSocket.close();
     }
 
     this.sessions.delete(callSid);
   }
 
-  private async handleGptResponse(
-    text: string,
-    callSid: string,
-    transcript?: FishAsrTranscript,
-  ): Promise<void> {
-    const session = this.sessions.get(callSid);
-    if (!session) {
-      console.warn(`⚠️ [${callSid}] No hay sesión activa para GPT`);
-      return;
+  private rawDataToString(data: WebSocket.RawData): string {
+    if (typeof data === 'string') {
+      return data;
     }
-
-    try {
-      const gptStart = Date.now();
-      const utteranceId = transcript?.utterance_id;
-      const sequenceId = transcript?.sequence_id;
-      const startMs = transcript?.start_ms;
-      const endMs = transcript?.end_ms;
-      const isFinal = transcript?.is_final;
-      const priority: number = transcript?.is_final ? 1 : 0;
-      let wordBuffer = '';
-      let sentenceBuffer = '';
-      let firstToken = 0;
-      let wordCount = 0;
-      let chunkIndex = 0;
-
-      console.log(`🧭 [${callSid}] Procesando respuesta GPT`);
-
-      for await (const token of this.gpt.streamReply(text)) {
-        if (!session.speaking) break;
-        
-        if (!firstToken) {
-          firstToken = Date.now();
-          recordMetric('gpt', firstToken - gptStart);
-          console.log(`⚡ [${callSid}] GPT primer token tras ${firstToken - gptStart}ms`);
-        }
-
-        wordBuffer += token;
-
-        if (/[\s.!?,:;]/.test(token)) {
-          sentenceBuffer += wordBuffer;
-          wordBuffer = '';
-          wordCount++;
-
-          const shouldSend = wordCount >= 5 || /[.!?]\s*$/.test(sentenceBuffer.trim());
-
-          if (shouldSend && sentenceBuffer.trim()) {
-            let textToSend = sentenceBuffer.trim();
-            if (!/[.!?]$/.test(textToSend)) {
-              textToSend += ' ';
-            }
-            console.log(`💬 [${callSid}] GPT streaming: "${textToSend}"`);
-            
-            const ttsStart = Date.now();
-            const queuedId = this.tts.sendText(textToSend, {
-              utteranceId,
-              sequenceId,
-              priority,
-              metadata: {
-                callSid,
-                chunkIndex,
-                startMs,
-                endMs,
-                isFinalSource: isFinal,
-                sentAt: Date.now(),
-              },
-            });
-            recordMetric('tts', Date.now() - ttsStart);
-            sentenceBuffer = '';
-            wordCount = 0;
-            chunkIndex += 1;
-            
-            if (queuedId) {
-              console.log(`🗂️ [${callSid}] TTS chunk en cola (${queuedId}) prioridad ${priority}`);
-            }
-          }
-        }
-      }
-
-      const total = Date.now() - gptStart;
-      recordMetric('gpt', total);
-      console.log(`✅ [${callSid}] GPT completado en ${total}ms`);
-
-      // Enviar texto restante
-      const remaining = (sentenceBuffer + wordBuffer).trim();
-      if (session.speaking && remaining) {
-        console.log(`💬 [${callSid}] GPT final: "${remaining}"`);
-        const ttsStart = Date.now();
-        const queuedId = this.tts.sendText(remaining, {
-          utteranceId,
-          sequenceId,
-          priority,
-          metadata: {
-            callSid,
-            chunkIndex,
-            startMs,
-            endMs,
-            isFinalSource: isFinal,
-            sentAt: Date.now(),
-            finalChunk: true,
-          },
-        });
-        recordMetric('tts', Date.now() - ttsStart);
-        
-        if (queuedId) {
-          console.log(`🗂️ [${callSid}] TTS chunk final en cola (${queuedId}) prioridad ${priority}`);
-        }
-      }
-    } catch (err) {
-      console.error(`❌ [${callSid}] Error procesando respuesta GPT:`, err);
+    if (data instanceof Buffer) {
+      return data.toString();
     }
-  }
-
-  /**
-   * Calcula el nivel RMS del audio para VAD (Voice Activity Detection)
-   */
-  private calculateAudioLevel(pcmBuffer: Buffer): number {
-    let sum = 0;
-    const sampleCount = pcmBuffer.length / 2;
-
-    for (let i = 0; i < pcmBuffer.length; i += 2) {
-      const sample = pcmBuffer.readInt16LE(i);
-      sum += sample * sample;
+    if (Array.isArray(data)) {
+      return Buffer.concat(data).toString();
     }
-
-    return Math.sqrt(sum / sampleCount);
-  }
-
-  /**
-   * Procesa audio con VAD (Voice Activity Detection) y control de turnos.
-   * Solo envía a ASR cuando el usuario termina de hablar (pausa prolongada).
-   */
-  private processAudioWithHttp(audioPayload: string, callSid: string): void {
-    const session = this.sessions.get(callSid);
-    if (!session) {
-      console.warn(`⚠️ [${callSid}] No hay sesión para procesar audio HTTP`);
-      return;
-    }
-
-    try {
-      if (!audioPayload || typeof audioPayload !== 'string' || audioPayload.trim().length === 0) {
-        console.warn('⚠️ Audio payload inválido o vacío');
-        return;
-      }
-
-      // Decodificar audio
-      let pcmArray: Int16Array;
-      try {
-        const pcm = ulawToPcm16(audioPayload);
-        
-        if (!pcm || pcm.length === 0) {
-          console.warn(`⚠️ PCM inválido - length: ${pcm?.length || 0}`);
-          return;
-        }
-
-        pcmArray = pcm instanceof Int16Array ? pcm : new Int16Array(pcm as ArrayLike<number>);
-      } catch (error) {
-        console.error('❌ Error decodificando audio:', error instanceof Error ? error.message : String(error));
-        return;
-      }
-
-      // Crear buffer desde PCM
-      let pcmBuffer: Buffer;
-      try {
-        pcmBuffer = Buffer.from(pcmArray.buffer, pcmArray.byteOffset, pcmArray.byteLength);
-      } catch (error) {
-        console.error('❌ Error creando Buffer:', error instanceof Error ? error.message : String(error));
-        return;
-      }
-
-      // VAD: Detectar si hay voz en este chunk
-      const audioLevel = this.calculateAudioLevel(pcmBuffer);
-      const speechThreshold = 90; // más estricto para detectar inicio real
-      const silenceTimeoutMs = 650; // medio segundo largo para cerrar turno
-      const minChunkBytes = 10000; // ~0.6s de audio útil
-
-      const isSpeech = audioLevel > speechThreshold;
-
-      if (isSpeech) {
-        // HAY VOZ: acumular audio
-        if (!session.isSpeaking) {
-          console.log(`🎤 [${callSid}] Usuario empezó a hablar (nivel: ${audioLevel.toFixed(0)})`);
-          session.isSpeaking = true;
-          session.speechBuffer = Buffer.alloc(0);
-        }
-
-        // Acumular audio en el buffer de speech
-        session.speechBuffer = Buffer.concat([session.speechBuffer, pcmBuffer]);
-        session.lastSpeechTime = Date.now();
-
-        // Cancelar timeout de silencio si existe
-        if (session.silenceTimeout) {
-          clearTimeout(session.silenceTimeout);
-          session.silenceTimeout = undefined;
-        }
-
-      } else {
-        // SILENCIO
-        if (session.isSpeaking) {
-          // Estábamos hablando, iniciar countdown para enviar a ASR
-          if (!session.silenceTimeout) {
-            session.silenceTimeout = setTimeout(() => {
-              const currentSession = this.sessions.get(callSid);
-              if (
-                currentSession &&
-                currentSession.isSpeaking &&
-                currentSession.speechBuffer.length >= minChunkBytes
-              ) {
-                const duration = (
-                  currentSession.speechBuffer.length / 16000
-                ).toFixed(2);
-                console.log(
-                  `🔚 [${callSid}] Usuario terminó de hablar (${duration}s de audio)`,
-                );
-
-                this.enqueueHttpChunk(callSid, currentSession.speechBuffer);
-
-                currentSession.isSpeaking = false;
-                currentSession.speechBuffer = Buffer.alloc(0);
-                currentSession.silenceTimeout = undefined;
-              }
-            }, silenceTimeoutMs);
-          }
-        }
-        // Si no estábamos hablando, simplemente ignorar el silencio
-      }
-
-    } catch (error) {
-      console.error('❌ Error procesando audio con HTTP:', error);
-    }
-  }
-
-  private flushAudioBuffer(callSid: string, finalize = false): void {
-    const session = this.sessions.get(callSid);
-    if (!session || session.audioBuffer.length === 0) {
-      return;
-    }
-
-    try {
-      console.log(
-        `📤 Enviando buffer residual HTTP: ${session.audioBuffer.length} bytes (${(
-          session.audioBuffer.length / 16000
-        ).toFixed(1)}s)`,
-      );
-
-      const buffer = Buffer.from(session.audioBuffer);
-      session.audioBuffer = Buffer.alloc(0);
-      
-      if (session.audioBufferTimer) {
-        clearTimeout(session.audioBufferTimer);
-        session.audioBufferTimer = undefined;
-      }
-
-      this.enqueueHttpChunk(callSid, buffer, finalize);
-    } catch (error) {
-      console.error('❌ Error flush audio buffer:', error);
-    }
-  }
-
-  private async handleGptResponseHttp(
-    text: string,
-    callSid: string,
-  ): Promise<void> {
-    const session = this.sessions.get(callSid);
-    if (!session) {
-      console.warn(`⚠️ [${callSid}] No hay sesión para GPT HTTP`);
-      return;
-    }
-
-    try {
-      console.log(`💬 [${callSid}] Generando respuesta GPT:`, text);
-
-      let fullResponse = '';
-      for await (const token of this.gpt.streamReply(text)) {
-        fullResponse += token;
-      }
-
-      if (fullResponse.trim()) {
-        console.log(`💬 [${callSid}] Respuesta GPT completa:`, fullResponse);
-        await this.sendTtsResponse(callSid, fullResponse);
-      }
-    } catch (error) {
-      console.error(`❌ [${callSid}] Error manejando respuesta GPT HTTP:`, error);
-    }
-  }
-
-  private async sendTtsResponse(callSid: string, text: string): Promise<void> {
-    const audioUrl = await this.ttsHttp.generateAudioAndUpload(text, 'realtime');
-    await this.twilioMedia.playUrl(callSid, audioUrl);
-    console.log(`🎧 [${callSid}] Audio enviado a Twilio`);
-  }
-
-  private async handleFarewell(callSid: string): Promise<void> {
-    const farewell =
-      'Gracias por llamar. Fue un placer hablar contigo. ¡Hasta luego!';
-    await this.sendTtsResponse(callSid, farewell);
-    await this.twilioMedia.hangup(callSid);
-  }
-
-  private enqueueHttpChunk(
-    callSid: string,
-    chunk: Buffer,
-    finalize = false,
-  ): void {
-    const session = this.sessions.get(callSid);
-    if (!session) {
-      console.warn(`⚠️ [${callSid}] No hay sesión para encolar chunk HTTP`);
-      return;
-    }
-
-    const previous = session.httpQueue;
-
-    const next = previous
-      .catch((error) => {
-        console.error(
-          `❌ [${callSid}] Error en chunk HTTP previo:`,
-          error instanceof Error ? error.message : String(error),
-        );
-      })
-      .then(() => this.processHttpChunk(callSid, chunk, finalize));
-
-    session.httpQueue = next;
-  }
-
-  private async processHttpChunk(
-    callSid: string,
-    chunk: Buffer,
-    finalize: boolean,
-  ): Promise<void> {
-    try {
-      const session = this.sessions.get(callSid);
-      if (!session) {
-        console.warn(`⚠️ [${callSid}] No hay sesión para procesar chunk HTTP`);
-        return;
-      }
-      if (session.ending) {
-        console.log(
-          `ℹ️ [${callSid}] Ignorando chunk porque la llamada está finalizando.`,
-        );
-        return;
-      }
-
-      console.log(
-        `📤 [${callSid}] Enviando chunk HTTP de ${chunk.length} bytes (${(
-          chunk.length / 16000
-        ).toFixed(2)}s)`,
-      );
-
-      const transcript = await this.asrHttp.transcribeAudio(chunk);
-
-      if (transcript && transcript.trim()) {
-        console.log(`🎙️ [${callSid}] ASR HTTP chunk: "${transcript}"`);
-        const normalized = transcript
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '');
-
-        if (normalized.includes('adios')) {
-          session.ending = true;
-          await this.handleFarewell(callSid);
-          return;
-        }
-
-        await this.handleGptResponseHttp(transcript, callSid);
-      } else {
-        console.log(`🕸️ [${callSid}] Chunk HTTP sin transcripción utilizable.`);
-      }
-
-      if (finalize) {
-        console.log(`✅ [${callSid}] Chunk HTTP final procesado.`);
-      }
-    } catch (error) {
-      console.error(
-        `❌ [${callSid}] Error procesando chunk HTTP:`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+    return Buffer.from(data as ArrayBuffer).toString();
   }
 }
