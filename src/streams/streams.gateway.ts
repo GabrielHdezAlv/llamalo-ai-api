@@ -232,7 +232,6 @@ export class StreamsGateway {
         type: 'realtime',
         model: this.openAiModel,
         instructions,
-        modalities: ['audio'],
         audio: {
           input: {
             format: { type: 'audio/pcmu' },
