@@ -211,9 +211,14 @@ export class StreamsGateway {
       this.triggerInitialGreeting(session);
     });
 
-    ws.on('message', (data) =>
-      this.handleOpenAiMessage(session, this.rawDataToString(data)),
-    );
+    ws.on('message', (data) => {
+      const raw = this.rawDataToString(data);
+      if (process.env.OPENAI_REALTIME_DEBUG === 'true') {
+        console.log(`🔁 [${session.callSid}] OpenAI raw: ${raw}`);
+      }
+
+      this.handleOpenAiMessage(session, raw);
+    });
     ws.on('close', () => {
       console.log(`🔌 [${session.callSid}] Conexión OpenAI cerrada`);
     });
@@ -271,7 +276,7 @@ export class StreamsGateway {
     };
 
     this.sendToOpenAi(session, message);
-    this.sendToOpenAi(session, { type: 'response.create' });
+    this.sendToOpenAi(session, this.buildAudioResponsePayload());
   }
 
   private handleOpenAiMessage(session: CallSession, raw: string) {
@@ -284,7 +289,7 @@ export class StreamsGateway {
       }
 
       if (message.type === 'input_audio_buffer.speech_stopped') {
-        this.sendToOpenAi(session, { type: 'response.create' });
+        this.sendToOpenAi(session, this.buildAudioResponsePayload());
         return;
       }
 
@@ -407,5 +412,14 @@ export class StreamsGateway {
       return Buffer.concat(data).toString();
     }
     return Buffer.from(data as ArrayBuffer).toString();
+  }
+
+  private buildAudioResponsePayload() {
+    return {
+      type: 'response.create',
+      response: {
+        modalities: ['audio'],
+      },
+    };
   }
 }
