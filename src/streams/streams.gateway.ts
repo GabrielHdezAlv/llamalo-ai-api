@@ -417,9 +417,6 @@ export class StreamsGateway {
   private buildAudioResponsePayload() {
     return {
       type: 'response.create',
-      response: {
-        modalities: ['audio'],
-      },
     };
   }
 }
