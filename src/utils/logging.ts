@@ -15,7 +15,7 @@ function resolveLevel(): LogLevel {
   }
 
   const raw = (process.env.LOG_LEVEL || '').toLowerCase() as LogLevel | '';
-  return raw && raw in LEVEL_RANK ? (raw as LogLevel) : 'info';
+  return raw && raw in LEVEL_RANK ? raw : 'info';
 }
 
 export function configureLogging(): void {
@@ -33,4 +33,3 @@ export function configureLogging(): void {
     console.warn = NOOP;
   }
 }
-

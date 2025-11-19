@@ -104,7 +104,9 @@ async function bootstrap() {
           handlerRegistered = true;
 
           // Procesar mensajes acumulados
-          console.log(`📬 Procesando ${earlyMessages.length} mensajes tempranos acumulados`);
+          console.log(
+            `📬 Procesando ${earlyMessages.length} mensajes tempranos acumulados`,
+          );
           for (const msg of earlyMessages) {
             callback(msg);
           }

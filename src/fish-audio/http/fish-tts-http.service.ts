@@ -12,7 +12,10 @@ export class FishTtsHttpService {
   private format = process.env.FISH_TTS_AUDIO_FORMAT || 'mp3';
   private emotion = process.env.FISH_TTS_EMOTION;
   private style = process.env.FISH_TTS_STYLE;
-  private textType = process.env.FISH_TTS_TEXT_TYPE as 'plain' | 'ssml' | undefined;
+  private textType = process.env.FISH_TTS_TEXT_TYPE as
+    | 'plain'
+    | 'ssml'
+    | undefined;
   private speed = toOptionalNumber(process.env.FISH_TTS_SPEED);
   private pitch = toOptionalNumber(process.env.FISH_TTS_PITCH);
   private volume = toOptionalNumber(process.env.FISH_TTS_VOLUME);
