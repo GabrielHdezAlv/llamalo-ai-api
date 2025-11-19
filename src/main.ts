@@ -117,9 +117,11 @@ async function bootstrap() {
     };
 
     // Delegar el manejo de la conexión al StreamsGateway
-    void streamsGateway.handleConnection(client).catch((error) => {
+    try {
+      streamsGateway.handleConnection(client);
+    } catch (error) {
       console.error('❌ Error en StreamsGateway:', error);
-    });
+    }
 
     ws.on('close', () => {
       console.log('🔌 Conexión WebSocket cerrada');

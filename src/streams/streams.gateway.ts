@@ -1,5 +1,5 @@
 import { WebSocketGateway } from '@nestjs/websockets';
-import * as WebSocket from 'ws';
+import WebSocket, { RawData } from 'ws';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -397,7 +397,7 @@ export class StreamsGateway {
     this.sessions.delete(callSid);
   }
 
-  private rawDataToString(data: WebSocket.RawData): string {
+  private rawDataToString(data: RawData): string {
     if (typeof data === 'string') {
       return data;
     }
