@@ -50,6 +50,8 @@ interface CallSession {
   responseInProgress: boolean;
   queuedAssistantTurn: boolean;
   currentResponseId?: string;
+  assistantAudioStarted: boolean;
+  cancelPending: boolean;
 }
 
 @WebSocketGateway({
@@ -173,6 +175,8 @@ export class StreamsGateway {
       customParameters,
       responseInProgress: false,
       queuedAssistantTurn: false,
+      assistantAudioStarted: false,
+      cancelPending: false,
     };
 
     this.sessions.set(callSid, session);
@@ -292,6 +296,7 @@ export class StreamsGateway {
       switch (type) {
         case 'response.output_audio.delta':
           if (message.delta) {
+            session.assistantAudioStarted = true;
             this.sendAudioToTwilio(session, message.delta as string);
           }
           return;
@@ -305,12 +310,16 @@ export class StreamsGateway {
           console.log(`✅ [${session.callSid}] Respuesta OpenAI completada.`);
           session.responseInProgress = false;
           session.currentResponseId = undefined;
+          session.assistantAudioStarted = false;
+          session.cancelPending = false;
           this.flushQueuedAssistantTurn(session, 'completed');
           return;
         case 'response.canceled':
           console.log(`🚫 [${session.callSid}] Respuesta OpenAI cancelada.`);
           session.responseInProgress = false;
           session.currentResponseId = undefined;
+          session.assistantAudioStarted = false;
+          session.cancelPending = false;
           this.flushQueuedAssistantTurn(session, 'canceled');
           return;
         case 'input_audio_buffer.speech_started':
@@ -324,9 +333,22 @@ export class StreamsGateway {
         case 'error': {
           console.error(`❌ [${session.callSid}] Error desde OpenAI:`, message);
           const code = message?.error?.code as string | undefined;
+          if (code === 'response_cancel_not_active') {
+            console.warn(
+              `ℹ️ [${session.callSid}] Cancelación no necesaria (respuesta ya cerrada).`,
+            );
+            session.cancelPending = false;
+            session.responseInProgress = false;
+            session.currentResponseId = undefined;
+            session.assistantAudioStarted = false;
+            this.flushQueuedAssistantTurn(session, code);
+            return;
+          }
           if (code !== 'conversation_already_has_active_response') {
             session.responseInProgress = false;
             session.currentResponseId = undefined;
+            session.assistantAudioStarted = false;
+            session.cancelPending = false;
             this.flushQueuedAssistantTurn(session, code || 'error');
           } else {
             console.warn(
@@ -483,13 +505,22 @@ export class StreamsGateway {
   }
 
   private cancelAssistantResponse(session: CallSession, reason: string) {
-    if (!session.currentResponseId) {
+    if (!session.currentResponseId || session.cancelPending) {
+      return;
+    }
+    if (!session.assistantAudioStarted) {
+      console.log(
+        `ℹ️ [${session.callSid}] Cancelación omitida: no hay audio emitido aún.`,
+      );
+      session.responseInProgress = false;
+      session.currentResponseId = undefined;
       return;
     }
 
     console.log(
       `✋ [${session.callSid}] Cancelando respuesta actual (${reason})`,
     );
+    session.cancelPending = true;
     this.sendToOpenAi(session, {
       type: 'response.cancel',
       response_id: session.currentResponseId,
