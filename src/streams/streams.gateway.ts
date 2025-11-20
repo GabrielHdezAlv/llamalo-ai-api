@@ -65,7 +65,7 @@ export class StreamsGateway {
   private readonly openAiUrl =
     process.env.OPENAI_REALTIME_URL || 'wss://api.openai.com/v1/realtime';
   private readonly openAiModel =
-    process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
+    process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
   private readonly openAiVoice = process.env.OPENAI_REALTIME_VOICE || 'alloy';
   private readonly openAiTemperature = Number(
     process.env.OPENAI_REALTIME_TEMPERATURE || '0.8',
