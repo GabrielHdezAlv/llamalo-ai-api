@@ -47,6 +47,9 @@ interface CallSession {
   client: WebSocketClient;
   openAiSocket?: WebSocket;
   customParameters?: Record<string, string>;
+  responseInProgress: boolean;
+  queuedAssistantTurn: boolean;
+  currentResponseId?: string;
 }
 
 @WebSocketGateway({
@@ -62,7 +65,7 @@ export class StreamsGateway {
   private readonly openAiUrl =
     process.env.OPENAI_REALTIME_URL || 'wss://api.openai.com/v1/realtime';
   private readonly openAiModel =
-    process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
+    process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
   private readonly openAiVoice = process.env.OPENAI_REALTIME_VOICE || 'alloy';
   private readonly openAiTemperature = Number(
     process.env.OPENAI_REALTIME_TEMPERATURE || '0.8',
@@ -168,6 +171,8 @@ export class StreamsGateway {
       streamSid: start?.streamSid,
       client,
       customParameters,
+      responseInProgress: false,
+      queuedAssistantTurn: false,
     };
 
     this.sessions.set(callSid, session);
@@ -276,38 +281,68 @@ export class StreamsGateway {
     };
 
     this.sendToOpenAi(session, message);
-    this.sendToOpenAi(session, this.buildAudioResponsePayload());
+    this.requestAssistantTurn(session, 'initial-greeting');
   }
 
   private handleOpenAiMessage(session: CallSession, raw: string) {
     try {
       const message = JSON.parse(raw);
+      const type = message.type as string | undefined;
 
-      if (message.type === 'response.output_audio.delta' && message.delta) {
-        this.sendAudioToTwilio(session, message.delta as string);
-        return;
-      }
-
-      if (message.type === 'input_audio_buffer.speech_stopped') {
-        this.sendToOpenAi(session, this.buildAudioResponsePayload());
-        return;
-      }
-
-      if (message.type === 'error') {
-        console.error(`❌ [${session.callSid}] Error desde OpenAI:`, message);
-        return;
-      }
-
-      if (message.type === 'response.completed') {
-        console.log(`✅ [${session.callSid}] Respuesta OpenAI completada.`);
-        return;
-      }
-
-      if (message.type === 'rate_limits.updated') {
-        console.log(
-          `📉 [${session.callSid}] Rate limits actualizados`,
-          message,
-        );
+      switch (type) {
+        case 'response.output_audio.delta':
+          if (message.delta) {
+            this.sendAudioToTwilio(session, message.delta as string);
+          }
+          return;
+        case 'response.created':
+        case 'response.updated':
+          if (message.response?.id) {
+            session.currentResponseId = message.response.id as string;
+          }
+          return;
+        case 'response.completed':
+          console.log(`✅ [${session.callSid}] Respuesta OpenAI completada.`);
+          session.responseInProgress = false;
+          session.currentResponseId = undefined;
+          this.flushQueuedAssistantTurn(session, 'completed');
+          return;
+        case 'response.canceled':
+          console.log(`🚫 [${session.callSid}] Respuesta OpenAI cancelada.`);
+          session.responseInProgress = false;
+          session.currentResponseId = undefined;
+          this.flushQueuedAssistantTurn(session, 'canceled');
+          return;
+        case 'input_audio_buffer.speech_started':
+          if (session.responseInProgress) {
+            this.cancelAssistantResponse(session, 'speech-started');
+          }
+          return;
+        case 'input_audio_buffer.speech_stopped':
+          this.requestAssistantTurn(session, 'speech-stopped');
+          return;
+        case 'error': {
+          console.error(`❌ [${session.callSid}] Error desde OpenAI:`, message);
+          const code = message?.error?.code as string | undefined;
+          if (code !== 'conversation_already_has_active_response') {
+            session.responseInProgress = false;
+            session.currentResponseId = undefined;
+            this.flushQueuedAssistantTurn(session, code || 'error');
+          } else {
+            console.warn(
+              `⚠️ [${session.callSid}] Turno rechazado por respuesta activa.`,
+            );
+          }
+          return;
+        }
+        case 'rate_limits.updated':
+          console.log(
+            `📉 [${session.callSid}] Rate limits actualizados`,
+            message,
+          );
+          return;
+        default:
+          return;
       }
     } catch (error) {
       console.error(
@@ -418,5 +453,46 @@ export class StreamsGateway {
     return {
       type: 'response.create',
     };
+  }
+
+  private requestAssistantTurn(session: CallSession, reason: string) {
+    if (session.responseInProgress) {
+      session.queuedAssistantTurn = true;
+      console.log(
+        `⏳ [${session.callSid}] Turno asistente en cola (motivo: ${reason})`,
+      );
+      return;
+    }
+
+    console.log(`🎤 [${session.callSid}] Generando respuesta (${reason})`);
+    session.responseInProgress = true;
+    session.queuedAssistantTurn = false;
+    this.sendToOpenAi(session, this.buildAudioResponsePayload());
+  }
+
+  private flushQueuedAssistantTurn(session: CallSession, source: string) {
+    if (!session.queuedAssistantTurn) {
+      return;
+    }
+
+    console.log(
+      `🔁 [${session.callSid}] Procesando turno en cola (evento: ${source})`,
+    );
+    session.queuedAssistantTurn = false;
+    this.requestAssistantTurn(session, 'queued');
+  }
+
+  private cancelAssistantResponse(session: CallSession, reason: string) {
+    if (!session.currentResponseId) {
+      return;
+    }
+
+    console.log(
+      `✋ [${session.callSid}] Cancelando respuesta actual (${reason})`,
+    );
+    this.sendToOpenAi(session, {
+      type: 'response.cancel',
+      response_id: session.currentResponseId,
+    });
   }
 }
