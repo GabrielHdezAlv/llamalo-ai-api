@@ -4761,11 +4761,6 @@ ms@^2.1.1, ms@^2.1.3:
   resolved "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"
   integrity sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==
 
-mulaw-js@^1.0.1:
-  version "1.0.1"
-  resolved "https://registry.npmjs.org/mulaw-js/-/mulaw-js-1.0.1.tgz"
-  integrity sha512-S8ttYbrgJe9ZsNJagQgbO8louF2n/RyQU/9aS3cEc1XqgUgh1jeDPaX6tWFiUqF7QTsw/HEmyR9ZQRXAme3MUw==
-
 multer@2.0.2:
   version "2.0.2"
   resolved "https://registry.npmjs.org/multer/-/multer-2.0.2.tgz"
