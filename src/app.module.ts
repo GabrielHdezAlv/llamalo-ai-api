@@ -8,7 +8,6 @@ import { AgentsModule } from './agents/agents.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { HealthModule } from './health/health.module';
 import { CallsModule } from './calls/calls.module';
-import { LlmModule } from './llm/llm.module';
 
 @Module({
   imports: [
@@ -17,7 +16,6 @@ import { LlmModule } from './llm/llm.module';
       isGlobal: true,
     }),
     CallsModule,
-    LlmModule,
     AuthModule,
     UsersModule,
     LanguagesModule,
