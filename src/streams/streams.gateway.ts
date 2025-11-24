@@ -41,17 +41,24 @@ interface WebSocketClient {
   close: () => void;
 }
 
+type DeepgramJsonEvent = {
+  type?: string;
+  [key: string]: unknown;
+};
+
 interface CallSession {
   callSid: string;
   streamSid?: string;
   client: WebSocketClient;
-  openAiSocket?: WebSocket;
+  voiceAgentSocket?: WebSocket;
   customParameters?: Record<string, string>;
-  responseInProgress: boolean;
-  queuedAssistantTurn: boolean;
-  currentResponseId?: string;
-  assistantAudioStarted: boolean;
-  cancelPending: boolean;
+  instructions: string;
+  queuedAudio: Buffer[];
+  readyForAudio: boolean;
+  pendingGreeting?: string;
+  greetingSent: boolean;
+  keepAliveTimer?: NodeJS.Timeout;
+  deepgramRequestId?: string;
 }
 
 @WebSocketGateway({
@@ -62,18 +69,35 @@ interface CallSession {
   },
 })
 export class StreamsGateway {
-  private readonly openAiApiKey =
-    process.env.OPENAI_API_KEY || process.env.OPENAI_REALTIME_API_KEY;
-  private readonly openAiUrl =
-    process.env.OPENAI_REALTIME_URL || 'wss://api.openai.com/v1/realtime';
-  private readonly openAiModel =
-    process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
-  private readonly openAiVoice = process.env.OPENAI_REALTIME_VOICE || 'alloy';
-  private readonly openAiTemperature = Number(
-    process.env.OPENAI_REALTIME_TEMPERATURE || '0.8',
+  private readonly deepgramApiKey =
+    process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
+  private readonly deepgramUrl =
+    process.env.DG_VOICE_AGENT_URL ||
+    'wss://agent.deepgram.com/v1/agent/converse';
+  private readonly deepgramLanguage =
+    process.env.DG_VOICE_AGENT_LANGUAGE ?? 'es';
+  private readonly deepgramListenProvider =
+    process.env.DG_LISTEN_PROVIDER ?? 'deepgram';
+  private readonly deepgramListenModel =
+    process.env.DG_LISTEN_MODEL ?? 'nova-3';
+  private readonly deepgramSpeakProvider =
+    process.env.DG_SPEAK_PROVIDER ?? 'deepgram';
+  private readonly deepgramSpeakModel =
+    process.env.DG_SPEAK_MODEL ?? 'aura-asteria-en';
+  private readonly thinkProvider = process.env.DG_THINK_PROVIDER;
+  private readonly thinkModel = process.env.DG_THINK_MODEL;
+  private readonly thinkTemperature = Number(
+    process.env.DG_THINK_TEMPERATURE ?? 0.7,
+  );
+  private readonly keepAliveIntervalMs = Number(
+    process.env.DG_KEEPALIVE_MS ?? 15_000,
+  );
+  private readonly maxBufferedChunks = Math.max(
+    1,
+    Number(process.env.DG_MAX_BUFFERED_CHUNKS ?? 25),
   );
   private readonly defaultInstructions =
-    process.env.OPENAI_REALTIME_SYSTEM_PROMPT ||
+    process.env.DG_AGENT_PROMPT ||
     'Eres un asistente de voz profesional y resolutivo. Responde siempre en español con frases cortas y claras.';
 
   private sessions: Map<string, CallSession> = new Map();
@@ -81,9 +105,9 @@ export class StreamsGateway {
   handleConnection(client: WebSocketClient) {
     console.log('🛰️ Twilio WS conectado');
 
-    if (!this.openAiApiKey) {
+    if (!this.deepgramApiKey) {
       console.error(
-        '❌ OPENAI_API_KEY/OPENAI_REALTIME_API_KEY no configurado. Cerrando conexión.',
+        '❌ DG_API_KEY o DG_VOICE_AGENT_API_KEY no configurado. Cerrando conexión.',
       );
       client.close();
       return;
@@ -167,23 +191,362 @@ export class StreamsGateway {
     const customParameters = this.extractCustomParameters(
       start?.customParameters,
     );
+    if (customParameters?.greetingUrl) {
+      console.warn(
+        `ℹ️ [${callSid}] Se recibió greetingUrl (${customParameters.greetingUrl}) pero Deepgram Voice Agent no soporta reproducir URLs externas.`,
+      );
+    }
 
+    const instructions = this.resolveInstructions(customParameters);
     const session: CallSession = {
       callSid,
       streamSid: start?.streamSid,
       client,
       customParameters,
-      responseInProgress: false,
-      queuedAssistantTurn: false,
-      assistantAudioStarted: false,
-      cancelPending: false,
+      instructions,
+      queuedAudio: [],
+      readyForAudio: false,
+      pendingGreeting: this.resolveGreeting(customParameters),
+      greetingSent: false,
     };
 
     this.sessions.set(callSid, session);
-    console.log(
-      `📝 [${callSid}] Sesión creada. Conectando con OpenAI Realtime...`,
+    console.log(`📝 [${callSid}] Sesión creada. Conectando con Deepgram...`);
+    void this.connectToDeepgram(session);
+  }
+
+  private connectToDeepgram(session: CallSession) {
+    const ws = new WebSocket(this.deepgramUrl, {
+      headers: {
+        Authorization: `Token ${this.deepgramApiKey}`,
+        'User-Agent': 'llamalo-ai/streams-gateway',
+      },
+    });
+
+    session.voiceAgentSocket = ws;
+
+    ws.on('open', () => {
+      console.log(`🧠 [${session.callSid}] Deepgram Voice Agent conectado`);
+      this.sendSettings(session);
+      this.startKeepAlive(session);
+    });
+
+    ws.on('message', (data, isBinary) =>
+      this.handleDeepgramMessage(session, data, Boolean(isBinary)),
     );
-    void this.connectToOpenAi(session);
+
+    ws.on('close', (code, reason) => {
+      console.log(
+        `🔌 [${session.callSid}] Conexión Deepgram cerrada (${code}) ${
+          reason?.toString() || ''
+        }`,
+      );
+      session.readyForAudio = false;
+      this.stopKeepAlive(session);
+    });
+
+    ws.on('error', (error) => {
+      console.error(`❌ [${session.callSid}] Error en Deepgram WS:`, error);
+    });
+  }
+
+  private sendSettings(session: CallSession) {
+    const agent: Record<string, unknown> = {
+      language: this.deepgramLanguage,
+      listen: {
+        provider: {
+          type: this.deepgramListenProvider,
+          model: this.deepgramListenModel,
+          language: this.deepgramLanguage,
+          smart_format: true,
+        },
+      },
+      speak: {
+        provider: {
+          type: this.deepgramSpeakProvider,
+          model: this.deepgramSpeakModel,
+        },
+      },
+    };
+
+    const contextMessages =
+      session.instructions?.trim().length > 0
+        ? [
+            {
+              type: 'History',
+              role: 'assistant',
+              content: session.instructions,
+            },
+          ]
+        : [];
+    if (contextMessages.length) {
+      agent.context = { messages: contextMessages };
+    }
+
+    const thinkConfig = this.buildThinkConfig();
+    if (thinkConfig) {
+      agent.think = {
+        ...thinkConfig,
+        prompt: session.instructions,
+      };
+    }
+
+    const payload = {
+      type: 'Settings',
+      audio: {
+        input: { encoding: 'mulaw', sample_rate: 8000 },
+        output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' },
+      },
+      agent,
+    };
+
+    this.sendJsonToDeepgram(session, payload);
+  }
+
+  private buildThinkConfig():
+    | {
+        provider: { type: string; model: string; [key: string]: unknown };
+        temperature?: number;
+      }
+    | undefined {
+    if (!this.thinkProvider || !this.thinkModel) {
+      return undefined;
+    }
+
+    return {
+      provider: {
+        type: this.thinkProvider,
+        model: this.thinkModel,
+      },
+      temperature: this.thinkTemperature,
+    };
+  }
+
+  private resolveInstructions(
+    customParameters?: Record<string, string>,
+  ): string {
+    const instructions =
+      customParameters?.instructions?.trim() || this.defaultInstructions;
+    return instructions.slice(0, 2000);
+  }
+
+  private resolveGreeting(
+    customParameters?: Record<string, string>,
+  ): string | undefined {
+    if (!customParameters) return undefined;
+    if (customParameters.greeting?.trim()) {
+      return customParameters.greeting.trim().slice(0, 500);
+    }
+    if (customParameters.agentName?.trim()) {
+      return `Hola, soy ${customParameters.agentName.trim()}. ¿En qué puedo ayudarte hoy?`;
+    }
+    return undefined;
+  }
+
+  private forwardInboundAudio(callSid: string, msg: TwilioMediaIn) {
+    const session = this.sessions.get(callSid);
+    if (!session) {
+      console.warn(
+        `⚠️ [${callSid}] No hay sesión registrada para media inbound`,
+      );
+      return;
+    }
+
+    if (!msg.media?.payload) {
+      console.warn(`⚠️ [${callSid}] Media sin payload`);
+      return;
+    }
+
+    if (msg.media.track && msg.media.track !== 'inbound') {
+      return;
+    }
+
+    const chunk = Buffer.from(msg.media.payload, 'base64');
+
+    if (!session.readyForAudio) {
+      session.queuedAudio.push(chunk);
+      if (session.queuedAudio.length > this.maxBufferedChunks) {
+        session.queuedAudio.shift();
+      }
+      return;
+    }
+
+    this.sendAudioChunkToDeepgram(session, chunk);
+  }
+
+  private sendAudioChunkToDeepgram(session: CallSession, chunk: Buffer) {
+    const socket = session.voiceAgentSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      socket.send(chunk, { binary: true });
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando audio a Deepgram:`,
+        error,
+      );
+    }
+  }
+
+  private flushQueuedAudio(session: CallSession) {
+    if (!session.queuedAudio.length) return;
+    const buffered = [...session.queuedAudio];
+    session.queuedAudio.length = 0;
+    buffered.forEach((chunk) => this.sendAudioChunkToDeepgram(session, chunk));
+  }
+
+  private relayAudioToTwilio(session: CallSession, chunk: Buffer) {
+    if (!session.streamSid) {
+      console.warn(
+        `⚠️ [${session.callSid}] No hay streamSid para enviar audio a Twilio`,
+      );
+      return;
+    }
+
+    try {
+      session.client.send(
+        JSON.stringify({
+          event: 'media',
+          streamSid: session.streamSid,
+          media: { payload: chunk.toString('base64') },
+        }),
+      );
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando audio a Twilio:`,
+        error,
+      );
+    }
+  }
+
+  private handleDeepgramMessage(
+    session: CallSession,
+    data: RawData,
+    isBinary: boolean,
+  ) {
+    if (isBinary) {
+      const buffer = this.rawDataToBuffer(data);
+      this.relayAudioToTwilio(session, buffer);
+      return;
+    }
+
+    this.handleDeepgramJsonMessage(session, this.rawDataToString(data));
+  }
+
+  private handleDeepgramJsonMessage(session: CallSession, raw: string) {
+    try {
+      const message = JSON.parse(raw) as DeepgramJsonEvent;
+      const type = message.type;
+
+      if (!type) {
+        console.warn(`⚠️ [${session.callSid}] Evento sin tipo`, message);
+        return;
+      }
+
+      switch (type) {
+        case 'Welcome':
+          session.deepgramRequestId = this.asText(message.request_id);
+          console.log(
+            `🤝 [${session.callSid}] Handshake Deepgram (${session.deepgramRequestId})`,
+          );
+          break;
+        case 'SettingsApplied':
+          session.readyForAudio = true;
+          console.log(`⚙️ [${session.callSid}] Settings aplicados en Deepgram`);
+          this.flushQueuedAudio(session);
+          this.maybeSendPendingGreeting(session);
+          break;
+        case 'AgentStartedSpeaking':
+          console.log(`🗣️ [${session.callSid}] Deepgram empezó a hablar`);
+          break;
+        case 'AgentAudioDone':
+          console.log(`✅ [${session.callSid}] Deepgram terminó audio`);
+          break;
+        case 'UserStartedSpeaking':
+          console.log(`👂 [${session.callSid}] Deepgram detectó habla usuario`);
+          break;
+        case 'AgentThinking':
+          console.log(`💭 [${session.callSid}] Deepgram pensando...`);
+          break;
+        case 'Warning': {
+          const warnCode = this.asText(message.code);
+          const warnDesc = this.asText(message.description);
+          console.warn(
+            `⚠️ [${session.callSid}] Deepgram warning: ${warnCode} ${warnDesc}`.trim(),
+          );
+          break;
+        }
+        case 'Error': {
+          const errCode = this.asText(message.code);
+          const errDesc = this.asText(message.description);
+          console.error(
+            `❌ [${session.callSid}] Deepgram error: ${errCode} ${errDesc}`.trim(),
+          );
+          break;
+        }
+        case 'FunctionCallRequest':
+          console.warn(
+            `⚠️ [${session.callSid}] FunctionCallRequest no soportado:`,
+            message,
+          );
+          break;
+        default:
+          console.log(
+            `ℹ️ [${session.callSid}] Evento Deepgram no manejado (${type}):`,
+            message,
+          );
+      }
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error interpretando mensaje Deepgram:`,
+        error,
+      );
+    }
+  }
+
+  private maybeSendPendingGreeting(session: CallSession) {
+    if (!session.pendingGreeting || session.greetingSent) {
+      return;
+    }
+
+    this.sendJsonToDeepgram(session, {
+      type: 'InjectAgentMessage',
+      message: session.pendingGreeting,
+    });
+    session.greetingSent = true;
+  }
+
+  private sendJsonToDeepgram(session: CallSession, payload: unknown) {
+    const socket = session.voiceAgentSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      socket.send(JSON.stringify(payload));
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando mensaje a Deepgram:`,
+        error,
+      );
+    }
+  }
+
+  private startKeepAlive(session: CallSession) {
+    if (this.keepAliveIntervalMs <= 0) return;
+    this.stopKeepAlive(session);
+    session.keepAliveTimer = setInterval(() => {
+      this.sendJsonToDeepgram(session, { type: 'KeepAlive' });
+    }, this.keepAliveIntervalMs);
+  }
+
+  private stopKeepAlive(session: CallSession) {
+    if (session.keepAliveTimer) {
+      clearInterval(session.keepAliveTimer);
+      session.keepAliveTimer = undefined;
+    }
   }
 
   private extractCustomParameters(
@@ -199,260 +562,19 @@ export class StreamsGateway {
     return Object.keys(normalized).length ? normalized : undefined;
   }
 
-  private connectToOpenAi(session: CallSession) {
-    const url = `${this.openAiUrl}?model=${encodeURIComponent(
-      this.openAiModel,
-    )}&voice=${encodeURIComponent(this.openAiVoice)}&temperature=${encodeURIComponent(
-      String(this.openAiTemperature),
-    )}`;
-
-    const ws = new WebSocket(url, {
-      headers: {
-        Authorization: `Bearer ${this.openAiApiKey}`,
-      },
-    });
-
-    session.openAiSocket = ws;
-
-    ws.on('open', () => {
-      console.log(`🧠 [${session.callSid}] OpenAI Realtime conectado`);
-      this.sendSessionUpdate(session);
-      this.triggerInitialGreeting(session);
-    });
-
-    ws.on('message', (data) => {
-      const raw = this.rawDataToString(data);
-      if (process.env.OPENAI_REALTIME_DEBUG === 'true') {
-        console.log(`🔁 [${session.callSid}] OpenAI raw: ${raw}`);
-      }
-
-      this.handleOpenAiMessage(session, raw);
-    });
-    ws.on('close', () => {
-      console.log(`🔌 [${session.callSid}] Conexión OpenAI cerrada`);
-    });
-    ws.on('error', (error) => {
-      console.error(`❌ [${session.callSid}] Error en OpenAI WS:`, error);
-    });
-  }
-
-  private sendSessionUpdate(session: CallSession) {
-    const instructions =
-      session.customParameters?.instructions || this.defaultInstructions;
-
-    const payload = {
-      type: 'session.update',
-      session: {
-        type: 'realtime',
-        model: this.openAiModel,
-        instructions,
-        audio: {
-          input: {
-            format: { type: 'audio/pcmu' },
-            turn_detection: { type: 'server_vad' },
-          },
-          output: {
-            format: { type: 'audio/pcmu' },
-            voice: this.openAiVoice,
-          },
-        },
-      },
-    };
-
-    this.sendToOpenAi(session, payload);
-  }
-
-  private triggerInitialGreeting(session: CallSession) {
-    const agentName =
-      session.customParameters?.agentName?.trim() || 'tu asistente virtual';
-
-    const greeting =
-      session.customParameters?.greeting?.trim() ||
-      `Hola, soy ${agentName}. ¿En qué puedo ayudarte hoy?`;
-
-    const message = {
-      type: 'conversation.item.create',
-      item: {
-        type: 'message',
-        role: 'user',
-        content: [
-          {
-            type: 'input_text',
-            text: greeting,
-          },
-        ],
-      },
-    };
-
-    this.sendToOpenAi(session, message);
-    this.requestAssistantTurn(session, 'initial-greeting');
-  }
-
-  private handleOpenAiMessage(session: CallSession, raw: string) {
-    try {
-      const message = JSON.parse(raw);
-      const type = message.type as string | undefined;
-
-      switch (type) {
-        case 'response.output_audio.delta':
-          if (message.delta) {
-            session.assistantAudioStarted = true;
-            this.sendAudioToTwilio(session, message.delta as string);
-          }
-          return;
-        case 'response.created':
-        case 'response.updated':
-          if (message.response?.id) {
-            session.currentResponseId = message.response.id as string;
-          }
-          return;
-        case 'response.completed':
-          console.log(`✅ [${session.callSid}] Respuesta OpenAI completada.`);
-          session.responseInProgress = false;
-          session.currentResponseId = undefined;
-          session.assistantAudioStarted = false;
-          session.cancelPending = false;
-          this.flushQueuedAssistantTurn(session, 'completed');
-          return;
-        case 'response.canceled':
-          console.log(`🚫 [${session.callSid}] Respuesta OpenAI cancelada.`);
-          session.responseInProgress = false;
-          session.currentResponseId = undefined;
-          session.assistantAudioStarted = false;
-          session.cancelPending = false;
-          this.flushQueuedAssistantTurn(session, 'canceled');
-          return;
-        case 'input_audio_buffer.speech_started':
-          if (session.responseInProgress) {
-            this.cancelAssistantResponse(session, 'speech-started');
-          }
-          return;
-        case 'input_audio_buffer.speech_stopped':
-          this.requestAssistantTurn(session, 'speech-stopped');
-          return;
-        case 'error': {
-          console.error(`❌ [${session.callSid}] Error desde OpenAI:`, message);
-          const code = message?.error?.code as string | undefined;
-          if (code === 'response_cancel_not_active') {
-            console.warn(
-              `ℹ️ [${session.callSid}] Cancelación no necesaria (respuesta ya cerrada).`,
-            );
-            session.cancelPending = false;
-            session.responseInProgress = false;
-            session.currentResponseId = undefined;
-            session.assistantAudioStarted = false;
-            this.flushQueuedAssistantTurn(session, code);
-            return;
-          }
-          if (code !== 'conversation_already_has_active_response') {
-            session.responseInProgress = false;
-            session.currentResponseId = undefined;
-            session.assistantAudioStarted = false;
-            session.cancelPending = false;
-            this.flushQueuedAssistantTurn(session, code || 'error');
-          } else {
-            console.warn(
-              `⚠️ [${session.callSid}] Turno rechazado por respuesta activa.`,
-            );
-          }
-          return;
-        }
-        case 'rate_limits.updated':
-          console.log(
-            `📉 [${session.callSid}] Rate limits actualizados`,
-            message,
-          );
-          return;
-        default:
-          return;
-      }
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error interpretando mensaje OpenAI:`,
-        error,
-      );
-    }
-  }
-
-  private sendAudioToTwilio(session: CallSession, payload: string) {
-    if (!session.streamSid) {
-      console.warn(
-        `⚠️ [${session.callSid}] No hay streamSid para enviar audio a Twilio`,
-      );
-      return;
-    }
-
-    try {
-      session.client.send(
-        JSON.stringify({
-          event: 'media',
-          streamSid: session.streamSid,
-          media: { payload },
-        }),
-      );
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error enviando audio a Twilio:`,
-        error,
-      );
-    }
-  }
-
-  private forwardInboundAudio(callSid: string, msg: TwilioMediaIn) {
-    const session = this.sessions.get(callSid);
-    if (!session) {
-      console.warn(
-        `⚠️ [${callSid}] No hay sesión registrada para media inbound`,
-      );
-      return;
-    }
-
-    if (!msg.media || !msg.media.payload) {
-      console.warn(`⚠️ [${callSid}] Media sin payload`);
-      return;
-    }
-
-    if (msg.media.track && msg.media.track !== 'inbound') {
-      return;
-    }
-
-    const payload = {
-      type: 'input_audio_buffer.append',
-      audio: msg.media.payload,
-    };
-
-    this.sendToOpenAi(session, payload);
-  }
-
-  private sendToOpenAi(session: CallSession, payload: unknown) {
-    if (
-      !session.openAiSocket ||
-      session.openAiSocket.readyState !== WebSocket.OPEN
-    ) {
-      return;
-    }
-
-    try {
-      session.openAiSocket.send(JSON.stringify(payload));
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error enviando mensaje a OpenAI:`,
-        error,
-      );
-    }
-  }
-
   private cleanupSession(callSid: string) {
     const session = this.sessions.get(callSid);
     if (!session) return;
 
     console.log(`🧹 [${callSid}] Limpiando sesión`);
 
+    this.stopKeepAlive(session);
+
     if (
-      session.openAiSocket &&
-      session.openAiSocket.readyState === WebSocket.OPEN
+      session.voiceAgentSocket &&
+      session.voiceAgentSocket.readyState === WebSocket.OPEN
     ) {
-      session.openAiSocket.close();
+      session.voiceAgentSocket.close();
     }
 
     this.sessions.delete(callSid);
@@ -471,59 +593,30 @@ export class StreamsGateway {
     return Buffer.from(data as ArrayBuffer).toString();
   }
 
-  private buildAudioResponsePayload() {
-    return {
-      type: 'response.create',
-    };
+  private rawDataToBuffer(data: RawData): Buffer {
+    if (data instanceof Buffer) {
+      return data;
+    }
+    if (typeof data === 'string') {
+      return Buffer.from(data);
+    }
+    if (Array.isArray(data)) {
+      return Buffer.concat(data);
+    }
+    return Buffer.from(data as ArrayBuffer);
   }
 
-  private requestAssistantTurn(session: CallSession, reason: string) {
-    if (session.responseInProgress) {
-      session.queuedAssistantTurn = true;
-      console.log(
-        `⏳ [${session.callSid}] Turno asistente en cola (motivo: ${reason})`,
-      );
-      return;
+  private asText(value: unknown): string {
+    if (typeof value === 'string') {
+      return value;
     }
-
-    console.log(`🎤 [${session.callSid}] Generando respuesta (${reason})`);
-    session.responseInProgress = true;
-    session.queuedAssistantTurn = false;
-    this.sendToOpenAi(session, this.buildAudioResponsePayload());
-  }
-
-  private flushQueuedAssistantTurn(session: CallSession, source: string) {
-    if (!session.queuedAssistantTurn) {
-      return;
+    if (
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint'
+    ) {
+      return String(value);
     }
-
-    console.log(
-      `🔁 [${session.callSid}] Procesando turno en cola (evento: ${source})`,
-    );
-    session.queuedAssistantTurn = false;
-    this.requestAssistantTurn(session, 'queued');
-  }
-
-  private cancelAssistantResponse(session: CallSession, reason: string) {
-    if (!session.currentResponseId || session.cancelPending) {
-      return;
-    }
-    if (!session.assistantAudioStarted) {
-      console.log(
-        `ℹ️ [${session.callSid}] Cancelación omitida: no hay audio emitido aún.`,
-      );
-      session.responseInProgress = false;
-      session.currentResponseId = undefined;
-      return;
-    }
-
-    console.log(
-      `✋ [${session.callSid}] Cancelando respuesta actual (${reason})`,
-    );
-    session.cancelPending = true;
-    this.sendToOpenAi(session, {
-      type: 'response.cancel',
-      response_id: session.currentResponseId,
-    });
+    return '';
   }
 }
