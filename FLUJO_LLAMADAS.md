@@ -7,7 +7,7 @@ Este documento describe el flujo completo de las llamadas en el sistema LlamaloA
 ## Arquitectura General
 
 ```
-Usuario → Twilio → NestJS Backend → Fish Audio (ASR/TTS) + OpenAI (GPT) → Twilio → Usuario
+Usuario → Twilio → NestJS Backend → Deepgram Voice Agent API → Twilio → Usuario
 ```
 
 ## Componentes Principales
@@ -23,33 +23,17 @@ Usuario → Twilio → NestJS Backend → Fish Audio (ASR/TTS) + OpenAI (GPT) �
 
 ### 2. **StreamsGateway** (`src/streams/streams.gateway.ts`)
 - **WebSocket Path**: `/voice/stream`
-- **Responsabilidad**: Gestionar la comunicación bidireccional con Twilio durante la llamada
+- **Responsabilidad**: Gestionar la comunicación bidireccional con Twilio durante la llamada y puentearla con Deepgram Voice Agent API.
 - **Características**:
-  - Gestión de sesiones por `callSid` (cada llamada tiene su propio estado)
-  - Soporte para modo WebSocket (tiempo real) y fallback HTTP
-  - Transcripción de audio (ASR), generación de respuestas (GPT), síntesis de voz (TTS)
+  - Gestión de sesiones por `callSid` (cada llamada tiene su propio estado).
+  - Apertura y mantenimiento de un WebSocket dedicado contra `wss://agent.deepgram.com/v1/agent/converse`.
+  - Encola audio μ-law entrante hasta que Deepgram confirma `SettingsApplied`.
+  - Reenvía audio binario en ambos sentidos (Twilio ↔ Deepgram) y maneja keep-alives, warnings y errores.
 
-### 3. **Servicios de Fish Audio**
-
-#### FishAsrService (ASR - Speech to Text en tiempo real)
-- Conexión WebSocket con Fish Audio para transcripción en tiempo real
-- Recibe audio PCM16 y devuelve transcripciones parciales y finales
-
-#### FishTtsService (TTS - Text to Speech en tiempo real)
-- Conexión WebSocket con Fish Audio para síntesis de voz en tiempo real
-- Convierte texto a audio PCM16 en streaming
-
-#### FishAsrHttpService (Fallback ASR)
-- API HTTP para transcripción de audio
-- Se usa cuando la conexión WebSocket falla
-
-#### FishTtsHttpService (Fallback TTS)
-- API HTTP para síntesis de voz
-- Genera archivos MP3 completos y los sube a Firebase Storage
-
-### 4. **GptService** (`src/llm/gpt.service.ts`)
-- Integración con OpenAI GPT
-- Genera respuestas en streaming basadas en la transcripción del usuario
+### 3. **Deepgram Voice Agent API**
+- Se consume directamente desde `StreamsGateway` (no hay servicios anidados).
+- Deepgram se encarga de todo el pipeline (ASR + LLM + TTS) con latencias ~real-time.
+- La configuración del agente (modelos, idioma, instrucciones, greetings) se envía mediante mensajes `Settings`, `InjectAgentMessage`, etc.
 
 ## Flujo Detallado de una Llamada
 
@@ -68,62 +52,28 @@ Usuario → Twilio → NestJS Backend → Fish Audio (ASR/TTS) + OpenAI (GPT) �
 ### Fase 2: Establecimiento de Sesión WebSocket
 
 ```
-1. StreamsGateway recibe conexión WebSocket
-2. Intenta conectar ASR/TTS en modo WebSocket (tiempo real)
-   - Si tiene éxito: useWebSocket = true
-   - Si falla: useWebSocket = false (modo HTTP fallback)
-3. Espera evento "start" de Twilio con el callSid
-4. Crea sesión para esa llamada con:
-   - callSid
-   - estado (speaking/listening)
-   - buffers de audio
-   - cola HTTP (si aplica)
+1. StreamsGateway recibe la conexión WebSocket de Twilio.
+2. Espera el evento `start` para obtener `callSid`, `streamSid` y parámetros del agente.
+3. Crea una sesión en memoria y abre un WebSocket dedicado contra Deepgram Voice Agent API.
+4. Envía un mensaje `Settings` a Deepgram con:
+   - Idioma y prompts del agente.
+   - Configuración de audio (μ-law 8 kHz).
+   - Modelos de `listen` y `speak`.
+5. Cuando Deepgram responde con `SettingsApplied`, se habilita el envío de audio en tiempo real.
 ```
 
-### Fase 3: Procesamiento de Audio (Modo WebSocket)
+### Fase 3: Procesamiento en Deepgram (tiempo real)
 
 ```
 Usuario habla:
 1. Twilio envía chunks de audio en μ-law (base64)
-2. StreamsGateway convierte μ-law → PCM16
-3. Envía PCM16 a FishAsrService (WebSocket)
-4. Fish Audio devuelve transcripciones:
-   - Parciales (is_final: false) → solo logging
-   - Finales (is_final: true) → procesamiento completo
-
-Cuando hay transcripción final:
-5. Se envía el texto a GptService
-6. GPT genera respuesta en streaming (palabra por palabra)
-7. Cada 5 palabras o al finalizar oración:
-   - Se envía el texto a FishTtsService (WebSocket)
-   - Fish Audio genera audio PCM16
-   - Se convierte PCM16 → μ-law
-   - Se envía a Twilio para reproducción
-
-Usuario escucha la respuesta del agente
-```
-
-### Fase 4: Procesamiento de Audio (Modo HTTP Fallback)
-
-```
-Usuario habla:
-1. Twilio envía chunks de audio en μ-law (base64)
-2. StreamsGateway convierte μ-law → PCM16
-3. Acumula audio en buffer hasta:
-   - Tener 1 segundo de audio (16000 bytes)
-   - O timeout de 1 segundo
-4. Envía buffer a FishAsrHttpService
-5. Fish Audio devuelve transcripción completa
-
-Cuando hay transcripción:
-6. Se envía el texto a GptService
-7. GPT genera respuesta completa (no streaming)
-8. Se envía respuesta a FishTtsHttpService
-9. Fish Audio genera audio MP3
-10. Se sube MP3 a Firebase Storage
-11. Se reproduce URL del MP3 con Twilio Call Media API
-
-Usuario escucha la respuesta del agente
+2. StreamsGateway los reenvía como binario a Deepgram (sin convertir formato).
+3. Deepgram procesa ASR + LLM + TTS dentro de la misma conexión.
+4. Cuando el agente responde, Deepgram envía audio μ-law (binario) que StreamsGateway transforma a base64 y envía a Twilio.
+5. Eventos relevantes:
+   - `AgentStartedSpeaking` / `AgentAudioDone` permiten loggear el estado.
+   - `Warning` y `Error` se reflejan en consola para su diagnóstico.
+6. Opcionalmente se inyecta un saludo inicial mediante `InjectAgentMessage`.
 ```
 
 ### Fase 5: Finalización de la Llamada
@@ -144,33 +94,35 @@ Cada llamada tiene su propia sesión (`CallSession`) que incluye:
 
 ```typescript
 interface CallSession {
-  callSid: string;              // ID único de la llamada de Twilio
-  speaking: boolean;            // ¿El agente está hablando?
-  useWebSocket: boolean;        // Modo WebSocket o HTTP fallback
-  audioBuffer: Buffer;          // Buffer para acumular audio (modo HTTP)
-  audioBufferTimer?: NodeJS.Timeout;  // Timer para flush de buffer
-  httpQueue: Promise<void>;     // Cola de procesamiento HTTP
-  lastAsrTime: number;          // Timestamp de última transcripción (métricas)
+  callSid: string;                   // ID único de la llamada de Twilio
+  streamSid?: string;                // Stream asociado proporcionado por Twilio
+  instructions: string;              // Prompt que se envía a Deepgram
+  queuedAudio: Buffer[];             // Audio μ-law pendiente de envío
+  readyForAudio: boolean;            // Deepgram confirmó SettingsApplied
+  pendingGreeting?: string;          // Saludo a inyectar cuando aplica
+  greetingSent: boolean;             // Bandera para evitar duplicados
+  keepAliveTimer?: NodeJS.Timeout;   // Intervalo para mensajes KeepAlive
+  voiceAgentSocket?: WebSocket;      // Conexión activa con Deepgram
 }
 ```
 
 ## Variables de Entorno Importantes
 
-### Fish Audio
+### Deepgram Voice Agent
 ```env
-FISH_API_KEY=your_fish_audio_api_key
-FISH_LANG=es-ES
-FISH_TTS_VOICE_ID=your_voice_id
-FISH_ASR_SAMPLE_RATE=8000
-FISH_ASR_ENCODING=pcm16
-FISH_TTS_AUDIO_FORMAT=mp3
-```
-
-### OpenAI
-```env
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_TEMPERATURE=0.7
+DG_API_KEY=tu_api_key_deepgram
+# Opcional: usar otra variable si se desea diferenciar claves
+DG_VOICE_AGENT_API_KEY=tu_api_key_deepgram
+DG_VOICE_AGENT_URL=wss://agent.deepgram.com/v1/agent/converse
+DG_VOICE_AGENT_LANGUAGE=es
+DG_LISTEN_MODEL=nova-3
+DG_SPEAK_MODEL=aura-asteria-en
+DG_THINK_PROVIDER=deepgram        # Opcional (p.ej. deepgram, open_ai, anthropic)
+DG_THINK_MODEL=flux-1             # Opcional, depende del provider
+DG_THINK_TEMPERATURE=0.7
+DG_AGENT_PROMPT=Eres un asistente de voz profesional...
+DG_KEEPALIVE_MS=15000
+DG_MAX_BUFFERED_CHUNKS=25
 ```
 
 ### Twilio
@@ -201,23 +153,19 @@ Las métricas se imprimen cada 30 segundos en consola con promedios y percentil 
 
 ## Manejo de Errores
 
-### Conexión WebSocket Falla
-- El sistema automáticamente cambia a modo HTTP fallback
-- La llamada continúa funcionando pero con mayor latencia
+### Conexión con Deepgram falla
+- Se registra el error y se cierra el WebSocket con Twilio para evitar estados inconsistentes.
+- Revisar `DG_API_KEY`, firewall o `DG_VOICE_AGENT_URL`.
 
-### Error en Transcripción
-- Se registra el error en consola
-- La llamada continúa esperando el siguiente chunk de audio
+### Warning/Error emitido por Deepgram
+- El evento llega como JSON (`type: "Warning"` o `type: "Error"`).
+- Se loguea el código y la descripción para facilitar el soporte.
+- Dependiendo de la severidad, la sesión puede continuar (warning) o cerrarse (error crítico).
 
-### Error en GPT
-- Se registra el error
-- No se envía respuesta al usuario
-- La llamada continúa esperando nueva entrada del usuario
-
-### Error en TTS
-- Se registra el error
-- No se reproduce audio
-- La llamada continúa esperando nueva entrada del usuario
+### Audio no se reproduce
+- Verificar que `streamSid` exista y que Twilio siga conectado.
+- Confirmar que `SettingsApplied` apareció en los logs antes de comenzar a hablar.
+- Revisar los eventos `AgentAudioDone` para descartar silencios prolongados.
 
 ## Mejoras Recientes (2024)
 
@@ -225,14 +173,15 @@ Las métricas se imprimen cada 30 segundos en consola con promedios y percentil 
 1. **Eliminación de código duplicado**: Se removió la lógica duplicada entre `handleConnection` y `afterInit`
 2. **Gestión de sesiones por llamada**: Cada llamada ahora tiene su propio estado independiente
 3. **Callbacks únicos**: Los callbacks de ASR/TTS solo se registran una vez por sesión
-4. **Mejor manejo de fallback HTTP**: El sistema ahora gestiona correctamente la cola de procesamiento HTTP
+4. **Integración directa con Deepgram**: Se reemplazó el pipeline Fish Audio + OpenAI por un único WebSocket contra Voice Agent API
+5. **Keep-alive y control de warnings**: Se monitorean eventos `Warning`/`Error` y se envían `KeepAlive` periódicos
 
 ### Ventajas
 - ✅ Soporte para múltiples llamadas simultáneas
 - ✅ Menor uso de memoria
 - ✅ Código más limpio y mantenible
-- ✅ Mejor manejo de errores
-- ✅ Fallback HTTP robusto
+- ✅ Mejor manejo de errores y trazabilidad de eventos Deepgram
+- ✅ Menor latencia al eliminar hops intermedios
 
 ## Pruebas
 
@@ -251,15 +200,15 @@ Para probar el flujo completo:
 - Verificar que el número Twilio esté correctamente configurado en Firestore
 - El campo debe ser `twilio.phoneNumber` y debe ser un número entero
 
-### "ASR/TTS conexión falló"
-- Verificar que `FISH_API_KEY` esté configurado
-- Verificar conectividad con Fish Audio API
-- El sistema automáticamente usará HTTP fallback
+### "Deepgram rechazó la conexión"
+- Revisar `DG_API_KEY` / `DG_VOICE_AGENT_API_KEY`
+- Confirmar que el endpoint `DG_VOICE_AGENT_URL` esté accesible
+- Verificar que no haya sido superada la cuota en Deepgram
 
 ### "Audio no se reproduce"
 - Verificar que el audio de bienvenida esté correctamente configurado
-- Para modo HTTP: verificar que Firebase Storage esté correctamente configurado
-- Verificar logs de Twilio para errores en la reproducción
+- Validar en logs que `SettingsApplied` y `AgentAudioDone` aparezcan
+- Revisar los logs de Twilio para encontrar posibles errores de media
 
 ### WebSocket no se conecta
 - Verificar que el path sea exactamente `/voice/stream`
