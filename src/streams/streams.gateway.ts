@@ -265,7 +265,6 @@ export class StreamsGateway {
         provider: {
           type: this.deepgramSpeakProvider,
           model: this.deepgramSpeakModel,
-          language: this.deepgramLanguage,
         },
       },
     };
