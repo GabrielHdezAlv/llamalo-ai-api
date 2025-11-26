@@ -85,7 +85,7 @@ export class StreamsGateway {
   private readonly deepgramSpeakProvider =
     process.env.DG_SPEAK_PROVIDER ?? 'deepgram';
   private readonly deepgramSpeakModel =
-    process.env.DG_SPEAK_MODEL ?? 'aura-2-carina-es';
+    process.env.DG_SPEAK_MODEL ?? 'aura-2-javier-es';
   private readonly thinkProvider = process.env.DG_THINK_PROVIDER;
   private readonly thinkModel = process.env.DG_THINK_MODEL;
   private readonly thinkTemperature = Number(
@@ -254,6 +254,7 @@ export class StreamsGateway {
         provider: {
           type: this.deepgramSpeakProvider,
           model: this.deepgramSpeakModel,
+          speed: 1.25,
         },
       },
     };
