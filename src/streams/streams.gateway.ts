@@ -59,6 +59,8 @@ interface CallSession {
   greetingSent: boolean;
   keepAliveTimer?: NodeJS.Timeout;
   deepgramRequestId?: string;
+  userSpeakingStartTime?: number;
+  responseLatencies: number[];
 }
 
 @WebSocketGateway({
@@ -120,27 +122,14 @@ export class StreamsGateway {
       try {
         const msg = JSON.parse(raw.toString()) as TwilioMsg;
 
-        if (msg.event !== 'media') {
-          console.log('📨 Twilio mensaje NO-MEDIA recibido:', msg.event);
-          console.log('📋 Contenido completo:', JSON.stringify(msg, null, 2));
-        }
-
         if (msg.event === 'connected') {
-          console.log(
-            '🔗 Twilio WebSocket conectado:',
-            JSON.stringify(msg, null, 2),
-          );
+          // Silenciar evento connected para reducir ruido
           return;
         }
 
         if (msg.event === 'start') {
-          console.log(
-            '📋 Mensaje completo del start:',
-            JSON.stringify(msg, null, 2),
-          );
           currentCallSid = msg.start?.callSid || '';
-          console.log(`🎯 CallSid recibido: "${currentCallSid}"`);
-          console.log('🎯 StreamSid:', msg.start?.streamSid || 'N/A');
+          console.log(`📞 [${currentCallSid}] Llamada iniciada`);
           mediaBeforeStartWarned = false;
 
           if (!currentCallSid) {
@@ -208,10 +197,10 @@ export class StreamsGateway {
       readyForAudio: false,
       pendingGreeting: this.resolveGreeting(customParameters),
       greetingSent: false,
+      responseLatencies: [],
     };
 
     this.sessions.set(callSid, session);
-    console.log(`📝 [${callSid}] Sesión creada. Conectando con Deepgram...`);
     void this.connectToDeepgram(session);
   }
 
@@ -226,7 +215,6 @@ export class StreamsGateway {
     session.voiceAgentSocket = ws;
 
     ws.on('open', () => {
-      console.log(`🧠 [${session.callSid}] Deepgram Voice Agent conectado`);
       this.sendSettings(session);
       this.startKeepAlive(session);
     });
@@ -235,12 +223,13 @@ export class StreamsGateway {
       this.handleDeepgramMessage(session, data, Boolean(isBinary)),
     );
 
-    ws.on('close', (code, reason) => {
-      console.log(
-        `🔌 [${session.callSid}] Conexión Deepgram cerrada (${code}) ${
-          reason?.toString() || ''
-        }`,
-      );
+    ws.on('close', (code) => {
+      // Solo loggear cierres inesperados (códigos diferentes a 1000 y 1001)
+      if (code !== 1000 && code !== 1001) {
+        console.log(
+          `🔌 [${session.callSid}] Conexión Deepgram cerrada (${code})`,
+        );
+      }
       session.readyForAudio = false;
       this.stopKeepAlive(session);
     });
@@ -448,27 +437,37 @@ export class StreamsGateway {
       switch (type) {
         case 'Welcome':
           session.deepgramRequestId = this.asText(message.request_id);
-          console.log(
-            `🤝 [${session.callSid}] Handshake Deepgram (${session.deepgramRequestId})`,
-          );
+          // Silenciar Welcome para reducir ruido
           break;
         case 'SettingsApplied':
           session.readyForAudio = true;
-          console.log(`⚙️ [${session.callSid}] Settings aplicados en Deepgram`);
+          console.log(`⚙️ [${session.callSid}] Deepgram listo`);
           this.flushQueuedAudio(session);
           this.maybeSendPendingGreeting(session);
           break;
         case 'AgentStartedSpeaking':
-          console.log(`🗣️ [${session.callSid}] Deepgram empezó a hablar`);
+          if (session.userSpeakingStartTime) {
+            const latency = Date.now() - session.userSpeakingStartTime;
+            session.responseLatencies.push(latency);
+            const avgLatency =
+              session.responseLatencies.reduce((a, b) => a + b, 0) /
+              session.responseLatencies.length;
+            console.log(
+              `🗣️ [${session.callSid}] Agente hablando (latencia: ${latency}ms, promedio: ${Math.round(avgLatency)}ms)`,
+            );
+            session.userSpeakingStartTime = undefined;
+          } else {
+            console.log(`🗣️ [${session.callSid}] Agente hablando`);
+          }
           break;
         case 'AgentAudioDone':
-          console.log(`✅ [${session.callSid}] Deepgram terminó audio`);
+          console.log(`✅ [${session.callSid}] Agente terminó de hablar`);
           break;
         case 'UserStartedSpeaking':
-          console.log(`👂 [${session.callSid}] Deepgram detectó habla usuario`);
+          session.userSpeakingStartTime = Date.now();
           break;
         case 'AgentThinking':
-          console.log(`💭 [${session.callSid}] Deepgram pensando...`);
+          // Silenciar este evento para reducir ruido
           break;
         case 'Warning': {
           const warnCode = this.asText(message.code);
@@ -488,15 +487,20 @@ export class StreamsGateway {
         }
         case 'FunctionCallRequest':
           console.warn(
-            `⚠️ [${session.callSid}] FunctionCallRequest no soportado:`,
-            message,
+            `⚠️ [${session.callSid}] FunctionCallRequest no soportado`,
           );
           break;
+        case 'ConversationText':
+        case 'History':
+          // Silenciar estos eventos para reducir ruido visual
+          break;
         default:
-          console.log(
-            `ℹ️ [${session.callSid}] Evento Deepgram no manejado (${type}):`,
-            message,
-          );
+          // Solo loggear eventos desconocidos que no sean ConversationText o History
+          if (type !== 'ConversationText' && type !== 'History') {
+            console.log(
+              `ℹ️ [${session.callSid}] Evento Deepgram no manejado (${type})`,
+            );
+          }
       }
     } catch (error) {
       console.error(
