@@ -186,7 +186,23 @@ export class StreamsGateway {
       );
     }
 
+    // Log del agentInstruction recibido desde Twilio (customParameters.instructions)
+    if (customParameters?.instructions) {
+      console.log(
+        `📋 [${callSid}] AgentInstruction recibido desde Twilio: "${customParameters.instructions}"`,
+      );
+    } else {
+      console.log(
+        `⚠️ [${callSid}] No se recibió agentInstruction desde Twilio (customParameters.instructions está vacío)`,
+      );
+    }
+
     const instructions = this.resolveInstructions(customParameters);
+
+    // Log de session.instructions (resultado después de resolveInstructions)
+    console.log(
+      `🧠 [${callSid}] Session.instructions configurado: "${instructions}"`,
+    );
     const session: CallSession = {
       callSid,
       streamSid: start?.streamSid,
