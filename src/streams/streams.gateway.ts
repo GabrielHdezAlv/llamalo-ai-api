@@ -437,7 +437,11 @@ export class StreamsGateway {
       switch (type) {
         case 'Welcome':
           session.deepgramRequestId = this.asText(message.request_id);
-          // Silenciar Welcome para reducir ruido
+          if (session.deepgramRequestId) {
+            console.log(
+              `🆔 [${session.callSid}] Deepgram Request ID: ${session.deepgramRequestId}`,
+            );
+          }
           break;
         case 'SettingsApplied':
           session.readyForAudio = true;
