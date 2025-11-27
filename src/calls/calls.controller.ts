@@ -118,8 +118,8 @@ export class CallsController {
       );
       addStreamParameter(
         'instructions',
-        typeof twilioConfig.instructions === 'string'
-          ? twilioConfig.instructions
+        typeof twilioConfig.agentInstruction === 'string'
+          ? twilioConfig.agentInstruction
           : undefined,
       );
 
