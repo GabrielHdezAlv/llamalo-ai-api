@@ -20,6 +20,9 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@google-cloud/speech": "^7.2.1",
+    "@google-cloud/text-to-speech": "^6.4.0",
+    "@google/generative-ai": "^0.24.1",
     "@nestjs/cli": "^11.0.10",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
