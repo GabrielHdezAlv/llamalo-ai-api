@@ -1,6 +1,83 @@
 # Configuración de API Keys
 
-## Fish Audio API Key
+## Google Cloud y Gemini AI
+
+### Variables de Entorno Requeridas
+
+Para usar Google Cloud Speech-to-Text, Gemini API y Google Cloud Text-to-Speech, necesitas configurar:
+
+```env
+# Gemini API
+GEMINI_API_KEY=tu_api_key_de_gemini
+GEMINI_MODEL=gemini-1.5-flash  # Opcional, por defecto: gemini-1.5-flash
+GEMINI_TEMPERATURE=0.7  # Opcional, por defecto: 0.7
+GEMINI_AGENT_PROMPT="Eres un asistente..."  # Opcional, instrucciones por defecto
+
+# Google Cloud
+GOOGLE_CLOUD_PROJECT_ID=tu-project-id
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json  # Opcional si usas service account
+GOOGLE_TTS_VOICE_NAME=es-ES-Neural2-D  # Opcional, por defecto: es-ES-Neural2-D
+
+# Configuración general
+MAX_BUFFERED_CHUNKS=25  # Opcional, por defecto: 25
+```
+
+### 1. Obtener Gemini API Key
+
+1. Ir a: https://aistudio.google.com/app/apikey
+2. Crear nueva API key
+3. Copiar la key y actualizar `GEMINI_API_KEY` en tu `.env` o variables de entorno de Render
+
+### 2. Configurar Google Cloud
+
+#### Opción A: Service Account (Recomendado para producción)
+
+1. Ir a: https://console.cloud.google.com/iam-admin/serviceaccounts
+2. Crear o seleccionar un service account
+3. Añadir roles:
+   - `Cloud Speech-to-Text API User`
+   - `Cloud Text-to-Speech API User`
+4. Crear una key JSON y descargarla
+5. Subir el archivo JSON a tu servidor (Render permite subir archivos secretos)
+6. Configurar `GOOGLE_APPLICATION_CREDENTIALS` con la ruta al archivo JSON
+
+#### Opción B: Application Default Credentials (ADC)
+
+Si ejecutas en Google Cloud (Cloud Run, GCE, etc.), las credenciales se detectan automáticamente.
+
+### 3. Habilitar APIs de Google Cloud
+
+Asegúrate de tener habilitadas estas APIs en tu proyecto:
+
+- Cloud Speech-to-Text API
+- Cloud Text-to-Speech API
+
+Puedes habilitarlas en: https://console.cloud.google.com/apis/library
+
+### 4. Configurar Voz de TTS
+
+Puedes elegir diferentes voces en español:
+
+- `es-ES-Neural2-D` (femenina, por defecto)
+- `es-ES-Neural2-F` (femenina)
+- `es-ES-Standard-A` (femenina)
+- `es-ES-Standard-B` (masculina)
+- `es-ES-Standard-C` (femenina)
+- `es-ES-Standard-D` (masculina)
+
+Ver todas las voces disponibles: https://cloud.google.com/text-to-speech/docs/voices
+
+### 5. Verificar Configuración
+
+Después de configurar, los logs deberían mostrar:
+
+```
+✅ [callSid] Cliente Gemini inicializado
+✅ [callSid] Speech-to-Text streaming iniciado
+⚙️ [callSid] Servicios de Google Cloud inicializados
+```
+
+## Fish Audio API Key (Deprecated - Ya no se usa)
 
 ### 1. Actualizar la API Key
 
