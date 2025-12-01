@@ -332,7 +332,8 @@ export class StreamsGateway {
   ): string {
     const instructions =
       customParameters?.instructions?.trim() || this.defaultInstructions;
-    return instructions.slice(0, 2000);
+    // Eliminado el límite de 2000 caracteres para permitir instrucciones completas
+    return instructions;
   }
 
   private resolveGreeting(
