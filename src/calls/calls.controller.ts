@@ -87,9 +87,11 @@ export class CallsController {
         if (!value) return;
         const normalized = value.trim();
         if (!normalized) return;
+        // Para instructions, usar límite mucho más alto; para otros parámetros mantener 450
+        const limit = name === 'instructions' ? 50000 : 450;
         stream.parameter({
           name,
-          value: normalized.slice(0, 450),
+          value: normalized.slice(0, limit),
         });
       };
 
