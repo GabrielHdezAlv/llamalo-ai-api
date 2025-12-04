@@ -1,8 +1,6 @@
 import { WebSocketGateway } from '@nestjs/websockets';
 import WebSocket, { RawData } from 'ws';
-import { SpeechClient } from '@google-cloud/speech';
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -44,33 +42,33 @@ interface WebSocketClient {
   close: () => void;
 }
 
-interface GeminiMessage {
-  role: 'user' | 'model';
-  parts: { text: string }[];
-}
+type DeepgramJsonEvent = {
+  type?: string;
+  [key: string]: unknown;
+};
 
 interface CallSession {
   callSid: string;
   streamSid?: string;
   client: WebSocketClient;
+  voiceAgentSocket?: WebSocket;
   customParameters?: Record<string, string>;
   instructions: string;
   queuedAudio: Buffer[];
   readyForAudio: boolean;
   pendingGreeting?: string;
   greetingSent: boolean;
+  keepAliveTimer?: NodeJS.Timeout;
+  deepgramRequestId?: string;
   userSpeakingStartTime?: number;
   responseLatencies: number[];
-  // Google Cloud clients
-  sttClient?: SpeechClient;
-  sttStream?: any; // StreamingRecognizeStream
-  geminiClient?: GoogleGenerativeAI;
-  geminiModel?: any; // GenerativeModel
+  // Google Cloud TTS
   ttsClient?: TextToSpeechClient;
-  conversationHistory: GeminiMessage[];
+  // Estado para interceptar texto y generar TTS
+  interceptedResponseText: string;
   agentSpeaking: boolean;
   interrupted: boolean;
-  currentTTSRequest?: any;
+  currentTTSRequest?: Promise<void>;
 }
 
 @WebSocketGateway({
@@ -81,31 +79,48 @@ interface CallSession {
   },
 })
 export class StreamsGateway {
-  private readonly geminiApiKey = process.env.GEMINI_API_KEY;
+  private readonly deepgramApiKey =
+    process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
+  private readonly deepgramUrl =
+    process.env.DG_VOICE_AGENT_URL ||
+    'wss://agent.deepgram.com/v1/agent/converse';
+  private readonly deepgramLanguage =
+    process.env.DG_VOICE_AGENT_LANGUAGE ?? 'es';
+  private readonly deepgramListenProvider =
+    process.env.DG_LISTEN_PROVIDER ?? 'deepgram';
+  private readonly deepgramListenModel =
+    process.env.DG_LISTEN_MODEL ?? 'nova-3';
+  private readonly deepgramSpeakProvider =
+    process.env.DG_SPEAK_PROVIDER ?? 'deepgram';
+  private readonly deepgramSpeakModel =
+    process.env.DG_SPEAK_MODEL ?? 'aura-2-nestor-es';
+  private readonly thinkProvider = process.env.DG_THINK_PROVIDER;
+  private readonly thinkModel = process.env.DG_THINK_MODEL;
+  private readonly thinkTemperature = Number(
+    process.env.DG_THINK_TEMPERATURE ?? 0.7,
+  );
+  private readonly keepAliveIntervalMs = Number(
+    process.env.DG_KEEPALIVE_MS ?? 15_000,
+  );
+  private readonly maxBufferedChunks = Math.max(
+    1,
+    Number(process.env.DG_MAX_BUFFERED_CHUNKS ?? 25),
+  );
+  private readonly defaultInstructions =
+    process.env.DG_AGENT_PROMPT ||
+    'Eres un asistente de voz profesional y resolutivo. Responde siempre en español con frases cortas y claras.';
+  // Google Cloud TTS
   private readonly googleCloudProjectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
   private readonly googleCloudCredentials =
     process.env.GOOGLE_APPLICATION_CREDENTIALS;
   private readonly ttsVoiceName =
     process.env.GOOGLE_TTS_VOICE_NAME || 'es-ES-Neural2-D';
-  private readonly geminiModelName =
-    process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-  private readonly geminiTemperature = Number(
-    process.env.GEMINI_TEMPERATURE ?? 0.7,
-  );
-  private readonly defaultInstructions =
-    process.env.GEMINI_AGENT_PROMPT ||
-    'Eres un asistente de voz profesional y resolutivo. Responde siempre en español con frases cortas y claras.';
-  private readonly maxBufferedChunks = Math.max(
-    1,
-    Number(process.env.MAX_BUFFERED_CHUNKS ?? 25),
-  );
-
-  private sessions: Map<string, CallSession> = new Map();
-  private speechClient: SpeechClient;
   private ttsClient: TextToSpeechClient;
 
+  private sessions: Map<string, CallSession> = new Map();
+
   constructor() {
-    // Inicializar clientes de Google Cloud
+    // Inicializar cliente de Google Cloud TTS
     const config: { projectId?: string; keyFilename?: string } = {};
     if (this.googleCloudProjectId) {
       config.projectId = this.googleCloudProjectId;
@@ -114,9 +129,6 @@ export class StreamsGateway {
       config.keyFilename = this.googleCloudCredentials;
     }
 
-    this.speechClient = new SpeechClient(
-      Object.keys(config).length > 0 ? config : undefined,
-    );
     this.ttsClient = new TextToSpeechClient(
       Object.keys(config).length > 0 ? config : undefined,
     );
@@ -125,8 +137,10 @@ export class StreamsGateway {
   handleConnection(client: WebSocketClient) {
     console.log('🛰️ Twilio WS conectado');
 
-    if (!this.geminiApiKey) {
-      console.error('❌ GEMINI_API_KEY no configurado. Cerrando conexión.');
+    if (!this.deepgramApiKey) {
+      console.error(
+        '❌ DG_API_KEY o DG_VOICE_AGENT_API_KEY no configurado. Cerrando conexión.',
+      );
       client.close();
       return;
     }
@@ -197,7 +211,7 @@ export class StreamsGateway {
     );
     if (customParameters?.greetingUrl) {
       console.warn(
-        `ℹ️ [${callSid}] Se recibió greetingUrl (${customParameters.greetingUrl}) pero Google Cloud TTS requiere procesar el audio primero.`,
+        `ℹ️ [${callSid}] Se recibió greetingUrl (${customParameters.greetingUrl}) pero Deepgram Voice Agent no soporta reproducir URLs externas.`,
       );
     }
 
@@ -228,256 +242,120 @@ export class StreamsGateway {
       pendingGreeting: this.resolveGreeting(customParameters),
       greetingSent: false,
       responseLatencies: [],
-      conversationHistory: [],
+      interceptedResponseText: '',
       agentSpeaking: false,
       interrupted: false,
     };
 
     this.sessions.set(callSid, session);
-    void this.initializeGoogleServices(session);
+    void this.connectToDeepgram(session);
   }
 
-  private initializeGoogleServices(session: CallSession) {
-    try {
-      // Inicializar Gemini
-      this.connectToGemini(session);
+  private connectToDeepgram(session: CallSession) {
+    const ws = new WebSocket(this.deepgramUrl, {
+      headers: {
+        Authorization: `Token ${this.deepgramApiKey}`,
+        'User-Agent': 'llamalo-ai/streams-gateway',
+      },
+    });
 
-      // Inicializar Speech-to-Text
-      this.connectToGoogleSTT(session);
+    session.voiceAgentSocket = ws;
 
-      // Marcar como listo para audio
-      session.readyForAudio = true;
-      console.log(
-        `⚙️ [${session.callSid}] Servicios de Google Cloud inicializados`,
-      );
+    ws.on('open', () => {
+      this.sendSettings(session);
+      this.startKeepAlive(session);
+    });
 
-      // Enviar audio en cola
-      this.flushQueuedAudio(session);
+    ws.on('message', (data, isBinary) =>
+      this.handleDeepgramMessage(session, data, Boolean(isBinary)),
+    );
 
-      // Enviar greeting si existe
-      void this.maybeSendPendingGreeting(session);
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error inicializando servicios de Google Cloud:`,
-        error,
-      );
-    }
-  }
-
-  private connectToGemini(session: CallSession) {
-    try {
-      const genAI = new GoogleGenerativeAI(this.geminiApiKey!);
-      const model = genAI.getGenerativeModel({
-        model: this.geminiModelName,
-        generationConfig: {
-          temperature: this.geminiTemperature,
-        },
-      });
-
-      session.geminiClient = genAI;
-      session.geminiModel = model;
-
-      // Inicializar conversación con instrucciones del agente
-      const systemInstruction = {
-        role: 'user' as const,
-        parts: [{ text: session.instructions }],
-      };
-      session.conversationHistory = [systemInstruction];
-
-      console.log(`✅ [${session.callSid}] Cliente Gemini inicializado`);
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error conectando a Gemini:`,
-        error,
-      );
-      throw error;
-    }
-  }
-
-  private connectToGoogleSTT(session: CallSession) {
-    try {
-      const request = {
-        config: {
-          encoding: 'MULAW' as const,
-          sampleRateHertz: 8000,
-          languageCode: 'es-ES',
-          enableAutomaticPunctuation: true,
-          model: 'latest_long',
-          useEnhanced: true,
-        },
-        interimResults: true,
-        singleUtterance: false,
-      };
-
-      const recognizeStream = this.speechClient
-        .streamingRecognize(request)
-        .on('error', (error) => {
-          console.error(
-            `❌ [${session.callSid}] Error en Speech-to-Text:`,
-            error,
-          );
-        })
-        .on('data', (data) => {
-          void this.handleSTTResult(session, data);
-        });
-
-      session.sttClient = this.speechClient;
-      session.sttStream = recognizeStream;
-
-      console.log(`✅ [${session.callSid}] Speech-to-Text streaming iniciado`);
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error conectando a Speech-to-Text:`,
-        error,
-      );
-      throw error;
-    }
-  }
-
-  private async handleSTTResult(session: CallSession, data: any) {
-    if (!data.results || data.results.length === 0) return;
-
-    const result = data.results[0];
-    const transcript = result.alternatives[0]?.transcript;
-
-    if (!transcript) return;
-
-    // Verificar si es resultado final (isFinalTranscript puede no existir, usar stability)
-    const isFinal = result.isFinalTranscript || result.stability > 0.9;
-
-    // Solo procesar resultados finales (no interim)
-    if (isFinal) {
-      console.log(`👤 [${session.callSid}] Usuario dijo: "${transcript}"`);
-
-      // Si el agente está hablando, interrumpir inmediatamente
-      if (session.agentSpeaking) {
-        console.log(`🛑 [${session.callSid}] Usuario interrumpió al agente`);
-        session.interrupted = true;
-        session.agentSpeaking = false;
-      }
-
-      // Añadir mensaje del usuario al historial
-      session.conversationHistory.push({
-        role: 'user',
-        parts: [{ text: transcript }],
-      });
-
-      // Procesar con Gemini (esto se ejecutará incluso si hubo interrupción)
-      session.userSpeakingStartTime = Date.now();
-      await this.processWithGemini(session);
-    }
-  }
-
-  private async processWithGemini(session: CallSession) {
-    try {
-      if (!session.geminiModel) {
-        console.error(`❌ [${session.callSid}] Modelo Gemini no inicializado`);
-        return;
-      }
-
-      // Preparar historial de conversación para Gemini
-      const chat = session.geminiModel.startChat({
-        history: session.conversationHistory.slice(0, -1), // Todos excepto el último mensaje
-        generationConfig: {
-          temperature: this.geminiTemperature,
-        },
-      });
-
-      // Obtener el último mensaje del usuario
-      const lastUserMessage =
-        session.conversationHistory[session.conversationHistory.length - 1];
-
-      // Generar respuesta con streaming
-      const result = await chat.sendMessageStream(
-        lastUserMessage.parts[0].text,
-      );
-      let fullResponse = '';
-
-      session.agentSpeaking = true;
-      session.interrupted = false;
-
-      // Procesar respuesta en streaming
-      for await (const chunk of result.stream) {
-        if (session.interrupted) {
-          break;
-        }
-
-        const chunkText = chunk.text();
-        if (chunkText && typeof chunkText === 'string') {
-          fullResponse += chunkText;
-          // Convertir a audio en tiempo real
-          await this.streamTTSChunk(session, chunkText);
-        }
-      }
-
-      if (!session.interrupted && fullResponse) {
-        // Añadir respuesta del agente al historial
-        session.conversationHistory.push({
-          role: 'model',
-          parts: [{ text: fullResponse }],
-        });
-
-        // Calcular latencia
-        if (session.userSpeakingStartTime) {
-          const latency = Date.now() - session.userSpeakingStartTime;
-          session.responseLatencies.push(latency);
-          const avgLatency =
-            session.responseLatencies.reduce((a, b) => a + b, 0) /
-            session.responseLatencies.length;
-          console.log(
-            `🗣️ [${session.callSid}] Agente respondió (latencia: ${latency}ms, promedio: ${Math.round(avgLatency)}ms)`,
-          );
-          session.userSpeakingStartTime = undefined;
-        }
-
-        console.log(`✅ [${session.callSid}] Agente terminó de hablar`);
-      }
-
-      session.agentSpeaking = false;
-      session.interrupted = false;
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error procesando con Gemini:`,
-        error,
-      );
-      session.agentSpeaking = false;
-    }
-  }
-
-  private async streamTTSChunk(session: CallSession, text: string) {
-    if (session.interrupted || !text.trim()) return;
-
-    try {
-      if (!session.ttsClient) {
-        session.ttsClient = this.ttsClient;
-      }
-
-      const request = {
-        input: { text },
-        voice: {
-          languageCode: 'es-ES',
-          name: this.ttsVoiceName,
-          ssmlGender: 'NEUTRAL' as const,
-        },
-        audioConfig: {
-          audioEncoding: 'MULAW' as const,
-          sampleRateHertz: 8000,
-        },
-      };
-
-      const [response] = await session.ttsClient.synthesizeSpeech(request);
-      if (response.audioContent) {
-        const audioBuffer = Buffer.from(response.audioContent);
-        this.relayAudioToTwilio(session, audioBuffer);
-      }
-    } catch (error) {
-      if (!session.interrupted) {
-        console.error(
-          `❌ [${session.callSid}] Error en Text-to-Speech:`,
-          error,
+    ws.on('close', (code) => {
+      if (code !== 1000 && code !== 1001) {
+        console.log(
+          `🔌 [${session.callSid}] Conexión Deepgram cerrada (${code})`,
         );
       }
+      session.readyForAudio = false;
+      this.stopKeepAlive(session);
+    });
+
+    ws.on('error', (error) => {
+      console.error(`❌ [${session.callSid}] Error en Deepgram WS:`, error);
+    });
+  }
+
+  private sendSettings(session: CallSession) {
+    const agent: Record<string, unknown> = {
+      language: this.deepgramLanguage,
+      listen: {
+        provider: {
+          type: this.deepgramListenProvider,
+          model: this.deepgramListenModel,
+          language: this.deepgramLanguage,
+          smart_format: true,
+        },
+      },
+      // Mantener speak configurado pero ignoraremos el audio TTS que Deepgram envía
+      speak: {
+        provider: {
+          type: this.deepgramSpeakProvider,
+          model: this.deepgramSpeakModel,
+        },
+      },
+    };
+
+    const contextMessages =
+      session.instructions?.trim().length > 0
+        ? [
+            {
+              type: 'History',
+              role: 'assistant',
+              content: session.instructions,
+            },
+          ]
+        : [];
+    if (contextMessages.length) {
+      agent.context = { messages: contextMessages };
     }
+
+    const thinkConfig = this.buildThinkConfig();
+    if (thinkConfig) {
+      agent.think = {
+        ...thinkConfig,
+        prompt: session.instructions,
+      };
+    }
+
+    const payload = {
+      type: 'Settings',
+      audio: {
+        input: { encoding: 'mulaw', sample_rate: 8000 },
+        output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' },
+      },
+      agent,
+    };
+
+    this.sendJsonToDeepgram(session, payload);
+  }
+
+  private buildThinkConfig():
+    | {
+        provider: { type: string; model: string; [key: string]: unknown };
+        temperature?: number;
+      }
+    | undefined {
+    if (!this.thinkProvider || !this.thinkModel) {
+      return undefined;
+    }
+
+    return {
+      provider: {
+        type: this.thinkProvider,
+        model: this.thinkModel,
+      },
+      temperature: this.thinkTemperature,
+    };
   }
 
   private resolveInstructions(
@@ -529,19 +407,20 @@ export class StreamsGateway {
       return;
     }
 
-    this.sendAudioChunkToSTT(session, chunk);
+    this.sendAudioChunkToDeepgram(session, chunk);
   }
 
-  private sendAudioChunkToSTT(session: CallSession, chunk: Buffer) {
-    if (!session.sttStream) {
+  private sendAudioChunkToDeepgram(session: CallSession, chunk: Buffer) {
+    const socket = session.voiceAgentSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
       return;
     }
 
     try {
-      session.sttStream.write({ audioContent: chunk });
+      socket.send(chunk, { binary: true });
     } catch (error) {
       console.error(
-        `❌ [${session.callSid}] Error enviando audio a Speech-to-Text:`,
+        `❌ [${session.callSid}] Error enviando audio a Deepgram:`,
         error,
       );
     }
@@ -551,7 +430,7 @@ export class StreamsGateway {
     if (!session.queuedAudio.length) return;
     const buffered = [...session.queuedAudio];
     session.queuedAudio.length = 0;
-    buffered.forEach((chunk) => this.sendAudioChunkToSTT(session, chunk));
+    buffered.forEach((chunk) => this.sendAudioChunkToDeepgram(session, chunk));
   }
 
   private relayAudioToTwilio(session: CallSession, chunk: Buffer) {
@@ -583,18 +462,240 @@ export class StreamsGateway {
     }
   }
 
-  private async maybeSendPendingGreeting(session: CallSession) {
+  private handleDeepgramMessage(
+    session: CallSession,
+    data: RawData,
+    isBinary: boolean,
+  ) {
+    if (isBinary) {
+      // Ignorar audio TTS binario de Deepgram - usaremos Google Cloud TTS en su lugar
+      // No reenviar este audio a Twilio
+      return;
+    }
+
+    this.handleDeepgramJsonMessage(session, this.rawDataToString(data));
+  }
+
+  private handleDeepgramJsonMessage(session: CallSession, raw: string) {
+    try {
+      const message = JSON.parse(raw) as DeepgramJsonEvent;
+      const type = message.type;
+
+      if (!type) {
+        console.warn(`⚠️ [${session.callSid}] Evento sin tipo`, message);
+        return;
+      }
+
+      switch (type) {
+        case 'Welcome':
+          session.deepgramRequestId = this.asText(message.request_id);
+          if (session.deepgramRequestId) {
+            console.log(
+              `🆔 [${session.callSid}] Deepgram Request ID: ${session.deepgramRequestId}`,
+            );
+          }
+          break;
+        case 'SettingsApplied':
+          session.readyForAudio = true;
+          console.log(`⚙️ [${session.callSid}] Deepgram listo`);
+          this.flushQueuedAudio(session);
+          this.maybeSendPendingGreeting(session);
+          break;
+        case 'AgentStartedSpeaking':
+          session.agentSpeaking = true;
+          session.interrupted = false;
+          session.interceptedResponseText = '';
+          if (session.userSpeakingStartTime) {
+            const latency = Date.now() - session.userSpeakingStartTime;
+            session.responseLatencies.push(latency);
+            const avgLatency =
+              session.responseLatencies.reduce((a, b) => a + b, 0) /
+              session.responseLatencies.length;
+            console.log(
+              `🗣️ [${session.callSid}] Agente hablando (latencia: ${latency}ms, promedio: ${Math.round(avgLatency)}ms)`,
+            );
+            session.userSpeakingStartTime = undefined;
+          } else {
+            console.log(`🗣️ [${session.callSid}] Agente hablando`);
+          }
+          break;
+        case 'AgentAudioDone':
+          // El texto ya fue procesado en tiempo real con ConversationText
+          // Solo limpiar el estado
+          session.agentSpeaking = false;
+          session.interrupted = false;
+          session.interceptedResponseText = '';
+          console.log(`✅ [${session.callSid}] Agente terminó de hablar`);
+          break;
+        case 'UserStartedSpeaking':
+          session.userSpeakingStartTime = Date.now();
+          // Si el agente está hablando, interrumpir
+          if (session.agentSpeaking) {
+            console.log(`🛑 [${session.callSid}] Usuario interrumpió al agente`);
+            session.interrupted = true;
+            session.agentSpeaking = false;
+          }
+          break;
+        case 'AgentThinking':
+          // Silenciar este evento para reducir ruido
+          break;
+        case 'ConversationText': {
+          // Interceptar el texto de la conversación
+          const text = this.extractTextFromConversationText(message);
+          if (text && session.agentSpeaking) {
+            // Acumular texto de respuesta del agente
+            session.interceptedResponseText += text;
+            // Generar TTS en tiempo real para cada fragmento
+            void this.streamTTSFromText(session, text);
+          }
+          break;
+        }
+        case 'Warning': {
+          const warnCode = this.asText(message.code);
+          const warnDesc = this.asText(message.description);
+          console.warn(
+            `⚠️ [${session.callSid}] Deepgram warning: ${warnCode} ${warnDesc}`.trim(),
+          );
+          break;
+        }
+        case 'Error': {
+          const errCode = this.asText(message.code);
+          const errDesc = this.asText(message.description);
+          console.error(
+            `❌ [${session.callSid}] Deepgram error: ${errCode} ${errDesc}`.trim(),
+          );
+          break;
+        }
+        case 'FunctionCallRequest':
+          console.warn(
+            `⚠️ [${session.callSid}] FunctionCallRequest no soportado`,
+          );
+          break;
+        case 'History':
+          // Silenciar este evento
+          break;
+        default:
+          // Loggear eventos desconocidos para debugging
+          if (type !== 'ConversationText' && type !== 'History') {
+            console.log(
+              `ℹ️ [${session.callSid}] Evento Deepgram no manejado (${type})`,
+            );
+          }
+      }
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error interpretando mensaje Deepgram:`,
+        error,
+      );
+    }
+  }
+
+  private extractTextFromConversationText(message: DeepgramJsonEvent): string {
+    // Intentar extraer texto de diferentes campos posibles
+    if (message.text && typeof message.text === 'string') {
+      return message.text;
+    }
+    if (message.content && typeof message.content === 'string') {
+      return message.content;
+    }
+    if (message.message && typeof message.message === 'string') {
+      return message.message;
+    }
+    // Si es un array de mensajes, extraer texto de cada uno
+    if (Array.isArray(message.messages)) {
+      return message.messages
+        .map((msg: unknown) => {
+          if (typeof msg === 'object' && msg !== null) {
+            const msgObj = msg as Record<string, unknown>;
+            return (
+              (msgObj.text as string) ||
+              (msgObj.content as string) ||
+              (msgObj.message as string) ||
+              ''
+            );
+          }
+          return '';
+        })
+        .join(' ');
+    }
+    return '';
+  }
+
+  private async streamTTSFromText(session: CallSession, text: string) {
+    if (session.interrupted || !text.trim()) return;
+
+    try {
+      if (!session.ttsClient) {
+        session.ttsClient = this.ttsClient;
+      }
+
+      const request = {
+        input: { text: text.trim() },
+        voice: {
+          languageCode: 'es-ES',
+          name: this.ttsVoiceName,
+          ssmlGender: 'NEUTRAL' as const,
+        },
+        audioConfig: {
+          audioEncoding: 'MULAW' as const,
+          sampleRateHertz: 8000,
+        },
+      };
+
+      const [response] = await session.ttsClient.synthesizeSpeech(request);
+      if (response.audioContent && !session.interrupted) {
+        const audioBuffer = Buffer.from(response.audioContent);
+        this.relayAudioToTwilio(session, audioBuffer);
+      }
+    } catch (error) {
+      if (!session.interrupted) {
+        console.error(
+          `❌ [${session.callSid}] Error en Text-to-Speech:`,
+          error,
+        );
+      }
+    }
+  }
+
+  private maybeSendPendingGreeting(session: CallSession) {
     if (!session.pendingGreeting || session.greetingSent) {
       return;
     }
 
-    console.log(
-      `👋 [${session.callSid}] Enviando greeting: "${session.pendingGreeting.substring(0, 50)}..."`,
-    );
-
-    // Enviar greeting como primer mensaje del agente
-    await this.streamTTSChunk(session, session.pendingGreeting);
+    // Enviar greeting usando Google Cloud TTS
+    void this.streamTTSFromText(session, session.pendingGreeting);
     session.greetingSent = true;
+  }
+
+  private sendJsonToDeepgram(session: CallSession, payload: unknown) {
+    const socket = session.voiceAgentSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      socket.send(JSON.stringify(payload));
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando mensaje a Deepgram:`,
+        error,
+      );
+    }
+  }
+
+  private startKeepAlive(session: CallSession) {
+    if (this.keepAliveIntervalMs <= 0) return;
+    this.stopKeepAlive(session);
+    session.keepAliveTimer = setInterval(() => {
+      this.sendJsonToDeepgram(session, { type: 'KeepAlive' });
+    }, this.keepAliveIntervalMs);
+  }
+
+  private stopKeepAlive(session: CallSession) {
+    if (session.keepAliveTimer) {
+      clearInterval(session.keepAliveTimer);
+      session.keepAliveTimer = undefined;
+    }
   }
 
   private extractCustomParameters(
@@ -616,13 +717,13 @@ export class StreamsGateway {
 
     console.log(`🧹 [${callSid}] Limpiando sesión`);
 
-    // Cerrar stream de Speech-to-Text
-    if (session.sttStream) {
-      try {
-        session.sttStream.end();
-      } catch {
-        // Ignorar errores al cerrar
-      }
+    this.stopKeepAlive(session);
+
+    if (
+      session.voiceAgentSocket &&
+      session.voiceAgentSocket.readyState === WebSocket.OPEN
+    ) {
+      session.voiceAgentSocket.close();
     }
 
     this.sessions.delete(callSid);
