@@ -543,9 +543,34 @@ export class StreamsGateway {
           // Interceptar el texto de la conversación
           const text = this.extractTextFromConversationText(message);
           if (text && session.agentSpeaking) {
-            // Acumular texto de respuesta del agente
+            // Verificar que el texto sea del agente, no del usuario
+            const role = this.extractRoleFromConversationText(message);
+            if (role === 'assistant' || role === 'agent' || !role) {
+              // Acumular texto de respuesta del agente
+              session.interceptedResponseText += text;
+              // Generar TTS en tiempo real para cada fragmento
+              console.log(
+                `📝 [${session.callSid}] Texto interceptado del agente: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+              );
+              void this.streamTTSFromText(session, text);
+            } else if (role === 'user') {
+              // Ignorar texto del usuario en ConversationText
+              console.log(
+                `👤 [${session.callSid}] Texto del usuario en ConversationText (ignorado)`,
+              );
+            }
+          }
+          break;
+        }
+        case 'Response':
+        case 'AgentResponse': {
+          // Intentar interceptar texto de eventos Response/AgentResponse si existen
+          const text = this.extractTextFromResponse(message);
+          if (text && session.agentSpeaking) {
             session.interceptedResponseText += text;
-            // Generar TTS en tiempo real para cada fragmento
+            console.log(
+              `📝 [${session.callSid}] Texto interceptado de ${type}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+            );
             void this.streamTTSFromText(session, text);
           }
           break;
@@ -618,11 +643,71 @@ export class StreamsGateway {
         })
         .join(' ');
     }
+    // Intentar extraer de objetos anidados
+    if (message.data && typeof message.data === 'object') {
+      const data = message.data as Record<string, unknown>;
+      if (data.text && typeof data.text === 'string') {
+        return data.text;
+      }
+      if (data.content && typeof data.content === 'string') {
+        return data.content;
+      }
+    }
+    return '';
+  }
+
+  private extractRoleFromConversationText(message: DeepgramJsonEvent): string | null {
+    // Intentar extraer el rol del mensaje para filtrar solo respuestas del agente
+    if (message.role && typeof message.role === 'string') {
+      return message.role.toLowerCase();
+    }
+    if (message.speaker && typeof message.speaker === 'string') {
+      return message.speaker.toLowerCase();
+    }
+    if (message.data && typeof message.data === 'object') {
+      const data = message.data as Record<string, unknown>;
+      if (data.role && typeof data.role === 'string') {
+        return data.role.toLowerCase();
+      }
+    }
+    return null;
+  }
+
+  private extractTextFromResponse(message: DeepgramJsonEvent): string {
+    // Extraer texto de eventos Response/AgentResponse
+    if (message.text && typeof message.text === 'string') {
+      return message.text;
+    }
+    if (message.content && typeof message.content === 'string') {
+      return message.content;
+    }
+    if (message.response && typeof message.response === 'string') {
+      return message.response;
+    }
+    if (message.data && typeof message.data === 'object') {
+      const data = message.data as Record<string, unknown>;
+      if (data.text && typeof data.text === 'string') {
+        return data.text;
+      }
+      if (data.content && typeof data.content === 'string') {
+        return data.content;
+      }
+    }
     return '';
   }
 
   private async streamTTSFromText(session: CallSession, text: string) {
     if (session.interrupted || !text.trim()) return;
+
+    // Evitar procesar si ya hay una solicitud TTS en curso para el mismo texto
+    if (session.currentTTSRequest) {
+      // Esperar a que termine la solicitud anterior antes de procesar nueva
+      try {
+        await session.currentTTSRequest;
+      } catch {
+        // Ignorar errores de la solicitud anterior
+      }
+    }
 
     try {
       if (!session.ttsClient) {
@@ -642,12 +727,18 @@ export class StreamsGateway {
         },
       };
 
-      const [response] = await session.ttsClient.synthesizeSpeech(request);
+      const ttsPromise = session.ttsClient.synthesizeSpeech(request);
+      session.currentTTSRequest = ttsPromise.then(() => {
+        session.currentTTSRequest = undefined;
+      });
+
+      const [response] = await ttsPromise;
       if (response.audioContent && !session.interrupted) {
         const audioBuffer = Buffer.from(response.audioContent);
         this.relayAudioToTwilio(session, audioBuffer);
       }
     } catch (error) {
+      session.currentTTSRequest = undefined;
       if (!session.interrupted) {
         console.error(
           `❌ [${session.callSid}] Error en Text-to-Speech:`,
