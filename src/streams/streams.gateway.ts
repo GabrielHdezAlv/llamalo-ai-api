@@ -553,12 +553,31 @@ export class StreamsGateway {
           // Silenciar este evento para reducir ruido
           break;
         case 'ConversationText': {
+          // Loggear TODOS los eventos ConversationText para debugging
+          console.log(
+            `🔍 [${session.callSid}] ConversationText recibido (agentSpeaking: ${session.agentSpeaking}):`,
+            JSON.stringify(message).substring(0, 500),
+          );
+
           // Interceptar el texto de la conversación
           const text = this.extractTextFromConversationText(message);
-          if (text && session.agentSpeaking) {
-            // Verificar que el texto sea del agente, no del usuario
-            const role = this.extractRoleFromConversationText(message);
+          const role = this.extractRoleFromConversationText(message);
+
+          console.log(
+            `🔍 [${session.callSid}] Texto extraído: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}", Rol: ${role || 'null'}`,
+          );
+
+          if (text) {
+            // Procesar incluso si agentSpeaking es false (podría ser el greeting)
             if (role === 'assistant' || role === 'agent' || !role) {
+              if (!session.agentSpeaking) {
+                // Si no está hablando pero hay texto del agente, podría ser el greeting
+                console.log(
+                  `📝 [${session.callSid}] Texto del agente recibido antes de AgentStartedSpeaking (probablemente greeting)`,
+                );
+                session.agentSpeaking = true; // Marcar como hablando para procesar
+              }
+
               // Acumular texto de respuesta del agente
               session.interceptedResponseText += text;
               // Generar TTS en tiempo real para cada fragmento
@@ -572,6 +591,10 @@ export class StreamsGateway {
                 `👤 [${session.callSid}] Texto del usuario en ConversationText (ignorado)`,
               );
             }
+          } else {
+            console.warn(
+              `⚠️ [${session.callSid}] ConversationText sin texto extraíble`,
+            );
           }
           break;
         }
@@ -613,12 +636,11 @@ export class StreamsGateway {
           // Silenciar este evento
           break;
         default:
-          // Loggear eventos desconocidos para debugging
-          if (type !== 'ConversationText' && type !== 'History') {
-            console.log(
-              `ℹ️ [${session.callSid}] Evento Deepgram no manejado (${type})`,
-            );
-          }
+          // Loggear TODOS los eventos para debugging
+          console.log(
+            `🔍 [${session.callSid}] Evento Deepgram recibido: ${type}`,
+            JSON.stringify(message).substring(0, 500),
+          );
       }
     } catch (error) {
       console.error(
