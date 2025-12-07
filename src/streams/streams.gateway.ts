@@ -729,12 +729,32 @@ export class StreamsGateway {
         session.ttsClient = this.ttsClient;
       }
 
+      // Determinar género basándose en el nombre de la voz
+      // Para Neural2: -D y -F son femeninas; para Standard: -A, -C son femeninas; -B, -D son masculinas
+      const voiceName = this.ttsVoiceName.toLowerCase();
+      let ssmlGender: 'MALE' | 'FEMALE' = 'FEMALE'; // Por defecto femenino
+
+      if (voiceName.includes('neural2')) {
+        // Neural2: -D y -F son femeninas
+        ssmlGender = 'FEMALE';
+      } else if (voiceName.includes('standard')) {
+        // Standard: -A, -C son femeninas; -B, -D son masculinas
+        if (voiceName.endsWith('-b') || voiceName.endsWith('-d')) {
+          ssmlGender = 'MALE';
+        } else {
+          ssmlGender = 'FEMALE';
+        }
+      } else {
+        // Para otras voces, usar FEMALE como predeterminado
+        ssmlGender = 'FEMALE';
+      }
+
       const request = {
         input: { text: text.trim() },
         voice: {
           languageCode: 'es-ES',
           name: this.ttsVoiceName,
-          ssmlGender: 'NEUTRAL' as const,
+          ssmlGender: ssmlGender,
         },
         audioConfig: {
           audioEncoding: 'MULAW' as const,
