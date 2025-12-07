@@ -132,6 +132,17 @@ export class StreamsGateway {
     this.ttsClient = new TextToSpeechClient(
       Object.keys(config).length > 0 ? config : undefined,
     );
+
+    // Log de confirmación de inicialización
+    if (this.googleCloudCredentials) {
+      console.log(
+        `✅ Google Cloud Text-to-Speech inicializado (Project: ${this.googleCloudProjectId || 'default'}, Voice: ${this.ttsVoiceName})`,
+      );
+    } else {
+      console.warn(
+        '⚠️ GOOGLE_APPLICATION_CREDENTIALS no configurado. Google Cloud TTS usará Application Default Credentials.',
+      );
+    }
   }
 
   handleConnection(client: WebSocketClient) {
@@ -531,7 +542,9 @@ export class StreamsGateway {
           session.userSpeakingStartTime = Date.now();
           // Si el agente está hablando, interrumpir
           if (session.agentSpeaking) {
-            console.log(`🛑 [${session.callSid}] Usuario interrumpió al agente`);
+            console.log(
+              `🛑 [${session.callSid}] Usuario interrumpió al agente`,
+            );
             session.interrupted = true;
             session.agentSpeaking = false;
           }
@@ -656,7 +669,9 @@ export class StreamsGateway {
     return '';
   }
 
-  private extractRoleFromConversationText(message: DeepgramJsonEvent): string | null {
+  private extractRoleFromConversationText(
+    message: DeepgramJsonEvent,
+  ): string | null {
     // Intentar extraer el rol del mensaje para filtrar solo respuestas del agente
     if (message.role && typeof message.role === 'string') {
       return message.role.toLowerCase();
