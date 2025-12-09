@@ -676,6 +676,9 @@ export class StreamsGateway {
   private relayAudioToTwilio(session: CallSession, chunk: Buffer) {
     // Si hay una interrupción activa, no reenviar audio
     if (session.interrupted) {
+      console.log(
+        `⏸️ [${session.callSid}] Audio bloqueado por interrupción (chunk size: ${chunk.length})`,
+      );
       return;
     }
 
@@ -804,6 +807,17 @@ export class StreamsGateway {
                   `📝 [${session.callSid}] Texto del agente recibido antes de AgentStartedSpeaking (probablemente greeting)`,
                 );
                 session.agentSpeaking = true; // Marcar como hablando para procesar
+                // IMPORTANTE: Resetear interrupted cuando el agente empieza a hablar
+                session.interrupted = false;
+              } else {
+                // Si ya está hablando, resetear interrupted si estaba interrumpido
+                // (puede pasar si el usuario interrumpió pero el agente continúa)
+                if (session.interrupted) {
+                  console.log(
+                    `🔄 [${session.callSid}] Reseteando interrupted=false porque el agente continúa hablando`,
+                  );
+                  session.interrupted = false;
+                }
               }
 
               // Acumular texto de respuesta del agente
