@@ -999,6 +999,7 @@ export class StreamsGateway {
       `🎵 [${session.callSid}] Iniciando TTS para texto: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
     );
 
+    console.log(`🔄 [${session.callSid}] Llamando a streamElevenLabsTTS...`);
     session.currentTTSRequest = this.streamElevenLabsTTS(session, text)
       .then(() => {
         console.log(
@@ -1011,18 +1012,32 @@ export class StreamsGateway {
             `❌ [${session.callSid}] Error en TTS para texto:`,
             error,
           );
+          if (error instanceof Error) {
+            console.error(`❌ [${session.callSid}] Error stack:`, error.stack);
+          }
+        } else {
+          console.log(`⏸️ [${session.callSid}] TTS cancelado por interrupción`);
         }
       })
       .finally(() => {
+        console.log(`🏁 [${session.callSid}] Finalizando TTS request`);
         session.currentTTSRequest = undefined;
       });
+    console.log(
+      `⏳ [${session.callSid}] Esperando a que termine el TTS request...`,
+    );
     await session.currentTTSRequest;
+    console.log(`✅ [${session.callSid}] TTS request terminado`);
   }
 
   private async streamElevenLabsTTS(
     session: CallSession,
     text: string,
   ): Promise<void> {
+    console.log(
+      `🚀 [${session.callSid}] streamElevenLabsTTS llamado con texto: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+    );
+
     if (!this.elevenLabsApiKey) {
       console.error('❌ ELEVENLABS_API_KEY no configurado para TTS.');
       return;
@@ -1031,10 +1046,17 @@ export class StreamsGateway {
     const voiceId = this.elevenLabsTtsVoiceId;
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream`;
 
+    console.log(
+      `🔗 [${session.callSid}] URL ElevenLabs: ${url}, voiceId: ${voiceId}`,
+    );
+
     try {
       session.agentSpeaking = true;
       console.log(
         `🔊 [${session.callSid}] Iniciando TTS ElevenLabs (${text.length} chars, voice=${voiceId})`,
+      );
+      console.log(
+        `📤 [${session.callSid}] Enviando petición POST a ElevenLabs...`,
       );
       const response = await axios.post(
         url,
@@ -1060,11 +1082,25 @@ export class StreamsGateway {
         },
       );
 
+      console.log(
+        `✅ [${session.callSid}] Respuesta recibida de ElevenLabs, status: ${response.status}`,
+      );
+      console.log(
+        `📡 [${session.callSid}] Headers de respuesta:`,
+        JSON.stringify(response.headers).substring(0, 300),
+      );
+
       const audioStream = response.data as Readable;
 
+      if (!audioStream) {
+        console.error(
+          `❌ [${session.callSid}] audioStream es null o undefined`,
+        );
+        throw new Error('audioStream es null o undefined');
+      }
+
       console.log(
-        `📡 [${session.callSid}] Stream ElevenLabs creado, status: ${response.status}, headers:`,
-        JSON.stringify(response.headers).substring(0, 200),
+        `📡 [${session.callSid}] Stream ElevenLabs creado correctamente`,
       );
 
       const cancel = () => {
