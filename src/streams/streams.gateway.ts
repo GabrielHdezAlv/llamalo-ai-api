@@ -417,6 +417,9 @@ export class StreamsGateway {
   private async handleFinalTranscript(session: CallSession, text: string) {
     session.userSpeakingStartTime = undefined;
     session.history.push({ role: 'user', content: text });
+    console.log(
+      `🧾 [${session.callSid}] Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
+    );
     try {
       const completion = await this.openai.chat.completions.create({
         model: this.llmModel,
@@ -992,6 +995,10 @@ export class StreamsGateway {
 
     try {
       session.agentSpeaking = true;
+      const started = Date.now();
+      console.log(
+        `🔊 [${session.callSid}] Iniciando TTS ElevenLabs (${text.length} chars, voice=${voiceId})`,
+      );
       const response = await axios.post(
         url,
         {
@@ -1056,6 +1063,9 @@ export class StreamsGateway {
     } finally {
       if (!session.interrupted) {
         session.agentSpeaking = false;
+        console.log(
+          `✅ [${session.callSid}] TTS ElevenLabs completado en ${Date.now() - (session.userSpeakingStartTime || Date.now())}ms`,
+        );
       }
     }
   }
