@@ -1062,6 +1062,11 @@ export class StreamsGateway {
 
       const audioStream = response.data as Readable;
 
+      console.log(
+        `📡 [${session.callSid}] Stream ElevenLabs creado, status: ${response.status}, headers:`,
+        JSON.stringify(response.headers).substring(0, 200),
+      );
+
       const cancel = () => {
         session.agentSpeaking = false;
         audioStream.destroy();
@@ -1069,39 +1074,64 @@ export class StreamsGateway {
       session.ttsCancelStream = cancel;
 
       await new Promise<void>((resolve, reject) => {
+        // Timeout de seguridad (30 segundos)
+        const timeout = setTimeout(() => {
+          console.error(
+            `⏱️ [${session.callSid}] Timeout esperando stream ElevenLabs TTS`,
+          );
+          cancel();
+          reject(new Error('Timeout esperando stream ElevenLabs TTS'));
+        }, 30000);
         let chunksReceived = 0;
+        let totalBytes = 0;
+
         audioStream.on('data', (chunk: Buffer) => {
           if (session.interrupted) {
             console.log(
               `🛑 [${session.callSid}] TTS interrumpido, cancelando stream`,
             );
+            clearTimeout(timeout);
             cancel();
             return;
           }
           chunksReceived++;
+          totalBytes += chunk.length;
+          if (chunksReceived === 1 || chunksReceived % 10 === 0) {
+            console.log(
+              `📦 [${session.callSid}] Chunk ${chunksReceived} recibido (${chunk.length} bytes, total: ${totalBytes} bytes)`,
+            );
+          }
           this.relayAudioToTwilio(session, Buffer.from(chunk));
         });
         audioStream.on('end', () => {
+          clearTimeout(timeout);
           session.ttsCancelStream = undefined;
           console.log(
-            `✅ [${session.callSid}] Stream ElevenLabs TTS terminado (${chunksReceived} chunks)`,
+            `✅ [${session.callSid}] Stream ElevenLabs TTS terminado (${chunksReceived} chunks, ${totalBytes} bytes totales)`,
           );
           resolve();
         });
         audioStream.on('close', () => {
+          clearTimeout(timeout);
           session.ttsCancelStream = undefined;
           console.log(
-            `✅ [${session.callSid}] Stream ElevenLabs TTS cerrado (${chunksReceived} chunks)`,
+            `✅ [${session.callSid}] Stream ElevenLabs TTS cerrado (${chunksReceived} chunks, ${totalBytes} bytes totales)`,
           );
           resolve();
         });
         audioStream.on('error', (err) => {
+          clearTimeout(timeout);
           session.ttsCancelStream = undefined;
           console.error(
             `❌ [${session.callSid}] Error en stream ElevenLabs TTS:`,
             err,
           );
           reject(err);
+        });
+
+        // Log cuando el stream está listo
+        audioStream.on('readable', () => {
+          console.log(`📖 [${session.callSid}] Stream ElevenLabs readable`);
         });
       });
     } catch (error) {
@@ -1111,6 +1141,21 @@ export class StreamsGateway {
           `❌ [${session.callSid}] Error en ElevenLabs TTS:`,
           error,
         );
+        if (error instanceof Error) {
+          console.error(
+            `❌ [${session.callSid}] Error details: ${error.message}`,
+          );
+          if ('response' in error) {
+            const axiosError = error as any;
+            console.error(
+              `❌ [${session.callSid}] Response status: ${axiosError.response?.status}`,
+            );
+            console.error(
+              `❌ [${session.callSid}] Response data:`,
+              JSON.stringify(axiosError.response?.data).substring(0, 500),
+            );
+          }
+        }
       }
     } finally {
       if (!session.interrupted) {
