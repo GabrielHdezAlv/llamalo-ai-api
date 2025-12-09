@@ -1,5 +1,47 @@
 # Configuración de API Keys
 
+## ElevenLabs (STT/TTS) + OpenAI (LLM) — Inbound voz
+
+### Variables de entorno principales
+
+```env
+# Selección de proveedor
+STT_PROVIDER=elevenlabs
+TTS_PROVIDER=elevenlabs
+
+# ElevenLabs
+ELEVENLABS_API_KEY=tu_api_key
+ELEVENLABS_STT_URL=wss://api.elevenlabs.io/v1/speech-to-text/stream  # Realtime Scribe v2
+ELEVENLABS_STT_MODEL=scribe_v2
+ELEVENLABS_LANGUAGE=es
+ELEVENLABS_TTS_VOICE_ID=tu_voice_id
+ELEVENLABS_TTS_MODEL_ID=eleven_multilingual_v2
+ELEVENLABS_TTS_STABILITY=0.5
+ELEVENLABS_TTS_STYLE=0
+ELEVENLABS_TTS_SIMILARITY=0.75
+ELEVENLABS_TTS_SPEAKER_BOOST=true
+ELEVENLABS_TTS_VOICE_SPEED=1.0
+
+# LLM
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.4
+OPENAI_MAX_TOKENS=200
+
+# Twilio Media Streams
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+```
+
+### Notas de uso
+
+- Audio esperado: Twilio Media Streams (mulaw, 8 kHz) enviado vía WebSocket al STT de ElevenLabs.
+- TTS: se solicita en `ulaw_8000` para reproducir directamente en Twilio.
+- Ajusta `ELEVENLABS_TTS_VOICE_SPEED`, `ELEVENLABS_TTS_STABILITY` y `ELEVENLABS_TTS_SIMILARITY` según el tono deseado.
+- Si necesitas fallback a otros STT/TTS, cambia `STT_PROVIDER`/`TTS_PROVIDER`.
+
+---
+
 ## Google Cloud y Gemini AI
 
 ### Variables de Entorno Requeridas
@@ -95,11 +137,10 @@ Fish Audio **no tiene un sistema de permisos por API key**. Todas las API keys t
 
 Los límites dependen de tu **plan de suscripción**:
 
-- **Plan Gratuito**: 
+- **Plan Gratuito**:
   - Límites diarios de uso
   - Puede tener restricciones en conexiones WebSocket simultáneas
-  
-- **Plan de Pago**: 
+- **Plan de Pago**:
   - Mayor cuota de uso
   - Más conexiones WebSocket simultáneas
   - Menor latencia
@@ -127,24 +168,30 @@ Si la API key es válida, recibirás datos de audio en la respuesta.
 Si sigues recibiendo error 403 en conexiones WebSocket:
 
 #### A. Plan Gratuito con Restricciones
+
 Fish Audio puede restringir conexiones WebSocket en tiempo real en planes gratuitos.
 
 **Solución**:
+
 - Verificar tu plan en: https://fish.audio/pricing
 - Considerar upgrade si necesitas conexiones WebSocket
 - El modo HTTP fallback funciona perfectamente mientras tanto
 
 #### B. Límite de Cuota Alcanzado
+
 Si has usado toda tu cuota diaria/mensual.
 
 **Solución**:
+
 - Verificar uso en: https://fish.audio/console
 - Esperar reset de cuota o upgrade de plan
 
 #### C. Región/IP Bloqueada
+
 Algunas APIs restringen por región o IP.
 
 **Solución**:
+
 - Verificar si tu servidor está en una región soportada
 - Contactar soporte de Fish Audio
 
@@ -291,4 +338,3 @@ Si después de estos cambios sigues teniendo problemas:
 ---
 
 **Nota**: La API key `dac2b5ab1ddb44d9a7d84922262185f9` ya está expuesta en este documento. Considera rotar la key después de solucionar los problemas si te preocupa la seguridad.
-

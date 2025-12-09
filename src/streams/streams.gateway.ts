@@ -1,6 +1,8 @@
 import { WebSocketGateway } from '@nestjs/websockets';
 import WebSocket, { RawData } from 'ws';
-import { TextToSpeechClient } from '@google-cloud/text-to-speech';
+import axios from 'axios';
+import OpenAI from 'openai';
+import { Readable } from 'stream';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -47,11 +49,15 @@ type DeepgramJsonEvent = {
   [key: string]: unknown;
 };
 
+type Role = 'user' | 'assistant';
+type Message = { role: Role; content: string };
+
 interface CallSession {
   callSid: string;
   streamSid?: string;
   client: WebSocketClient;
   voiceAgentSocket?: WebSocket;
+  sttSocket?: WebSocket;
   customParameters?: Record<string, string>;
   instructions: string;
   queuedAudio: Buffer[];
@@ -62,13 +68,14 @@ interface CallSession {
   deepgramRequestId?: string;
   userSpeakingStartTime?: number;
   responseLatencies: number[];
-  // Google Cloud TTS
-  ttsClient?: TextToSpeechClient;
+  // Conversación para el LLM
+  history: Message[];
   // Estado para interceptar texto y generar TTS
   interceptedResponseText: string;
   agentSpeaking: boolean;
   interrupted: boolean;
   currentTTSRequest?: Promise<void>;
+  ttsCancelStream?: () => void;
 }
 
 @WebSocketGateway({
@@ -79,6 +86,40 @@ interface CallSession {
   },
 })
 export class StreamsGateway {
+  // Proveedor STT/TTS
+  private readonly sttProvider = process.env.STT_PROVIDER ?? 'elevenlabs';
+  private readonly ttsProvider = process.env.TTS_PROVIDER ?? 'elevenlabs';
+
+  // ElevenLabs
+  private readonly elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+  private readonly elevenLabsBaseUrl =
+    process.env.ELEVENLABS_BASE_URL ?? 'https://api.elevenlabs.io/v1';
+  private readonly elevenLabsSttUrl =
+    process.env.ELEVENLABS_STT_URL ??
+    'wss://api.elevenlabs.io/v1/speech-to-text/stream';
+  private readonly elevenLabsSttModel =
+    process.env.ELEVENLABS_STT_MODEL ?? 'scribe_v2';
+  private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
+  private readonly elevenLabsTtsVoiceId =
+    process.env.ELEVENLABS_TTS_VOICE_ID ?? 'elevenlabs-default';
+  private readonly elevenLabsTtsModelId =
+    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
+  private readonly elevenLabsTtsStability = Number(
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5,
+  );
+  private readonly elevenLabsTtsStyle = Number(
+    process.env.ELEVENLABS_TTS_STYLE ?? 0,
+  );
+  private readonly elevenLabsTtsSimilarity = Number(
+    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.75,
+  );
+  private readonly elevenLabsTtsSpeakerBoost =
+    (process.env.ELEVENLABS_TTS_SPEAKER_BOOST ?? 'true') === 'true';
+  private readonly elevenLabsTtsVoiceSpeed = Number(
+    process.env.ELEVENLABS_TTS_VOICE_SPEED ?? 1.0,
+  );
+
+  // Deepgram (fallback)
   private readonly deepgramApiKey =
     process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
   private readonly deepgramUrl =
@@ -99,6 +140,15 @@ export class StreamsGateway {
   private readonly thinkTemperature = Number(
     process.env.DG_THINK_TEMPERATURE ?? 0.7,
   );
+
+  // LLM
+  private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+  private readonly llmTemperature = Number(
+    process.env.OPENAI_TEMPERATURE ?? 0.4,
+  );
+  private readonly llmMaxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 200);
+
+  // Configuración general
   private readonly keepAliveIntervalMs = Number(
     process.env.DG_KEEPALIVE_MS ?? 15_000,
   );
@@ -109,49 +159,31 @@ export class StreamsGateway {
   private readonly defaultInstructions =
     process.env.DG_AGENT_PROMPT ||
     'Eres un asistente de voz profesional y resolutivo. Responde siempre en español con frases cortas y claras.';
-  // Google Cloud TTS
-  private readonly googleCloudProjectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
-  private readonly googleCloudCredentials =
-    process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  private readonly ttsVoiceName =
-    process.env.GOOGLE_TTS_VOICE_NAME || 'es-ES-Neural2-D';
-  private ttsClient: TextToSpeechClient;
+
+  private readonly openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
 
   private sessions: Map<string, CallSession> = new Map();
 
   constructor() {
-    // Inicializar cliente de Google Cloud TTS
-    const config: { projectId?: string; keyFilename?: string } = {};
-    if (this.googleCloudProjectId) {
-      config.projectId = this.googleCloudProjectId;
+    if (!this.elevenLabsApiKey) {
+      console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
     }
-    if (this.googleCloudCredentials) {
-      config.keyFilename = this.googleCloudCredentials;
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn('⚠️ OPENAI_API_KEY no configurado en el entorno.');
     }
+  }
 
-    this.ttsClient = new TextToSpeechClient(
-      Object.keys(config).length > 0 ? config : undefined,
-    );
-
-    // Log de confirmación de inicialización
-    if (this.googleCloudCredentials) {
-      console.log(
-        `✅ Google Cloud Text-to-Speech inicializado (Project: ${this.googleCloudProjectId || 'default'}, Voice: ${this.ttsVoiceName})`,
-      );
-    } else {
-      console.warn(
-        '⚠️ GOOGLE_APPLICATION_CREDENTIALS no configurado. Google Cloud TTS usará Application Default Credentials.',
-      );
-    }
+  private usingElevenLabs(): boolean {
+    return this.sttProvider.toLowerCase() === 'elevenlabs';
   }
 
   handleConnection(client: WebSocketClient) {
     console.log('🛰️ Twilio WS conectado');
 
-    if (!this.deepgramApiKey) {
-      console.error(
-        '❌ DG_API_KEY o DG_VOICE_AGENT_API_KEY no configurado. Cerrando conexión.',
-      );
+    if (this.usingElevenLabs() && !this.elevenLabsApiKey) {
+      console.error('❌ ELEVENLABS_API_KEY no configurado. Cerrando conexión.');
       client.close();
       return;
     }
@@ -253,13 +285,172 @@ export class StreamsGateway {
       pendingGreeting: this.resolveGreeting(customParameters),
       greetingSent: false,
       responseLatencies: [],
+      history: [],
       interceptedResponseText: '',
       agentSpeaking: false,
       interrupted: false,
     };
 
     this.sessions.set(callSid, session);
-    void this.connectToDeepgram(session);
+    if (this.usingElevenLabs()) {
+      void this.connectToElevenLabs(session);
+    } else {
+      void this.connectToDeepgram(session);
+    }
+  }
+
+  private connectToElevenLabs(session: CallSession) {
+    if (!this.elevenLabsApiKey) {
+      console.error('❌ ELEVENLABS_API_KEY ausente. No se puede iniciar STT.');
+      return;
+    }
+
+    const url = `${this.elevenLabsSttUrl}?model=${encodeURIComponent(this.elevenLabsSttModel)}&language=${encodeURIComponent(this.elevenLabsLanguage)}`;
+
+    const ws = new WebSocket(url, {
+      headers: {
+        'xi-api-key': this.elevenLabsApiKey,
+        'User-Agent': 'llamalo-ai/streams-gateway',
+      },
+    });
+
+    session.voiceAgentSocket = ws;
+    session.sttSocket = ws;
+
+    ws.on('open', () => {
+      console.log(`🔌 [${session.callSid}] STT ElevenLabs conectado`);
+      try {
+        ws.send(
+          JSON.stringify({
+            event: 'start',
+            model: this.elevenLabsSttModel,
+            language: this.elevenLabsLanguage,
+            format: 'json',
+            encoding: 'mulaw',
+            sample_rate: 8000,
+          }),
+        );
+      } catch (err) {
+        console.warn(
+          `⚠️ [${session.callSid}] No se pudo enviar start a ElevenLabs STT`,
+          err,
+        );
+      }
+      session.readyForAudio = true;
+      this.flushQueuedAudio(session);
+      this.maybeSendPendingGreeting(session);
+    });
+
+    ws.on('message', (data, isBinary) =>
+      this.handleElevenLabsMessage(session, data, Boolean(isBinary)),
+    );
+
+    ws.on('close', (code) => {
+      if (code !== 1000 && code !== 1001) {
+        console.log(
+          `🔌 [${session.callSid}] Conexión ElevenLabs STT cerrada (${code})`,
+        );
+      }
+      session.readyForAudio = false;
+    });
+
+    ws.on('error', (error) => {
+      console.error(
+        `❌ [${session.callSid}] Error en ElevenLabs STT WS:`,
+        error,
+      );
+    });
+  }
+
+  private handleElevenLabsMessage(
+    session: CallSession,
+    data: RawData,
+    isBinary: boolean,
+  ) {
+    if (isBinary) {
+      return;
+    }
+
+    const raw = this.rawDataToString(data);
+    let message: Record<string, unknown> = {};
+    try {
+      message = JSON.parse(raw);
+    } catch (err) {
+      console.warn(`⚠️ [${session.callSid}] Mensaje STT no parseable`, raw);
+      return;
+    }
+
+    const text =
+      (message.text as string) ||
+      (message.transcript as string) ||
+      (message.message as string) ||
+      '';
+    const isFinal =
+      Boolean(message.is_final) ||
+      Boolean(message.final) ||
+      (typeof message.type === 'string' &&
+        message.type.toLowerCase().includes('final'));
+
+    if (!text.trim()) {
+      return;
+    }
+
+    if (isFinal) {
+      console.log(
+        `📝 [${session.callSid}] Transcripción final: "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
+      );
+      void this.handleFinalTranscript(session, text.trim());
+    } else {
+      console.log(
+        `✏️ [${session.callSid}] Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`,
+      );
+      // Si el usuario habla durante TTS, interrumpir
+      if (session.agentSpeaking && !session.interrupted) {
+        session.interrupted = true;
+        if (session.ttsCancelStream) {
+          session.ttsCancelStream();
+        }
+      }
+    }
+  }
+
+  private async handleFinalTranscript(session: CallSession, text: string) {
+    session.userSpeakingStartTime = undefined;
+    session.history.push({ role: 'user', content: text });
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: this.llmModel,
+        temperature: this.llmTemperature,
+        max_tokens: this.llmMaxTokens,
+        messages: [
+          { role: 'system', content: session.instructions },
+          ...session.history,
+        ],
+      });
+
+      const content = completion.choices[0]?.message?.content?.trim() || '';
+      if (!content) {
+        console.warn(
+          `⚠️ [${session.callSid}] Respuesta LLM vacía para texto: "${text}"`,
+        );
+        return;
+      }
+
+      session.history.push({ role: 'assistant', content });
+      session.agentSpeaking = true;
+      session.interrupted = false;
+      console.log(
+        `💬 [${session.callSid}] Respuesta LLM: "${content.substring(0, 120)}${content.length > 120 ? '...' : ''}"`,
+      );
+      await this.streamTTSFromText(session, content);
+      session.agentSpeaking = false;
+      session.interceptedResponseText = '';
+    } catch (err) {
+      console.error(
+        `❌ [${session.callSid}] Error generando respuesta LLM:`,
+        err,
+      );
+    }
   }
 
   private connectToDeepgram(session: CallSession) {
@@ -418,7 +609,20 @@ export class StreamsGateway {
       return;
     }
 
-    this.sendAudioChunkToDeepgram(session, chunk);
+    if (!session.userSpeakingStartTime) {
+      session.userSpeakingStartTime = Date.now();
+    }
+    if (session.agentSpeaking && !session.interrupted) {
+      session.interrupted = true;
+      if (session.ttsCancelStream) {
+        session.ttsCancelStream();
+      }
+    }
+    if (this.usingElevenLabs()) {
+      this.sendAudioChunkToElevenLabs(session, chunk);
+    } else {
+      this.sendAudioChunkToDeepgram(session, chunk);
+    }
   }
 
   private sendAudioChunkToDeepgram(session: CallSession, chunk: Buffer) {
@@ -437,11 +641,33 @@ export class StreamsGateway {
     }
   }
 
+  private sendAudioChunkToElevenLabs(session: CallSession, chunk: Buffer) {
+    const socket = session.sttSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      socket.send(chunk, { binary: true });
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando audio a ElevenLabs STT:`,
+        error,
+      );
+    }
+  }
+
   private flushQueuedAudio(session: CallSession) {
     if (!session.queuedAudio.length) return;
     const buffered = [...session.queuedAudio];
     session.queuedAudio.length = 0;
-    buffered.forEach((chunk) => this.sendAudioChunkToDeepgram(session, chunk));
+    buffered.forEach((chunk) => {
+      if (this.usingElevenLabs()) {
+        this.sendAudioChunkToElevenLabs(session, chunk);
+      } else {
+        this.sendAudioChunkToDeepgram(session, chunk);
+      }
+    });
   }
 
   private relayAudioToTwilio(session: CallSession, chunk: Buffer) {
@@ -479,8 +705,7 @@ export class StreamsGateway {
     isBinary: boolean,
   ) {
     if (isBinary) {
-      // Ignorar audio TTS binario de Deepgram - usaremos Google Cloud TTS en su lugar
-      // No reenviar este audio a Twilio
+      // Ignorar audio TTS binario de Deepgram - usaremos TTS externo
       return;
     }
 
@@ -736,71 +961,101 @@ export class StreamsGateway {
   private async streamTTSFromText(session: CallSession, text: string) {
     if (session.interrupted || !text.trim()) return;
 
-    // Evitar procesar si ya hay una solicitud TTS en curso para el mismo texto
+    // Evitar solapes de TTS
     if (session.currentTTSRequest) {
-      // Esperar a que termine la solicitud anterior antes de procesar nueva
       try {
         await session.currentTTSRequest;
       } catch {
-        // Ignorar errores de la solicitud anterior
+        // Ignorar errores previos
       }
     }
 
-    try {
-      if (!session.ttsClient) {
-        session.ttsClient = this.ttsClient;
-      }
-
-      // Determinar género basándose en el nombre de la voz
-      // Para Neural2: -D y -F son femeninas; para Standard: -A, -C son femeninas; -B, -D son masculinas
-      const voiceName = this.ttsVoiceName.toLowerCase();
-      let ssmlGender: 'MALE' | 'FEMALE' = 'FEMALE'; // Por defecto femenino
-
-      if (voiceName.includes('neural2')) {
-        // Neural2: -D y -F son femeninas
-        ssmlGender = 'FEMALE';
-      } else if (voiceName.includes('standard')) {
-        // Standard: -A, -C son femeninas; -B, -D son masculinas
-        if (voiceName.endsWith('-b') || voiceName.endsWith('-d')) {
-          ssmlGender = 'MALE';
-        } else {
-          ssmlGender = 'FEMALE';
-        }
-      } else {
-        // Para otras voces, usar FEMALE como predeterminado
-        ssmlGender = 'FEMALE';
-      }
-
-      const request = {
-        input: { text: text.trim() },
-        voice: {
-          languageCode: 'es-ES',
-          name: this.ttsVoiceName,
-          ssmlGender: ssmlGender,
-        },
-        audioConfig: {
-          audioEncoding: 'MULAW' as const,
-          sampleRateHertz: 8000,
-        },
-      };
-
-      const ttsPromise = session.ttsClient.synthesizeSpeech(request);
-      session.currentTTSRequest = ttsPromise.then(() => {
+    session.currentTTSRequest = this.streamElevenLabsTTS(session, text).finally(
+      () => {
         session.currentTTSRequest = undefined;
-      });
+      },
+    );
+    await session.currentTTSRequest;
+  }
 
-      const [response] = await ttsPromise;
-      if (response.audioContent && !session.interrupted) {
-        const audioBuffer = Buffer.from(response.audioContent);
-        this.relayAudioToTwilio(session, audioBuffer);
-      }
+  private async streamElevenLabsTTS(
+    session: CallSession,
+    text: string,
+  ): Promise<void> {
+    if (!this.elevenLabsApiKey) {
+      console.error('❌ ELEVENLABS_API_KEY no configurado para TTS.');
+      return;
+    }
+
+    const voiceId = this.elevenLabsTtsVoiceId;
+    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream`;
+
+    try {
+      session.agentSpeaking = true;
+      const response = await axios.post(
+        url,
+        {
+          text: text.trim(),
+          model_id: this.elevenLabsTtsModelId,
+          voice_settings: {
+            stability: this.elevenLabsTtsStability,
+            similarity_boost: this.elevenLabsTtsSimilarity,
+            style: this.elevenLabsTtsStyle,
+            use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
+          },
+          output_format: 'ulaw_8000',
+          // Ajuste de velocidad si aplica
+          voice_speed: this.elevenLabsTtsVoiceSpeed,
+        },
+        {
+          headers: {
+            'xi-api-key': this.elevenLabsApiKey,
+            'Content-Type': 'application/json',
+          },
+          responseType: 'stream',
+        },
+      );
+
+      const audioStream = response.data as Readable;
+
+      const cancel = () => {
+        session.agentSpeaking = false;
+        audioStream.destroy();
+      };
+      session.ttsCancelStream = cancel;
+
+      await new Promise<void>((resolve, reject) => {
+        audioStream.on('data', (chunk: Buffer) => {
+          if (session.interrupted) {
+            cancel();
+            return;
+          }
+          this.relayAudioToTwilio(session, Buffer.from(chunk));
+        });
+        audioStream.on('end', () => {
+          session.ttsCancelStream = undefined;
+          resolve();
+        });
+        audioStream.on('close', () => {
+          session.ttsCancelStream = undefined;
+          resolve();
+        });
+        audioStream.on('error', (err) => {
+          session.ttsCancelStream = undefined;
+          reject(err);
+        });
+      });
     } catch (error) {
-      session.currentTTSRequest = undefined;
+      session.ttsCancelStream = undefined;
       if (!session.interrupted) {
         console.error(
-          `❌ [${session.callSid}] Error en Text-to-Speech:`,
+          `❌ [${session.callSid}] Error en ElevenLabs TTS:`,
           error,
         );
+      }
+    } finally {
+      if (!session.interrupted) {
+        session.agentSpeaking = false;
       }
     }
   }
@@ -810,7 +1065,7 @@ export class StreamsGateway {
       return;
     }
 
-    // Enviar greeting usando Google Cloud TTS
+    // Enviar greeting usando TTS configurado (ElevenLabs)
     void this.streamTTSFromText(session, session.pendingGreeting);
     session.greetingSent = true;
   }
@@ -867,11 +1122,19 @@ export class StreamsGateway {
 
     this.stopKeepAlive(session);
 
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
+    }
+
     if (
       session.voiceAgentSocket &&
       session.voiceAgentSocket.readyState === WebSocket.OPEN
     ) {
       session.voiceAgentSocket.close();
+    }
+    if (session.sttSocket && session.sttSocket.readyState === WebSocket.OPEN) {
+      session.sttSocket.close();
     }
 
     this.sessions.delete(callSid);
