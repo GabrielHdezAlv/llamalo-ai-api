@@ -375,7 +375,7 @@ export class StreamsGateway {
     let message: Record<string, unknown> = {};
     try {
       message = JSON.parse(raw);
-    } catch (err) {
+    } catch {
       console.warn(`⚠️ [${session.callSid}] Mensaje STT no parseable`, raw);
       return;
     }
@@ -962,22 +962,46 @@ export class StreamsGateway {
   }
 
   private async streamTTSFromText(session: CallSession, text: string) {
-    if (session.interrupted || !text.trim()) return;
+    if (session.interrupted || !text.trim()) {
+      console.log(
+        `⏸️ [${session.callSid}] TTS cancelado (interrupted: ${session.interrupted}, text vacío: ${!text.trim()})`,
+      );
+      return;
+    }
 
     // Evitar solapes de TTS
     if (session.currentTTSRequest) {
       try {
+        console.log(
+          `⏳ [${session.callSid}] Esperando TTS anterior antes de procesar nuevo texto`,
+        );
         await session.currentTTSRequest;
       } catch {
         // Ignorar errores previos
       }
     }
 
-    session.currentTTSRequest = this.streamElevenLabsTTS(session, text).finally(
-      () => {
-        session.currentTTSRequest = undefined;
-      },
+    console.log(
+      `🎵 [${session.callSid}] Iniciando TTS para texto: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
     );
+
+    session.currentTTSRequest = this.streamElevenLabsTTS(session, text)
+      .then(() => {
+        console.log(
+          `✅ [${session.callSid}] TTS completado para: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
+        );
+      })
+      .catch((error) => {
+        if (!session.interrupted) {
+          console.error(
+            `❌ [${session.callSid}] Error en TTS para texto:`,
+            error,
+          );
+        }
+      })
+      .finally(() => {
+        session.currentTTSRequest = undefined;
+      });
     await session.currentTTSRequest;
   }
 
@@ -995,7 +1019,6 @@ export class StreamsGateway {
 
     try {
       session.agentSpeaking = true;
-      const started = Date.now();
       console.log(
         `🔊 [${session.callSid}] Iniciando TTS ElevenLabs (${text.length} chars, voice=${voiceId})`,
       );
@@ -1032,23 +1055,38 @@ export class StreamsGateway {
       session.ttsCancelStream = cancel;
 
       await new Promise<void>((resolve, reject) => {
+        let chunksReceived = 0;
         audioStream.on('data', (chunk: Buffer) => {
           if (session.interrupted) {
+            console.log(
+              `🛑 [${session.callSid}] TTS interrumpido, cancelando stream`,
+            );
             cancel();
             return;
           }
+          chunksReceived++;
           this.relayAudioToTwilio(session, Buffer.from(chunk));
         });
         audioStream.on('end', () => {
           session.ttsCancelStream = undefined;
+          console.log(
+            `✅ [${session.callSid}] Stream ElevenLabs TTS terminado (${chunksReceived} chunks)`,
+          );
           resolve();
         });
         audioStream.on('close', () => {
           session.ttsCancelStream = undefined;
+          console.log(
+            `✅ [${session.callSid}] Stream ElevenLabs TTS cerrado (${chunksReceived} chunks)`,
+          );
           resolve();
         });
         audioStream.on('error', (err) => {
           session.ttsCancelStream = undefined;
+          console.error(
+            `❌ [${session.callSid}] Error en stream ElevenLabs TTS:`,
+            err,
+          );
           reject(err);
         });
       });
@@ -1075,8 +1113,16 @@ export class StreamsGateway {
       return;
     }
 
-    // Enviar greeting usando TTS configurado (ElevenLabs)
-    void this.streamTTSFromText(session, session.pendingGreeting);
+    console.log(
+      `👋 [${session.callSid}] Enviando greeting a Deepgram: "${session.pendingGreeting.substring(0, 50)}${session.pendingGreeting.length > 50 ? '...' : ''}"`,
+    );
+
+    // Enviar greeting a Deepgram usando InjectAgentMessage
+    // Esto hará que Deepgram lo procese y genere la respuesta, que luego interceptaremos
+    this.sendJsonToDeepgram(session, {
+      type: 'InjectAgentMessage',
+      message: session.pendingGreeting,
+    });
     session.greetingSent = true;
   }
 
