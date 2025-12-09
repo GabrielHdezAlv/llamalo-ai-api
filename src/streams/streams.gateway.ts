@@ -100,8 +100,7 @@ export class StreamsGateway {
   private readonly elevenLabsSttModel =
     process.env.ELEVENLABS_STT_MODEL ?? 'scribe_v2';
   private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
-  private readonly elevenLabsTtsVoiceId =
-    process.env.ELEVENLABS_TTS_VOICE_ID ?? 'elevenlabs-default';
+  private readonly elevenLabsTtsVoiceId = process.env.ELEVENLABS_TTS_VOICE_ID;
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
   private readonly elevenLabsTtsStability = Number(
@@ -1039,7 +1038,16 @@ export class StreamsGateway {
     );
 
     if (!this.elevenLabsApiKey) {
-      console.error('❌ ELEVENLABS_API_KEY no configurado para TTS.');
+      console.error(
+        `❌ [${session.callSid}] ELEVENLABS_API_KEY no configurado para TTS.`,
+      );
+      return;
+    }
+
+    if (!this.elevenLabsTtsVoiceId) {
+      console.error(
+        `❌ [${session.callSid}] ELEVENLABS_TTS_VOICE_ID no configurado. Por favor, configura una variable de entorno ELEVENLABS_TTS_VOICE_ID con un ID de voz válido de ElevenLabs (ej: pNInz6obpgDQGcFmaJgB).`,
+      );
       return;
     }
 
