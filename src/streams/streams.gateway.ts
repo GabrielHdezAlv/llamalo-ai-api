@@ -1076,7 +1076,6 @@ export class StreamsGateway {
           text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
           model_id: this.elevenLabsTtsModelId,
           output_format: 'ulaw_8000',
-          voice_speed: this.elevenLabsTtsVoiceSpeed,
         })}`,
       );
 
@@ -1092,8 +1091,6 @@ export class StreamsGateway {
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
           output_format: 'ulaw_8000',
-          // Ajuste de velocidad si aplica
-          voice_speed: this.elevenLabsTtsVoiceSpeed,
         },
         {
           headers: {
@@ -1102,8 +1099,35 @@ export class StreamsGateway {
           },
           responseType: 'stream',
           timeout: 30000, // Timeout explícito de 30 segundos
+          // Permitimos 4xx para poder leer el cuerpo del error
+          validateStatus: (status) => status < 500,
         },
       );
+
+      // Validar status code antes de procesar el stream (para 4xx leer el cuerpo)
+      if (response.status >= 400) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of response.data as AsyncIterable<Buffer>) {
+          chunks.push(chunk);
+        }
+        const errorBody = Buffer.concat(chunks).toString('utf-8');
+        let errorMessage = `ElevenLabs API error ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorBody);
+          errorMessage =
+            (errorJson.detail && errorJson.detail.message) ||
+            errorJson.message ||
+            errorBody ||
+            errorMessage;
+          console.error(
+            `❌ [${session.callSid}] ElevenLabs error details:`,
+            JSON.stringify(errorJson, null, 2),
+          );
+        } catch {
+          errorMessage = errorBody || errorMessage;
+        }
+        throw new Error(`ElevenLabs TTS error: ${errorMessage}`);
+      }
 
       console.log(
         `✅ [${session.callSid}] Respuesta recibida de ElevenLabs, status: ${response.status}`,
