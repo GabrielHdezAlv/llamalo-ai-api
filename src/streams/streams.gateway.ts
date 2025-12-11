@@ -1091,7 +1091,7 @@ export class StreamsGateway {
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
-          output_format: 'ulaw_8000',
+          output_format: 'pcm_16000',
         },
         {
           headers: {
@@ -1099,7 +1099,7 @@ export class StreamsGateway {
             'Content-Type': 'application/json',
           },
           responseType: 'stream',
-          timeout: 30000, // Timeout explícito de 30 segundos
+          timeout: 10000, // Timeout reducido a 10 segundos
           // Permitimos 4xx para poder leer el cuerpo del error
           validateStatus: (status) => status < 500,
         },
