@@ -1066,6 +1066,20 @@ export class StreamsGateway {
       console.log(
         `📤 [${session.callSid}] Enviando petición POST a ElevenLabs...`,
       );
+
+      // Logging adicional para debugging
+      console.log(
+        `🔑 [${session.callSid}] API Key presente: ${this.elevenLabsApiKey ? 'Sí' : 'No'}`,
+      );
+      console.log(
+        `📋 [${session.callSid}] Payload: ${JSON.stringify({
+          text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
+          model_id: this.elevenLabsTtsModelId,
+          output_format: 'ulaw_8000',
+          voice_speed: this.elevenLabsTtsVoiceSpeed,
+        })}`,
+      );
+
       const response = await axios.post(
         url,
         {
@@ -1087,6 +1101,7 @@ export class StreamsGateway {
             'Content-Type': 'application/json',
           },
           responseType: 'stream',
+          timeout: 30000, // Timeout explícito de 30 segundos
         },
       );
 
@@ -1180,26 +1195,35 @@ export class StreamsGateway {
       });
     } catch (error) {
       session.ttsCancelStream = undefined;
-      if (!session.interrupted) {
+      session.agentSpeaking = false;
+
+      // Loggear SIEMPRE para debugging, incluso si está interrumpido
+      console.error(
+        `❌ [${session.callSid}] Error en ElevenLabs TTS (interrupted=${session.interrupted}):`,
+        error,
+      );
+
+      if (error instanceof Error) {
         console.error(
-          `❌ [${session.callSid}] Error en ElevenLabs TTS:`,
-          error,
+          `❌ [${session.callSid}] Error message: ${error.message}`,
         );
-        if (error instanceof Error) {
+        console.error(`❌ [${session.callSid}] Error stack: ${error.stack}`);
+
+        if ('response' in error) {
+          const axiosError = error as any;
           console.error(
-            `❌ [${session.callSid}] Error details: ${error.message}`,
+            `❌ [${session.callSid}] Response status: ${axiosError.response?.status}`,
           );
-          if ('response' in error) {
-            const axiosError = error as any;
-            console.error(
-              `❌ [${session.callSid}] Response status: ${axiosError.response?.status}`,
-            );
-            console.error(
-              `❌ [${session.callSid}] Response data:`,
-              JSON.stringify(axiosError.response?.data).substring(0, 500),
-            );
-          }
+          console.error(
+            `❌ [${session.callSid}] Response data:`,
+            JSON.stringify(axiosError.response?.data).substring(0, 500),
+          );
         }
+      }
+
+      // Re-lanzar el error si no está interrumpido para que se capture en streamTTSFromText
+      if (!session.interrupted) {
+        throw error;
       }
     } finally {
       if (!session.interrupted) {
