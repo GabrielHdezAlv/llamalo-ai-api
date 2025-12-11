@@ -100,7 +100,8 @@ export class StreamsGateway {
   private readonly elevenLabsSttModel =
     process.env.ELEVENLABS_STT_MODEL ?? 'scribe_v2';
   private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
-  private readonly elevenLabsTtsVoiceId = process.env.ELEVENLABS_TTS_VOICE_ID;
+  private readonly elevenLabsTtsVoiceId =
+    process.env.ELEVENLABS_TTS_VOICE_ID ?? 'zRUArUmK0DWSP7K6mmLW';
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
   private readonly elevenLabsTtsStability = Number(
