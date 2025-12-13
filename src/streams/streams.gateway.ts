@@ -673,6 +673,46 @@ export class StreamsGateway {
     });
   }
 
+  /**
+   * Convierte PCM 16-bit 16kHz a μ-law 8-bit 8kHz
+   */
+  private convertPcm16kToUlaw8k(pcm16k: Buffer): Buffer {
+    // Downsample: tomar cada segunda muestra (16kHz -> 8kHz)
+    // Cada muestra PCM es 2 bytes (16-bit)
+    const samples16k = pcm16k.length / 2;
+    const samples8k = Math.floor(samples16k / 2);
+    const ulaw8k = Buffer.alloc(samples8k);
+
+    for (let i = 0; i < samples8k; i++) {
+      // Tomar cada segunda muestra para downsampling
+      const sampleIndex = i * 2;
+      if (sampleIndex * 2 + 1 >= pcm16k.length) break;
+
+      // Leer muestra PCM 16-bit signed (little-endian)
+      const pcmSample = pcm16k.readInt16LE(sampleIndex * 2);
+
+      // Convertir a μ-law usando el algoritmo estándar
+      const sign = pcmSample < 0 ? 0x80 : 0x00;
+      let magnitude = Math.abs(pcmSample);
+      if (magnitude > 32635) magnitude = 32635; // Clamp
+
+      // Algoritmo μ-law (μ = 255)
+      let exponent = 0;
+      let expMask = 0x4000;
+      while (magnitude < expMask && exponent < 8) {
+        exponent++;
+        expMask >>= 1;
+      }
+
+      const mantissa = (magnitude >> (exponent + 3)) & 0x0f;
+      const ulawByte = ~(sign | (exponent << 4) | mantissa) & 0xff;
+
+      ulaw8k[i] = ulawByte;
+    }
+
+    return ulaw8k;
+  }
+
   private relayAudioToTwilio(session: CallSession, chunk: Buffer) {
     // Si hay una interrupción activa, no reenviar audio
     if (session.interrupted) {
@@ -690,11 +730,15 @@ export class StreamsGateway {
     }
 
     try {
+      // Convertir PCM 16kHz a μ-law 8kHz si el formato es PCM
+      // (Si ya es μ-law, enviar directamente)
+      const audioChunk = this.convertPcm16kToUlaw8k(chunk);
+
       session.client.send(
         JSON.stringify({
           event: 'media',
           streamSid: session.streamSid,
-          media: { payload: chunk.toString('base64') },
+          media: { payload: audioChunk.toString('base64') },
         }),
       );
     } catch (error) {
@@ -1091,7 +1135,7 @@ export class StreamsGateway {
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
-          output_format: 'mp3_44100_128', // Cambiar a MP3 que es más compatible
+          output_format: 'pcm_16000', // PCM 16kHz para luego convertir a μ-law 8kHz
         },
         {
           headers: {
