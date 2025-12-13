@@ -102,6 +102,8 @@ export class StreamsGateway {
   private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
   private readonly elevenLabsTtsVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? 'zRUArUmK0DWSP7K6mmLW';
+  private readonly elevenLabsTtsOutputFormat =
+    process.env.ELEVENLABS_TTS_OUTPUT_FORMAT ?? 'ulaw_8000';
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
   private readonly elevenLabsTtsStability = Number(
@@ -730,9 +732,15 @@ export class StreamsGateway {
     }
 
     try {
-      // Convertir PCM 16kHz a μ-law 8kHz si el formato es PCM
-      // (Si ya es μ-law, enviar directamente)
-      const audioChunk = this.convertPcm16kToUlaw8k(chunk);
+      let audioChunk = chunk;
+      if (this.elevenLabsTtsOutputFormat === 'pcm_16000') {
+        audioChunk = this.convertPcm16kToUlaw8k(chunk);
+      } else if (this.elevenLabsTtsOutputFormat !== 'ulaw_8000') {
+        // Formato inesperado; enviar tal cual pero loguear advertencia
+        console.warn(
+          `⚠️ [${session.callSid}] Formato TTS no μ-law/PCM16k (${this.elevenLabsTtsOutputFormat}); se envía sin convertir`,
+        );
+      }
 
       session.client.send(
         JSON.stringify({
@@ -1135,7 +1143,7 @@ export class StreamsGateway {
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
-          output_format: 'pcm_16000', // PCM 16kHz para luego convertir a μ-law 8kHz
+          output_format: this.elevenLabsTtsOutputFormat,
         },
         {
           headers: {
@@ -1195,9 +1203,6 @@ export class StreamsGateway {
         `📡 [${session.callSid}] Stream ElevenLabs creado correctamente`,
       );
 
-      // Forzar el stream a modo flowing para que emita eventos 'data'
-      audioStream.resume();
-
       const cancel = () => {
         session.agentSpeaking = false;
         audioStream.destroy();
@@ -1215,29 +1220,6 @@ export class StreamsGateway {
         }, 30000);
         let chunksReceived = 0;
         let totalBytes = 0;
-
-        // También leer explícitamente cuando el stream está readable
-        audioStream.on('readable', () => {
-          let chunk: Buffer | null;
-          while ((chunk = audioStream.read()) !== null) {
-            if (session.interrupted) {
-              console.log(
-                `🛑 [${session.callSid}] TTS interrumpido, cancelando stream`,
-              );
-              clearTimeout(timeout);
-              cancel();
-              return;
-            }
-            chunksReceived++;
-            totalBytes += chunk.length;
-            if (chunksReceived === 1 || chunksReceived % 10 === 0) {
-              console.log(
-                `📦 [${session.callSid}] Chunk ${chunksReceived} recibido (readable) (${chunk.length} bytes, total: ${totalBytes} bytes)`,
-              );
-            }
-            this.relayAudioToTwilio(session, Buffer.from(chunk));
-          }
-        });
 
         audioStream.on('data', (chunk: Buffer) => {
           if (session.interrupted) {
