@@ -1213,6 +1213,9 @@ export class StreamsGateway {
         throw new Error('audioStream es null o undefined');
       }
 
+      // Forzar el stream a modo flowing para que emita eventos 'data'
+      audioStream.resume();
+
       console.log(
         `📡 [${session.callSid}] Stream ElevenLabs creado correctamente`,
       );
