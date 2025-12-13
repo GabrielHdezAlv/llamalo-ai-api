@@ -1091,7 +1091,7 @@ export class StreamsGateway {
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
-          output_format: 'pcm_16000',
+          output_format: 'mp3_44100_128', // Cambiar a MP3 que es más compatible
         },
         {
           headers: {
@@ -1151,6 +1151,9 @@ export class StreamsGateway {
         `📡 [${session.callSid}] Stream ElevenLabs creado correctamente`,
       );
 
+      // Forzar el stream a modo flowing para que emita eventos 'data'
+      audioStream.resume();
+
       const cancel = () => {
         session.agentSpeaking = false;
         audioStream.destroy();
@@ -1168,6 +1171,29 @@ export class StreamsGateway {
         }, 30000);
         let chunksReceived = 0;
         let totalBytes = 0;
+
+        // También leer explícitamente cuando el stream está readable
+        audioStream.on('readable', () => {
+          let chunk: Buffer | null;
+          while ((chunk = audioStream.read()) !== null) {
+            if (session.interrupted) {
+              console.log(
+                `🛑 [${session.callSid}] TTS interrumpido, cancelando stream`,
+              );
+              clearTimeout(timeout);
+              cancel();
+              return;
+            }
+            chunksReceived++;
+            totalBytes += chunk.length;
+            if (chunksReceived === 1 || chunksReceived % 10 === 0) {
+              console.log(
+                `📦 [${session.callSid}] Chunk ${chunksReceived} recibido (readable) (${chunk.length} bytes, total: ${totalBytes} bytes)`,
+              );
+            }
+            this.relayAudioToTwilio(session, Buffer.from(chunk));
+          }
+        });
 
         audioStream.on('data', (chunk: Buffer) => {
           if (session.interrupted) {
