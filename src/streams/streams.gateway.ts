@@ -74,6 +74,8 @@ interface CallSession {
   interceptedResponseText: string;
   agentSpeaking: boolean;
   interrupted: boolean;
+  allowInterruptions?: boolean;
+  greetingPlaybackDone?: boolean;
   currentTTSRequest?: Promise<void>;
   ttsCancelStream?: () => void;
 }
@@ -824,7 +826,7 @@ export class StreamsGateway {
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
           // Si el agente está hablando, interrumpir
-          if (session.agentSpeaking) {
+          if (session.agentSpeaking && session.allowInterruptions !== false) {
             console.log(
               `🛑 [${session.callSid}] Usuario interrumpió al agente`,
             );
@@ -861,6 +863,8 @@ export class StreamsGateway {
                 session.agentSpeaking = true; // Marcar como hablando para procesar
                 // IMPORTANTE: Resetear interrupted cuando el agente empieza a hablar
                 session.interrupted = false;
+                // Durante el greeting, deshabilitar barge-in
+                session.allowInterruptions = false;
               } else {
                 // Si ya está hablando, resetear interrupted si estaba interrumpido
                 // (puede pasar si el usuario interrumpió pero el agente continúa)
@@ -1051,6 +1055,12 @@ export class StreamsGateway {
       `🎵 [${session.callSid}] Iniciando TTS para texto: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
     );
 
+    // Si es el primer TTS (greeting), deshabilitar interrupciones
+    const wasGreetingPending = session.greetingPlaybackDone !== true;
+    if (wasGreetingPending) {
+      session.allowInterruptions = false;
+    }
+
     console.log(`🔄 [${session.callSid}] Llamando a streamElevenLabsTTS...`);
     session.currentTTSRequest = this.streamElevenLabsTTS(session, text)
       .then(() => {
@@ -1074,6 +1084,10 @@ export class StreamsGateway {
       .finally(() => {
         console.log(`🏁 [${session.callSid}] Finalizando TTS request`);
         session.currentTTSRequest = undefined;
+        if (wasGreetingPending) {
+          session.allowInterruptions = true;
+          session.greetingPlaybackDone = true;
+        }
       });
     console.log(
       `⏳ [${session.callSid}] Esperando a que termine el TTS request...`,
