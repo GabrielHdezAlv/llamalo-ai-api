@@ -1264,11 +1264,6 @@ export class StreamsGateway {
           );
           reject(err);
         });
-
-        // Log cuando el stream está listo
-        audioStream.on('readable', () => {
-          console.log(`📖 [${session.callSid}] Stream ElevenLabs readable`);
-        });
       });
     } catch (error) {
       session.ttsCancelStream = undefined;
