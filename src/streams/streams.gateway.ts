@@ -324,7 +324,8 @@ export class StreamsGateway {
     }
 
     const language = session.language || this.elevenLabsLanguage;
-    const url = `${this.elevenLabsSttUrl}?model=${encodeURIComponent(this.elevenLabsSttModel)}&language=${encodeURIComponent(language)}`;
+    // ElevenLabs requiere model_id en la query para Realtime STT
+    const url = `${this.elevenLabsSttUrl}?model_id=${encodeURIComponent(this.elevenLabsSttModel)}&language=${encodeURIComponent(language)}`;
 
     const ws = new WebSocket(url, {
       headers: {
@@ -355,6 +356,8 @@ export class StreamsGateway {
         ws.send(
           JSON.stringify({
             event: 'start',
+            // Enviar model_id; dejamos model por compatibilidad hacia atrás
+            model_id: this.elevenLabsSttModel,
             model: this.elevenLabsSttModel,
             language,
             format: 'json',
