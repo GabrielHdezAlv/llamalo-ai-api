@@ -58,6 +58,7 @@ interface CallSession {
   client: WebSocketClient;
   voiceAgentSocket?: WebSocket;
   sttSocket?: WebSocket;
+  sttProvider: 'elevenlabs' | 'deepgram';
   customParameters?: Record<string, string>;
   instructions: string;
   voiceId?: string;
@@ -181,17 +182,18 @@ export class StreamsGateway {
     }
   }
 
-  private usingElevenLabs(): boolean {
-    return this.sttProvider.toLowerCase() === 'elevenlabs';
+  private usingElevenLabs(session?: CallSession): boolean {
+    const provider = session?.sttProvider || this.sttProvider || 'elevenlabs';
+    return provider.toLowerCase() === 'elevenlabs';
   }
 
   handleConnection(client: WebSocketClient) {
     console.log('🛰️ Twilio WS conectado');
 
     if (this.usingElevenLabs() && !this.elevenLabsApiKey) {
-      console.error('❌ ELEVENLABS_API_KEY no configurado. Cerrando conexión.');
-      client.close();
-      return;
+      console.error(
+        '❌ ELEVENLABS_API_KEY no configurado. Se intentará fallback a Deepgram.',
+      );
     }
 
     let currentCallSid = '';
@@ -294,6 +296,9 @@ export class StreamsGateway {
       callSid,
       streamSid: start?.streamSid,
       client,
+      sttProvider: (this.sttProvider || 'elevenlabs') as
+        | 'elevenlabs'
+        | 'deepgram',
       customParameters,
       instructions,
       voiceId,
@@ -310,7 +315,7 @@ export class StreamsGateway {
     };
 
     this.sessions.set(callSid, session);
-    if (this.usingElevenLabs()) {
+    if (this.usingElevenLabs(session)) {
       void this.connectToElevenLabs(session);
     } else {
       void this.connectToDeepgram(session);
@@ -320,6 +325,10 @@ export class StreamsGateway {
   private connectToElevenLabs(session: CallSession) {
     if (!this.elevenLabsApiKey) {
       console.error('❌ ELEVENLABS_API_KEY ausente. No se puede iniciar STT.');
+      this.failoverToDeepgram(
+        session,
+        'ELEVENLABS_API_KEY ausente; activando fallback a Deepgram',
+      );
       return;
     }
 
@@ -346,6 +355,10 @@ export class StreamsGateway {
         const body = Buffer.concat(chunks).toString('utf-8');
         console.error(
           `❌ [${session.callSid}] ElevenLabs STT unexpected-response ${status} ${statusMessage} - body: ${body.substring(0, 500)}`,
+        );
+        this.failoverToDeepgram(
+          session,
+          `unexpected-response ${status} ${statusMessage}`,
         );
       });
     });
@@ -394,7 +407,38 @@ export class StreamsGateway {
         `❌ [${session.callSid}] Error en ElevenLabs STT WS:`,
         error,
       );
+      this.failoverToDeepgram(session, `error: ${error.message || 'ws error'}`);
     });
+  }
+
+  private failoverToDeepgram(session: CallSession, reason: string) {
+    if (session.sttProvider === 'deepgram') {
+      return;
+    }
+    if (!this.deepgramApiKey) {
+      console.error(
+        `❌ [${session.callSid}] Falló ElevenLabs (${reason}) y no hay DG_VOICE_AGENT_API_KEY/DG_API_KEY configurado para fallback.`,
+      );
+      return;
+    }
+    console.warn(
+      `⚠️ [${session.callSid}] Fallback a Deepgram tras error con ElevenLabs (${reason}).`,
+    );
+    session.sttProvider = 'deepgram';
+    session.readyForAudio = false;
+    try {
+      session.sttSocket?.close();
+    } catch {
+      // ignore
+    }
+    try {
+      session.voiceAgentSocket?.close();
+    } catch {
+      // ignore
+    }
+    session.sttSocket = undefined;
+    session.voiceAgentSocket = undefined;
+    this.connectToDeepgram(session);
   }
 
   private handleElevenLabsMessage(
@@ -680,7 +724,7 @@ export class StreamsGateway {
         session.ttsCancelStream();
       }
     }
-    if (this.usingElevenLabs()) {
+    if (this.usingElevenLabs(session)) {
       this.sendAudioChunkToElevenLabs(session, chunk);
     } else {
       this.sendAudioChunkToDeepgram(session, chunk);
@@ -724,7 +768,7 @@ export class StreamsGateway {
     const buffered = [...session.queuedAudio];
     session.queuedAudio.length = 0;
     buffered.forEach((chunk) => {
-      if (this.usingElevenLabs()) {
+      if (this.usingElevenLabs(session)) {
         this.sendAudioChunkToElevenLabs(session, chunk);
       } else {
         this.sendAudioChunkToDeepgram(session, chunk);
@@ -1384,15 +1428,32 @@ export class StreamsGateway {
       return;
     }
 
+    const greeting = session.pendingGreeting;
+
+    if (this.usingElevenLabs(session)) {
+      console.log(
+        `👋 [${session.callSid}] Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
+      );
+      session.greetingSent = true;
+      void this.streamTTSFromText(session, greeting).catch((error) => {
+        session.greetingSent = false;
+        console.error(
+          `❌ [${session.callSid}] Error reproduciendo greeting con ElevenLabs TTS:`,
+          error,
+        );
+      });
+      return;
+    }
+
     console.log(
-      `👋 [${session.callSid}] Enviando greeting a Deepgram: "${session.pendingGreeting.substring(0, 50)}${session.pendingGreeting.length > 50 ? '...' : ''}"`,
+      `👋 [${session.callSid}] Enviando greeting a Deepgram: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
     );
 
     // Enviar greeting a Deepgram usando InjectAgentMessage
     // Esto hará que Deepgram lo procese y genere la respuesta, que luego interceptaremos
     this.sendJsonToDeepgram(session, {
       type: 'InjectAgentMessage',
-      message: session.pendingGreeting,
+      message: greeting,
     });
     session.greetingSent = true;
   }
