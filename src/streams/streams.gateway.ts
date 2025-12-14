@@ -336,6 +336,19 @@ export class StreamsGateway {
     session.voiceAgentSocket = ws;
     session.sttSocket = ws;
 
+    ws.on('unexpected-response', (_req, res) => {
+      const status = res.statusCode;
+      const statusMessage = res.statusMessage;
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf-8');
+        console.error(
+          `❌ [${session.callSid}] ElevenLabs STT unexpected-response ${status} ${statusMessage} - body: ${body.substring(0, 500)}`,
+        );
+      });
+    });
+
     ws.on('open', () => {
       console.log(`🔌 [${session.callSid}] STT ElevenLabs conectado`);
       try {
