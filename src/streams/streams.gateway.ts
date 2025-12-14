@@ -847,7 +847,10 @@ export class StreamsGateway {
         JSON.stringify({
           event: 'media',
           streamSid: session.streamSid,
-          media: { payload: audioChunk.toString('base64') },
+          media: {
+            payload: audioChunk.toString('base64'),
+            track: 'outbound',
+          },
         }),
       );
     } catch (error) {
