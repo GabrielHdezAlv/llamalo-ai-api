@@ -79,7 +79,6 @@ interface CallSession {
   interrupted: boolean;
   allowInterruptions?: boolean;
   greetingPlaybackDone?: boolean;
-  ttsSendBuffer?: Buffer;
   currentTTSRequest?: Promise<void>;
   ttsCancelStream?: () => void;
 }
@@ -844,45 +843,20 @@ export class StreamsGateway {
         );
       }
 
-      this.enqueueAndSendUlaw(session, audioChunk);
-    } catch (error) {
-      console.error(
-        `❌ [${session.callSid}] Error enviando audio a Twilio:`,
-        error,
-      );
-    }
-  }
-
-  /**
-   * Acumula audio μ-law y lo envía en frames de 160 bytes (20ms a 8kHz) para Twilio.
-   */
-  private enqueueAndSendUlaw(session: CallSession, ulawChunk: Buffer) {
-    const frameSize = 160; // 20ms de audio μ-law a 8kHz
-    // buffer de envío en la sesión
-    const buffered = session.ttsSendBuffer
-      ? Buffer.concat([session.ttsSendBuffer, ulawChunk])
-      : Buffer.from(ulawChunk);
-
-    let offset = 0;
-    const framesToSend: Buffer[] = [];
-    while (offset + frameSize <= buffered.length) {
-      framesToSend.push(buffered.subarray(offset, offset + frameSize));
-      offset += frameSize;
-    }
-    // Guardar resto
-    session.ttsSendBuffer =
-      offset < buffered.length ? buffered.subarray(offset) : undefined;
-
-    for (const frame of framesToSend) {
       session.client.send(
         JSON.stringify({
           event: 'media',
           streamSid: session.streamSid,
           media: {
-            payload: frame.toString('base64'),
+            payload: audioChunk.toString('base64'),
             track: 'outbound',
           },
         }),
+      );
+    } catch (error) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando audio a Twilio:`,
+        error,
       );
     }
   }
@@ -1217,17 +1191,6 @@ export class StreamsGateway {
         if (wasGreetingPending) {
           session.allowInterruptions = true;
           session.greetingPlaybackDone = true;
-        }
-        // Enviar cualquier resto pendiente (padding con silencio μ-law 0xFF)
-        if (session.ttsSendBuffer && session.ttsSendBuffer.length > 0) {
-          const frameSize = 160;
-          const padLength = frameSize - session.ttsSendBuffer.length;
-          const padded = Buffer.concat([
-            session.ttsSendBuffer,
-            Buffer.alloc(padLength, 0xff),
-          ]);
-          this.enqueueAndSendUlaw(session, padded);
-          session.ttsSendBuffer = undefined;
         }
       });
     console.log(
