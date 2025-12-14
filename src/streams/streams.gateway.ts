@@ -817,8 +817,8 @@ export class StreamsGateway {
   }
 
   private relayAudioToTwilio(session: CallSession, chunk: Buffer) {
-    // Si hay una interrupción activa, no reenviar audio
-    if (session.interrupted) {
+    // Si hay una interrupción activa y se permiten interrupciones, no reenviar audio
+    if (session.allowInterruptions !== false && session.interrupted) {
       console.log(
         `⏸️ [${session.callSid}] Audio bloqueado por interrupción (chunk size: ${chunk.length})`,
       );
