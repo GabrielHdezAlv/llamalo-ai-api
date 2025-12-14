@@ -60,6 +60,8 @@ interface CallSession {
   sttSocket?: WebSocket;
   customParameters?: Record<string, string>;
   instructions: string;
+  voiceId?: string;
+  language?: string;
   queuedAudio: Buffer[];
   readyForAudio: boolean;
   pendingGreeting?: string;
@@ -273,6 +275,16 @@ export class StreamsGateway {
     }
 
     const instructions = this.resolveInstructions(customParameters);
+    const voiceId = this.resolveVoiceId(customParameters);
+    if (voiceId) {
+      console.log(`🗣️ [${callSid}] Voz seleccionada (labsId): ${voiceId}`);
+    } else {
+      console.warn(
+        `⚠️ [${callSid}] No se recibió labsId/voiceId; se usará fallback de entorno`,
+      );
+    }
+    const language = this.resolveLanguage(customParameters);
+    console.log(`🌐 [${callSid}] Idioma configurado para STT/TTS: ${language}`);
 
     console.log(
       `🧠 [${callSid}] Session.instructions configurado: "${instructions.substring(0, 100)}..."`,
@@ -284,6 +296,8 @@ export class StreamsGateway {
       client,
       customParameters,
       instructions,
+      voiceId,
+      language,
       queuedAudio: [],
       readyForAudio: false,
       pendingGreeting: this.resolveGreeting(customParameters),
@@ -309,7 +323,8 @@ export class StreamsGateway {
       return;
     }
 
-    const url = `${this.elevenLabsSttUrl}?model=${encodeURIComponent(this.elevenLabsSttModel)}&language=${encodeURIComponent(this.elevenLabsLanguage)}`;
+    const language = session.language || this.elevenLabsLanguage;
+    const url = `${this.elevenLabsSttUrl}?model=${encodeURIComponent(this.elevenLabsSttModel)}&language=${encodeURIComponent(language)}`;
 
     const ws = new WebSocket(url, {
       headers: {
@@ -328,7 +343,7 @@ export class StreamsGateway {
           JSON.stringify({
             event: 'start',
             model: this.elevenLabsSttModel,
-            language: this.elevenLabsLanguage,
+            language,
             format: 'json',
             encoding: 'mulaw',
             sample_rate: 8000,
@@ -573,6 +588,30 @@ export class StreamsGateway {
     const instructions =
       customParameters?.instructions?.trim() || this.defaultInstructions;
     return instructions;
+  }
+
+  private resolveVoiceId(
+    customParameters?: Record<string, string>,
+  ): string | undefined {
+    const customVoice =
+      customParameters?.labsId ||
+      customParameters?.voiceId ||
+      customParameters?.voice_id ||
+      customParameters?.agentVoiceId;
+    const normalized = customVoice?.trim();
+    if (normalized) {
+      return normalized;
+    }
+    const envVoice = this.elevenLabsTtsVoiceId?.trim();
+    return envVoice || undefined;
+  }
+
+  private resolveLanguage(customParameters?: Record<string, string>): string {
+    const customLanguage = customParameters?.language?.trim();
+    if (customLanguage) {
+      return customLanguage;
+    }
+    return this.elevenLabsLanguage;
   }
 
   private resolveGreeting(
@@ -1111,14 +1150,14 @@ export class StreamsGateway {
       return;
     }
 
-    if (!this.elevenLabsTtsVoiceId) {
+    const voiceId = session.voiceId || this.elevenLabsTtsVoiceId;
+    if (!voiceId) {
       console.error(
-        `❌ [${session.callSid}] ELEVENLABS_TTS_VOICE_ID no configurado. Por favor, configura una variable de entorno ELEVENLABS_TTS_VOICE_ID con un ID de voz válido de ElevenLabs (ej: pNInz6obpgDQGcFmaJgB).`,
+        `❌ [${session.callSid}] No se pudo resolver labsId/voiceId (customParameters ni entorno).`,
       );
       return;
     }
 
-    const voiceId = this.elevenLabsTtsVoiceId;
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream`;
 
     console.log(

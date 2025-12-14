@@ -124,6 +124,19 @@ export class CallsController {
           ? twilioConfig.agentInstruction
           : undefined,
       );
+      addStreamParameter(
+        'labsId',
+        typeof agentProfile.labsId === 'string'
+          ? (agentProfile.labsId as string)
+          : undefined,
+      );
+      addStreamParameter(
+        'language',
+        typeof (agentProfile.language as Record<string, unknown>)?.code ===
+          'string'
+          ? ((agentProfile.language as Record<string, unknown>).code as string)
+          : undefined,
+      );
 
       // Debug: mostrar TwiML generado
       const twimlString = r.toString();

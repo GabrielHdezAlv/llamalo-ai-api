@@ -21,6 +21,7 @@ ELEVENLABS_TTS_STYLE=0
 ELEVENLABS_TTS_SIMILARITY=0.75
 ELEVENLABS_TTS_SPEAKER_BOOST=true
 ELEVENLABS_TTS_VOICE_SPEED=1.0
+ELEVENLABS_TTS_OUTPUT_FORMAT=ulaw_8000  # Compatible con Twilio Media Streams
 
 # LLM
 OPENAI_API_KEY=sk-...
@@ -37,6 +38,8 @@ TWILIO_AUTH_TOKEN=...
 
 - Audio esperado: Twilio Media Streams (mulaw, 8 kHz) enviado vía WebSocket al STT de ElevenLabs.
 - TTS: se solicita en `ulaw_8000` para reproducir directamente en Twilio.
+- Si el agente tiene `agent.labsId` configurado en Firestore, se envía como `labsId` en los parámetros del stream y se usa como voz; si no, se usa `ELEVENLABS_TTS_VOICE_ID` como fallback.
+- El idioma puede viajar como `language` en los parámetros del stream (p.ej. `es`); si no llega, se usa `ELEVENLABS_LANGUAGE`.
 - Ajusta `ELEVENLABS_TTS_VOICE_SPEED`, `ELEVENLABS_TTS_STABILITY` y `ELEVENLABS_TTS_SIMILARITY` según el tono deseado.
 - Si necesitas fallback a otros STT/TTS, cambia `STT_PROVIDER`/`TTS_PROVIDER`.
 
