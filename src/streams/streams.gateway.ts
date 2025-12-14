@@ -350,7 +350,7 @@ export class StreamsGateway {
       const status = res.statusCode;
       const statusMessage = res.statusMessage;
       const chunks: Buffer[] = [];
-      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
       res.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf-8');
         console.error(
@@ -1159,6 +1159,8 @@ export class StreamsGateway {
     if (wasGreetingPending) {
       session.allowInterruptions = false;
     }
+    // Asegurar que no haya marca de interrupción previa antes de iniciar TTS
+    session.interrupted = false;
 
     console.log(`🔄 [${session.callSid}] Llamando a streamElevenLabsTTS...`);
     session.currentTTSRequest = this.streamElevenLabsTTS(session, text)
@@ -1338,7 +1340,7 @@ export class StreamsGateway {
         let totalBytes = 0;
 
         audioStream.on('data', (chunk: Buffer) => {
-          if (session.interrupted) {
+          if (session.allowInterruptions !== false && session.interrupted) {
             console.log(
               `🛑 [${session.callSid}] TTS interrumpido, cancelando stream`,
             );
