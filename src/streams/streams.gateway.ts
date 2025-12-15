@@ -115,8 +115,8 @@ export class StreamsGateway {
   private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
   private readonly elevenLabsTtsVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? 'zRUArUmK0DWSP7K6mmLW';
-  private readonly elevenLabsTtsOutputFormat =
-    process.env.ELEVENLABS_TTS_OUTPUT_FORMAT ?? 'ulaw_8000';
+  // Forzamos PCM 16k para decodificar y convertir localmente a μ-law
+  private readonly elevenLabsTtsOutputFormat = 'pcm_16000' as const;
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
   private readonly elevenLabsTtsStability = Number(
@@ -1335,7 +1335,6 @@ export class StreamsGateway {
   private async streamElevenLabsTTS(
     session: CallSession,
     text: string,
-    format?: string,
   ): Promise<void> {
     if (!this.elevenLabsApiKey) {
       console.error(
@@ -1358,9 +1357,7 @@ export class StreamsGateway {
       session.agentSpeaking = true;
 
       // Logging adicional para debugging
-      const normalizedFormat = this.normalizeTtsFormat(
-        format ?? this.elevenLabsTtsOutputFormat,
-      );
+      const normalizedFormat = 'pcm_16000' as const;
 
       console.log(
         `📋 Payload streamElevenLabsTTS: ${JSON.stringify({
@@ -1381,14 +1378,15 @@ export class StreamsGateway {
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
-          output_format: normalizedFormat,
+          // Forzamos siempre PCM16k para evitar MP3/ID3 inesperados
+          output_format: 'pcm_16000',
         },
         {
           headers: {
             'xi-api-key': this.elevenLabsApiKey,
             'Content-Type': 'application/json',
-            // Solicitar flujo binario crudo; evitar audio/mpeg
-            Accept: 'application/octet-stream',
+            // Solicitar flujo binario PCM; evitar audio/mpeg
+            Accept: 'audio/pcm',
           },
           responseType: 'stream',
           timeout: 10000, // Timeout reducido a 10 segundos
