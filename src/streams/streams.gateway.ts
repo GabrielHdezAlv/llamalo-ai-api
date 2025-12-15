@@ -115,8 +115,8 @@ export class StreamsGateway {
   private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
   private readonly elevenLabsTtsVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? 'zRUArUmK0DWSP7K6mmLW';
-  // Forzamos PCM 16k para decodificar y convertir localmente a μ-law
-  private readonly elevenLabsTtsOutputFormat = 'pcm_16000' as const;
+  // Para Twilio usamos μ-law 8k directo (evita conversión adicional)
+  private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const;
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
   private readonly elevenLabsTtsStability = Number(
@@ -1351,14 +1351,15 @@ export class StreamsGateway {
       return;
     }
 
-    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream`;
+    const normalizedFormat = this.normalizeTtsFormat(
+      this.elevenLabsTtsOutputFormat,
+    );
+    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${encodeURIComponent(normalizedFormat)}`;
 
     try {
       session.agentSpeaking = true;
 
       // Logging adicional para debugging
-      const normalizedFormat = 'pcm_16000' as const;
-
       console.log(
         `📋 Payload streamElevenLabsTTS: ${JSON.stringify({
           text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
@@ -1378,15 +1379,13 @@ export class StreamsGateway {
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
-          // Forzamos siempre PCM16k para evitar MP3/ID3 inesperados
-          output_format: 'pcm_16000',
+          // output_format va en la query; en el body mantenemos solo para trazabilidad
+          output_format: normalizedFormat,
         },
         {
           headers: {
             'xi-api-key': this.elevenLabsApiKey,
             'Content-Type': 'application/json',
-            // Solicitar flujo binario PCM; evitar audio/mpeg
-            Accept: 'audio/pcm',
           },
           responseType: 'stream',
           timeout: 10000, // Timeout reducido a 10 segundos
