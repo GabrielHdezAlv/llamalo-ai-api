@@ -75,8 +75,6 @@ export class CallsController {
           ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
           : 'ws://localhost:3000/voice/stream';
 
-      console.log('🔗 WebSocket URL:', wsUrl);
-
       const connect = r.connect();
       const stream = connect.stream({
         url: wsUrl,
@@ -140,7 +138,6 @@ export class CallsController {
 
       // Debug: mostrar TwiML generado
       const twimlString = r.toString();
-      console.log('📄 TwiML generado:', twimlString);
       console.log('✅ TwiML generado correctamente.');
       res.type('text/xml').send(twimlString);
     } catch (error) {

@@ -262,13 +262,13 @@ export class StreamsGateway {
     );
     if (customParameters?.greetingUrl) {
       console.warn(
-        `ℹ️ [${callSid}] Se recibió greetingUrl (${customParameters.greetingUrl}) pero Deepgram Voice Agent no soporta reproducir URLs externas.`,
+        `ℹ️ Se recibió greetingUrl (${customParameters.greetingUrl}) pero Deepgram Voice Agent no soporta reproducir URLs externas.`,
       );
     }
 
     if (customParameters?.instructions) {
       console.log(
-        `📋 [${callSid}] AgentInstruction recibido desde Twilio: "${customParameters.instructions.substring(0, 100)}..."`,
+        `📋 AgentInstruction recibido desde Twilio: "${customParameters.instructions.substring(0, 100)}..."`,
       );
     } else {
       console.log(
@@ -278,19 +278,12 @@ export class StreamsGateway {
 
     const instructions = this.resolveInstructions(customParameters);
     const voiceId = this.resolveVoiceId(customParameters);
-    if (voiceId) {
-      console.log(`🗣️ [${callSid}] Voz seleccionada (labsId): ${voiceId}`);
-    } else {
+    if (!voiceId) {
       console.warn(
         `⚠️ [${callSid}] No se recibió labsId/voiceId; se usará fallback de entorno`,
       );
     }
     const language = this.resolveLanguage(customParameters);
-    console.log(`🌐 [${callSid}] Idioma configurado para STT/TTS: ${language}`);
-
-    console.log(
-      `🧠 [${callSid}] Session.instructions configurado: "${instructions.substring(0, 100)}..."`,
-    );
 
     const session: CallSession = {
       callSid,
@@ -364,7 +357,7 @@ export class StreamsGateway {
     });
 
     ws.on('open', () => {
-      console.log(`🔌 [${session.callSid}] STT ElevenLabs conectado`);
+      console.log(`🔌 STT ElevenLabs conectado`);
       try {
         ws.send(
           JSON.stringify({
@@ -395,9 +388,7 @@ export class StreamsGateway {
 
     ws.on('close', (code) => {
       if (code !== 1000 && code !== 1001) {
-        console.log(
-          `🔌 [${session.callSid}] Conexión ElevenLabs STT cerrada (${code})`,
-        );
+        console.log(`🔌 Conexión ElevenLabs STT cerrada (${code})`);
       }
       session.readyForAudio = false;
     });
@@ -476,12 +467,12 @@ export class StreamsGateway {
 
     if (isFinal) {
       console.log(
-        `📝 [${session.callSid}] Transcripción final: "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
+        `📝 Transcripción final: "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
       );
       void this.handleFinalTranscript(session, text.trim());
     } else {
       console.log(
-        `✏️ [${session.callSid}] Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`,
+        `✏️ Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`,
       );
       // Si el usuario habla durante TTS, interrumpir
       if (session.agentSpeaking && !session.interrupted) {
@@ -497,7 +488,7 @@ export class StreamsGateway {
     session.userSpeakingStartTime = undefined;
     session.history.push({ role: 'user', content: text });
     console.log(
-      `🧾 [${session.callSid}] Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
+      `🧾 Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
     );
     try {
       const completion = await this.openai.chat.completions.create({
@@ -522,7 +513,7 @@ export class StreamsGateway {
       session.agentSpeaking = true;
       session.interrupted = false;
       console.log(
-        `💬 [${session.callSid}] Respuesta LLM: "${content.substring(0, 120)}${content.length > 120 ? '...' : ''}"`,
+        `💬 Respuesta LLM: "${content.substring(0, 120)}${content.length > 120 ? '...' : ''}"`,
       );
       await this.streamTTSFromText(session, content);
       session.agentSpeaking = false;
@@ -554,12 +545,7 @@ export class StreamsGateway {
       this.handleDeepgramMessage(session, data, Boolean(isBinary)),
     );
 
-    ws.on('close', (code) => {
-      if (code !== 1000 && code !== 1001) {
-        console.log(
-          `🔌 [${session.callSid}] Conexión Deepgram cerrada (${code})`,
-        );
-      }
+    ws.on('close', () => {
       session.readyForAudio = false;
       this.stopKeepAlive(session);
     });
@@ -887,15 +873,9 @@ export class StreamsGateway {
       switch (type) {
         case 'Welcome':
           session.deepgramRequestId = this.asText(message.request_id);
-          if (session.deepgramRequestId) {
-            console.log(
-              `🆔 [${session.callSid}] Deepgram Request ID: ${session.deepgramRequestId}`,
-            );
-          }
           break;
         case 'SettingsApplied':
           session.readyForAudio = true;
-          console.log(`⚙️ [${session.callSid}] Deepgram listo`);
           this.flushQueuedAudio(session);
           this.maybeSendPendingGreeting(session);
           break;
@@ -910,11 +890,11 @@ export class StreamsGateway {
               session.responseLatencies.reduce((a, b) => a + b, 0) /
               session.responseLatencies.length;
             console.log(
-              `🗣️ [${session.callSid}] Agente hablando (latencia: ${latency}ms, promedio: ${Math.round(avgLatency)}ms)`,
+              `🗣️ Agente hablando (latencia: ${latency}ms, promedio: ${Math.round(avgLatency)}ms)`,
             );
             session.userSpeakingStartTime = undefined;
           } else {
-            console.log(`🗣️ [${session.callSid}] Agente hablando`);
+            console.log(`🗣️ Agente hablando`);
           }
           break;
         case 'AgentAudioDone':
@@ -923,15 +903,13 @@ export class StreamsGateway {
           session.agentSpeaking = false;
           session.interrupted = false;
           session.interceptedResponseText = '';
-          console.log(`✅ [${session.callSid}] Agente terminó de hablar`);
+          console.log(`✅ Agente terminó de hablar`);
           break;
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
           // Si el agente está hablando, interrumpir
           if (session.agentSpeaking && session.allowInterruptions !== false) {
-            console.log(
-              `🛑 [${session.callSid}] Usuario interrumpió al agente`,
-            );
+            console.log(`🛑 Usuario interrumpió al agente`);
             session.interrupted = true;
             session.agentSpeaking = false;
           }
@@ -942,7 +920,7 @@ export class StreamsGateway {
         case 'ConversationText': {
           // Loggear TODOS los eventos ConversationText para debugging
           console.log(
-            `🔍 [${session.callSid}] ConversationText recibido (agentSpeaking: ${session.agentSpeaking}):`,
+            `🔍 ConversationText recibido (agentSpeaking: ${session.agentSpeaking}):`,
             JSON.stringify(message).substring(0, 500),
           );
 
@@ -951,7 +929,7 @@ export class StreamsGateway {
           const role = this.extractRoleFromConversationText(message);
 
           console.log(
-            `🔍 [${session.callSid}] Texto extraído: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}", Rol: ${role || 'null'}`,
+            `🔍 Texto extraído: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}", Rol: ${role || 'null'}`,
           );
 
           if (text) {
@@ -960,7 +938,7 @@ export class StreamsGateway {
               if (!session.agentSpeaking) {
                 // Si no está hablando pero hay texto del agente, podría ser el greeting
                 console.log(
-                  `📝 [${session.callSid}] Texto del agente recibido antes de AgentStartedSpeaking (probablemente greeting)`,
+                  `📝 Texto del agente recibido antes de AgentStartedSpeaking (probablemente greeting)`,
                 );
                 session.agentSpeaking = true; // Marcar como hablando para procesar
                 // IMPORTANTE: Resetear interrupted cuando el agente empieza a hablar
@@ -972,7 +950,7 @@ export class StreamsGateway {
                 // (puede pasar si el usuario interrumpió pero el agente continúa)
                 if (session.interrupted) {
                   console.log(
-                    `🔄 [${session.callSid}] Reseteando interrupted=false porque el agente continúa hablando`,
+                    `🔄 Reseteando interrupted=false porque el agente continúa hablando`,
                   );
                   session.interrupted = false;
                 }
@@ -982,13 +960,13 @@ export class StreamsGateway {
               session.interceptedResponseText += text;
               // Generar TTS en tiempo real para cada fragmento
               console.log(
-                `📝 [${session.callSid}] Texto interceptado del agente: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+                `📝 Texto interceptado del agente: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
               );
               void this.streamTTSFromText(session, text);
             } else if (role === 'user') {
               // Ignorar texto del usuario en ConversationText
               console.log(
-                `👤 [${session.callSid}] Texto del usuario en ConversationText (ignorado)`,
+                `👤 Texto del usuario en ConversationText (ignorado)`,
               );
             }
           } else {
@@ -1005,7 +983,7 @@ export class StreamsGateway {
           if (text && session.agentSpeaking) {
             session.interceptedResponseText += text;
             console.log(
-              `📝 [${session.callSid}] Texto interceptado de ${type}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+              `📝 Texto interceptado de ${type}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
             );
             void this.streamTTSFromText(session, text);
           }
@@ -1038,7 +1016,7 @@ export class StreamsGateway {
         default:
           // Loggear TODOS los eventos para debugging
           console.log(
-            `🔍 [${session.callSid}] Evento Deepgram recibido: ${type}`,
+            `🔍 Evento Deepgram recibido: ${type}`,
             JSON.stringify(message).substring(0, 500),
           );
       }
@@ -1136,7 +1114,7 @@ export class StreamsGateway {
   private async streamTTSFromText(session: CallSession, text: string) {
     if (session.interrupted || !text.trim()) {
       console.log(
-        `⏸️ [${session.callSid}] TTS cancelado (interrupted: ${session.interrupted}, text vacío: ${!text.trim()})`,
+        `⏸️ TTS cancelado (interrupted: ${session.interrupted}, text vacío: ${!text.trim()})`,
       );
       return;
     }
@@ -1144,18 +1122,12 @@ export class StreamsGateway {
     // Evitar solapes de TTS
     if (session.currentTTSRequest) {
       try {
-        console.log(
-          `⏳ [${session.callSid}] Esperando TTS anterior antes de procesar nuevo texto`,
-        );
+        console.log(`⏳ Esperando TTS anterior antes de procesar nuevo texto`);
         await session.currentTTSRequest;
       } catch {
         // Ignorar errores previos
       }
     }
-
-    console.log(
-      `🎵 [${session.callSid}] Iniciando TTS para texto: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
-    );
 
     // Si es el primer TTS (greeting), deshabilitar interrupciones
     const wasGreetingPending = session.greetingPlaybackDone !== true;
@@ -1165,11 +1137,10 @@ export class StreamsGateway {
     // Asegurar que no haya marca de interrupción previa antes de iniciar TTS
     session.interrupted = false;
 
-    console.log(`🔄 [${session.callSid}] Llamando a streamElevenLabsTTS...`);
     session.currentTTSRequest = this.streamElevenLabsTTS(session, text)
       .then(() => {
         console.log(
-          `✅ [${session.callSid}] TTS completado para: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
+          `✅ TTS completado para: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
         );
       })
       .catch((error) => {
@@ -1186,18 +1157,15 @@ export class StreamsGateway {
         }
       })
       .finally(() => {
-        console.log(`🏁 [${session.callSid}] Finalizando TTS request`);
+        console.log(`🏁 Finalizando TTS request`);
         session.currentTTSRequest = undefined;
         if (wasGreetingPending) {
           session.allowInterruptions = true;
           session.greetingPlaybackDone = true;
         }
       });
-    console.log(
-      `⏳ [${session.callSid}] Esperando a que termine el TTS request...`,
-    );
     await session.currentTTSRequest;
-    console.log(`✅ [${session.callSid}] TTS request terminado`);
+    console.log(`✅ TTS request terminado`);
   }
 
   private async streamElevenLabsTTS(
@@ -1205,7 +1173,7 @@ export class StreamsGateway {
     text: string,
   ): Promise<void> {
     console.log(
-      `🚀 [${session.callSid}] streamElevenLabsTTS llamado con texto: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+      `🚀 streamElevenLabsTTS llamado con texto: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
     );
 
     if (!this.elevenLabsApiKey) {
@@ -1225,25 +1193,12 @@ export class StreamsGateway {
 
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream`;
 
-    console.log(
-      `🔗 [${session.callSid}] URL ElevenLabs: ${url}, voiceId: ${voiceId}`,
-    );
-
     try {
       session.agentSpeaking = true;
-      console.log(
-        `🔊 [${session.callSid}] Iniciando TTS ElevenLabs (${text.length} chars, voice=${voiceId})`,
-      );
-      console.log(
-        `📤 [${session.callSid}] Enviando petición POST a ElevenLabs...`,
-      );
 
       // Logging adicional para debugging
       console.log(
-        `🔑 [${session.callSid}] API Key presente: ${this.elevenLabsApiKey ? 'Sí' : 'No'}`,
-      );
-      console.log(
-        `📋 [${session.callSid}] Payload: ${JSON.stringify({
+        `📋 Payload: ${JSON.stringify({
           text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
           model_id: this.elevenLabsTtsModelId,
           output_format: 'ulaw_8000',
@@ -1301,10 +1256,10 @@ export class StreamsGateway {
       }
 
       console.log(
-        `✅ [${session.callSid}] Respuesta recibida de ElevenLabs, status: ${response.status}`,
+        `✅ Respuesta recibida de ElevenLabs, status: ${response.status}`,
       );
       console.log(
-        `📡 [${session.callSid}] Headers de respuesta:`,
+        `📡 Headers de respuesta:`,
         JSON.stringify(response.headers).substring(0, 300),
       );
 
@@ -1320,9 +1275,7 @@ export class StreamsGateway {
       // Forzar el stream a modo flowing para que emita eventos 'data'
       audioStream.resume();
 
-      console.log(
-        `📡 [${session.callSid}] Stream ElevenLabs creado correctamente`,
-      );
+      console.log(`📡 Stream ElevenLabs creado correctamente`);
 
       const cancel = () => {
         session.agentSpeaking = false;
@@ -1333,9 +1286,7 @@ export class StreamsGateway {
       await new Promise<void>((resolve, reject) => {
         // Timeout de seguridad (30 segundos)
         const timeout = setTimeout(() => {
-          console.error(
-            `⏱️ [${session.callSid}] Timeout esperando stream ElevenLabs TTS`,
-          );
+          console.error(`⏱️ Timeout esperando stream ElevenLabs TTS`);
           cancel();
           reject(new Error('Timeout esperando stream ElevenLabs TTS'));
         }, 30000);
@@ -1353,27 +1304,19 @@ export class StreamsGateway {
           }
           chunksReceived++;
           totalBytes += chunk.length;
-          if (chunksReceived === 1 || chunksReceived % 10 === 0) {
-            console.log(
-              `📦 [${session.callSid}] Chunk ${chunksReceived} recibido (${chunk.length} bytes, total: ${totalBytes} bytes)`,
-            );
-          }
           this.relayAudioToTwilio(session, Buffer.from(chunk));
         });
         audioStream.on('end', () => {
           clearTimeout(timeout);
           session.ttsCancelStream = undefined;
           console.log(
-            `✅ [${session.callSid}] Stream ElevenLabs TTS terminado (${chunksReceived} chunks, ${totalBytes} bytes totales)`,
+            `✅ Stream ElevenLabs TTS terminado (${chunksReceived} chunks, ${totalBytes} bytes totales)`,
           );
           resolve();
         });
         audioStream.on('close', () => {
           clearTimeout(timeout);
           session.ttsCancelStream = undefined;
-          console.log(
-            `✅ [${session.callSid}] Stream ElevenLabs TTS cerrado (${chunksReceived} chunks, ${totalBytes} bytes totales)`,
-          );
           resolve();
         });
         audioStream.on('error', (err) => {
@@ -1422,7 +1365,7 @@ export class StreamsGateway {
       if (!session.interrupted) {
         session.agentSpeaking = false;
         console.log(
-          `✅ [${session.callSid}] TTS ElevenLabs completado en ${Date.now() - (session.userSpeakingStartTime || Date.now())}ms`,
+          `✅ TTS ElevenLabs completado en ${Date.now() - (session.userSpeakingStartTime || Date.now())}ms`,
         );
       }
     }
@@ -1437,7 +1380,7 @@ export class StreamsGateway {
 
     if (this.usingElevenLabs(session)) {
       console.log(
-        `👋 [${session.callSid}] Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
+        `👋 Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
       );
       session.greetingSent = true;
       void this.streamTTSFromText(session, greeting).catch((error) => {
@@ -1449,10 +1392,6 @@ export class StreamsGateway {
       });
       return;
     }
-
-    console.log(
-      `👋 [${session.callSid}] Enviando greeting a Deepgram: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
-    );
 
     // Enviar greeting a Deepgram usando InjectAgentMessage
     // Esto hará que Deepgram lo procese y genere la respuesta, que luego interceptaremos
@@ -1510,8 +1449,6 @@ export class StreamsGateway {
   private cleanupSession(callSid: string) {
     const session = this.sessions.get(callSid);
     if (!session) return;
-
-    console.log(`🧹 [${callSid}] Limpiando sesión`);
 
     this.stopKeepAlive(session);
 

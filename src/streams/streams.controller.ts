@@ -6,7 +6,6 @@ export class StreamsController {
   @Get('stream')
   handleWebSocket(@Req() req: Request, @Res() res: Response) {
     console.log('🔌 Petición recibida en /voice/stream');
-    console.log('📋 Headers:', req.headers);
     console.log('🌐 URL:', req.url);
     console.log('🔍 Upgrade header:', req.headers.upgrade);
     console.log('🔍 Connection header:', req.headers.connection);
