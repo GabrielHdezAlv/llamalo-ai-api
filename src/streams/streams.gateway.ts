@@ -115,8 +115,8 @@ export class StreamsGateway {
   private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
   private readonly elevenLabsTtsVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? 'zRUArUmK0DWSP7K6mmLW';
-  // Pedimos PCM 16k y convertimos a μ-law 8k con filtro sencillo
-  private readonly elevenLabsTtsOutputFormat = 'pcm_16000' as const;
+  // Para Twilio usamos μ-law 8k directo (evita conversión adicional)
+  private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const;
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
   private readonly elevenLabsTtsStability = Number(
@@ -776,32 +776,29 @@ export class StreamsGateway {
   }
 
   /**
-   * Convierte PCM 16-bit 16kHz a μ-law 8-bit 8kHz aplicando un filtrado
-   * sencillo (promedio de pares) antes de diezmado para reducir aliasing.
+   * Convierte PCM 16-bit 16kHz a μ-law 8-bit 8kHz
    */
   private convertPcm16kToUlaw8k(pcm16k: Buffer): Buffer {
+    // Downsample: tomar cada segunda muestra (16kHz -> 8kHz)
     // Cada muestra PCM es 2 bytes (16-bit)
     const samples16k = pcm16k.length / 2;
     const samples8k = Math.floor(samples16k / 2);
     const ulaw8k = Buffer.alloc(samples8k);
 
     for (let i = 0; i < samples8k; i++) {
+      // Tomar cada segunda muestra para downsampling
       const sampleIndex = i * 2;
-      const idxA = sampleIndex * 2;
-      const idxB = idxA + 2;
-      if (idxB + 1 >= pcm16k.length) break;
+      if (sampleIndex * 2 + 1 >= pcm16k.length) break;
 
-      // Leer dos muestras consecutivas y promediar (filtro FIR simple)
-      const a = pcm16k.readInt16LE(idxA);
-      const b = pcm16k.readInt16LE(idxB);
-      const avg = (a + b) / 2;
+      // Leer muestra PCM 16-bit signed (little-endian)
+      const pcmSample = pcm16k.readInt16LE(sampleIndex * 2);
 
-      // μ-law estándar (μ = 255)
-      const pcmSample = avg;
+      // Convertir a μ-law usando el algoritmo estándar
       const sign = pcmSample < 0 ? 0x80 : 0x00;
       let magnitude = Math.abs(pcmSample);
       if (magnitude > 32635) magnitude = 32635; // Clamp
 
+      // Algoritmo μ-law (μ = 255)
       let exponent = 0;
       let expMask = 0x4000;
       while (magnitude < expMask && exponent < 8) {
