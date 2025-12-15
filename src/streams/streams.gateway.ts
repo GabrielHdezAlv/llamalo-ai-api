@@ -3,6 +3,11 @@ import WebSocket, { RawData } from 'ws';
 import axios from 'axios';
 import OpenAI from 'openai';
 import { Readable } from 'stream';
+import { spawn } from 'child_process';
+// ffmpeg-static proporciona la ruta binaria para decodificar MP3 a PCM
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import ffmpegStaticPath from 'ffmpeg-static';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -809,7 +814,7 @@ export class StreamsGateway {
     return ulaw8k;
   }
 
-  private relayAudioToTwilio(
+  private async relayAudioToTwilio(
     session: CallSession,
     chunk: Buffer,
     ttsFormat?: string,
@@ -834,6 +839,15 @@ export class StreamsGateway {
       const normalizedFormat = this.normalizeTtsFormat(
         ttsFormat ?? this.elevenLabsTtsOutputFormat,
       );
+
+      // Guardarraíl: si detectamos MP3 en relay, decodificar y reconvertir
+      if (this.isMp3Header(audioChunk)) {
+        console.warn(
+          `⚠️ [${session.callSid}] Chunk con cabecera MP3 en relay; decodificando a PCM16k`,
+        );
+        const pcm16k = await this.decodeMp3ToPcm16k(audioChunk);
+        audioChunk = pcm16k;
+      }
 
       const { payload, stripped } = this.stripWavHeaderIfPresent(audioChunk);
       if (stripped) {
@@ -928,6 +942,61 @@ export class StreamsGateway {
       return true;
     }
     return false;
+  }
+
+  private async decodeMp3AndRelay(
+    session: CallSession,
+    mp3Buffer: Buffer,
+  ): Promise<void> {
+    const pcm16k = await this.decodeMp3ToPcm16k(mp3Buffer);
+    const ulaw = this.convertPcm16kToUlaw8k(pcm16k);
+    await this.relayAudioToTwilio(session, ulaw, 'ulaw_8000');
+  }
+
+  private async decodeMp3ToPcm16k(buffer: Buffer): Promise<Buffer> {
+    const ffmpegBinary = (ffmpegStaticPath as string) || '';
+    if (!ffmpegBinary) {
+      throw new Error('ffmpeg-static no disponible para decodificar MP3');
+    }
+    return new Promise<Buffer>((resolve, reject) => {
+      const args = [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'mp3',
+        '-i',
+        'pipe:0',
+        '-ac',
+        '1',
+        '-ar',
+        '16000',
+        '-f',
+        's16le',
+        'pipe:1',
+      ];
+
+      const proc = spawn(ffmpegBinary, args);
+      const chunks: Buffer[] = [];
+      const errors: Buffer[] = [];
+
+      proc.stdout.on('data', (data) => chunks.push(data as Buffer));
+      proc.stderr.on('data', (data) => errors.push(data as Buffer));
+      proc.on('error', (err) => reject(err));
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          return reject(
+            new Error(
+              `ffmpeg salió con código ${code}: ${Buffer.concat(errors).toString('utf-8')}`,
+            ),
+          );
+        }
+        resolve(Buffer.concat(chunks));
+      });
+
+      proc.stdin.on('error', (err) => reject(err));
+      proc.stdin.end(buffer);
+    });
   }
 
   private handleDeepgramMessage(
@@ -1248,7 +1317,6 @@ export class StreamsGateway {
     session: CallSession,
     text: string,
     format?: string,
-    retried: boolean = false,
   ): Promise<void> {
     if (!this.elevenLabsApiKey) {
       console.error(
@@ -1300,8 +1368,8 @@ export class StreamsGateway {
           headers: {
             'xi-api-key': this.elevenLabsApiKey,
             'Content-Type': 'application/json',
-            Accept:
-              normalizedFormat === 'ulaw_8000' ? 'audio/basic' : 'audio/pcm',
+            // Solicitar flujo binario crudo; evitar audio/mpeg
+            Accept: 'application/octet-stream',
           },
           responseType: 'stream',
           timeout: 10000, // Timeout reducido a 10 segundos
@@ -1343,6 +1411,9 @@ export class StreamsGateway {
         JSON.stringify(response.headers).substring(0, 300),
       );
       const contentType = (response.headers['content-type'] as string) || '';
+      console.log(
+        `📡 Content-Type recibido de ElevenLabs: ${contentType || 'desconocido'}`,
+      );
 
       const audioStream = response.data as Readable;
 
@@ -1371,6 +1442,7 @@ export class StreamsGateway {
         }, 30000);
 
         let firstChunkChecked = false;
+        let mp3Chunks: Buffer[] | null = null;
 
         audioStream.on('data', (chunk: Buffer) => {
           if (session.allowInterruptions !== false && session.interrupted) {
@@ -1385,46 +1457,65 @@ export class StreamsGateway {
           // Detectar MP3 por content-type o cabecera ID3/FF FB y reintentar en PCM16k -> μ-law
           if (!firstChunkChecked) {
             firstChunkChecked = true;
-            const isMp3 =
-              contentType.toLowerCase().includes('audio/mpeg') ||
-              this.isMp3Header(chunk);
+            const ct = contentType.toLowerCase();
+            const isMp3 = ct.includes('audio/mpeg') || this.isMp3Header(chunk);
             if (isMp3) {
               console.error(
-                `❌ [${session.callSid}] ElevenLabs devolvió MP3/ID3 pese a pedir ${normalizedFormat}; reintentando con pcm_16000`,
+                `❌ [${session.callSid}] ElevenLabs devolvió MP3/ID3 pese a pedir ${normalizedFormat}; decodificando localmente`,
               );
-              clearTimeout(timeout);
-              cancel();
-              // Reintento único en PCM16k, luego convertiremos a μ-law
-              if (!retried) {
-                void this.streamElevenLabsTTS(session, text, 'pcm_16000', true)
-                  .then(resolve)
-                  .catch(reject);
-              } else {
-                reject(
-                  new Error(
-                    'ElevenLabs devolvió MP3 incluso tras reintento pcm_16000',
-                  ),
-                );
-              }
+              mp3Chunks = [];
+              mp3Chunks.push(chunk);
               return;
             }
           }
 
-          this.relayAudioToTwilio(
+          void this.relayAudioToTwilio(
             session,
             Buffer.from(chunk),
             normalizedFormat,
-          );
+          ).catch((err) => {
+            console.error(
+              `❌ [${session.callSid}] Error enviando chunk TTS a Twilio:`,
+              err,
+            );
+            clearTimeout(timeout);
+            cancel();
+            reject(err instanceof Error ? err : new Error(String(err)));
+          });
         });
         audioStream.on('end', () => {
           clearTimeout(timeout);
           session.ttsCancelStream = undefined;
-          resolve();
+          if (mp3Chunks && mp3Chunks.length) {
+            void this.decodeMp3AndRelay(session, Buffer.concat(mp3Chunks))
+              .then(resolve)
+              .catch((err) => {
+                console.error(
+                  `❌ [${session.callSid}] Error decodificando MP3 de ElevenLabs:`,
+                  err,
+                );
+                reject(err instanceof Error ? err : new Error(String(err)));
+              });
+          } else {
+            resolve();
+          }
         });
         audioStream.on('close', () => {
           clearTimeout(timeout);
           session.ttsCancelStream = undefined;
-          resolve();
+          if (mp3Chunks && mp3Chunks.length) {
+            void this.decodeMp3AndRelay(session, Buffer.concat(mp3Chunks))
+              .then(resolve)
+              .catch((err) => {
+                console.error(
+                  `❌ [${session.callSid}] Error decodificando MP3 de ElevenLabs (close):`,
+                  err,
+                );
+                reject(err instanceof Error ? err : new Error(String(err)));
+              });
+          } else {
+            resolve();
+          }
         });
         audioStream.on('error', (err) => {
           clearTimeout(timeout);
