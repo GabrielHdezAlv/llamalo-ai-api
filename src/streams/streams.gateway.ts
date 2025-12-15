@@ -70,6 +70,7 @@ interface CallSession {
   language?: string;
   queuedAudio: Buffer[];
   outboundBuffer?: Buffer;
+  outboundSendTimer?: NodeJS.Timeout;
   readyForAudio: boolean;
   pendingGreeting?: string;
   greetingSent: boolean;
@@ -870,27 +871,7 @@ export class StreamsGateway {
       console.log(
         `🎵 [${session.callSid}] Chunk TTS outbound fmt=${String(normalizedFormat)} bytes=${audioChunk.length} first8=${firstBytes}`,
       );
-
-      session.outboundBuffer = Buffer.concat([
-        session.outboundBuffer ?? Buffer.alloc(0),
-        audioChunk,
-      ]);
-
-      while (session.outboundBuffer.length >= 160) {
-        const frame = session.outboundBuffer.subarray(0, 160);
-        session.outboundBuffer = session.outboundBuffer.subarray(160);
-
-        session.client.send(
-          JSON.stringify({
-            event: 'media',
-            streamSid: session.streamSid,
-            media: {
-              payload: frame.toString('base64'),
-              track: 'outbound',
-            },
-          }),
-        );
-      }
+      this.enqueueOutboundFrames(session, audioChunk);
     } catch (error) {
       console.error(
         `❌ [${session.callSid}] Error enviando audio a Twilio:`,
@@ -901,6 +882,44 @@ export class StreamsGateway {
 
   private normalizeTtsFormat(format: string): 'ulaw_8000' | 'pcm_16000' {
     return format === 'pcm_16000' ? 'pcm_16000' : 'ulaw_8000';
+  }
+
+  private enqueueOutboundFrames(session: CallSession, audioChunk: Buffer) {
+    session.outboundBuffer = Buffer.concat([
+      session.outboundBuffer ?? Buffer.alloc(0),
+      audioChunk,
+    ]);
+
+    const sendFrame = () => {
+      if (!session.outboundBuffer || session.outboundBuffer.length < 160) {
+        session.outboundSendTimer = undefined;
+        return;
+      }
+      const frame = session.outboundBuffer.subarray(0, 160);
+      session.outboundBuffer = session.outboundBuffer.subarray(160);
+      try {
+        session.client.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid: session.streamSid,
+            media: {
+              payload: frame.toString('base64'),
+              track: 'outbound',
+            },
+          }),
+        );
+      } catch (err) {
+        console.error(
+          `❌ [${session.callSid}] Error enviando frame a Twilio:`,
+          err,
+        );
+      }
+      session.outboundSendTimer = setTimeout(sendFrame, 20);
+    };
+
+    if (!session.outboundSendTimer) {
+      session.outboundSendTimer = setTimeout(sendFrame, 0);
+    }
   }
 
   /**
@@ -1647,6 +1666,11 @@ export class StreamsGateway {
     if (!session) return;
 
     this.stopKeepAlive(session);
+
+    if (session.outboundSendTimer) {
+      clearTimeout(session.outboundSendTimer);
+      session.outboundSendTimer = undefined;
+    }
 
     if (session.ttsCancelStream) {
       session.ttsCancelStream();
