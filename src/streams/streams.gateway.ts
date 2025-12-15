@@ -1443,6 +1443,9 @@ export class StreamsGateway {
 
         let firstChunkChecked = false;
         let mp3Chunks: Buffer[] | null = null;
+        const forceMp3Buffering = contentType
+          .toLowerCase()
+          .includes('audio/mpeg');
 
         audioStream.on('data', (chunk: Buffer) => {
           if (session.allowInterruptions !== false && session.interrupted) {
@@ -1454,17 +1457,23 @@ export class StreamsGateway {
             return;
           }
 
-          // Detectar MP3 por content-type o cabecera ID3/FF FB y reintentar en PCM16k -> μ-law
+          // Si el content-type ya dice MP3, bufferizar todo y decodificar al final
+          if (forceMp3Buffering) {
+            if (!mp3Chunks) mp3Chunks = [];
+            mp3Chunks.push(Buffer.from(chunk));
+            return;
+          }
+
+          // Si el primer chunk (o alguno) muestra cabecera MP3, bufferizar todo y decodificar al final
           if (!firstChunkChecked) {
             firstChunkChecked = true;
-            const ct = contentType.toLowerCase();
-            const isMp3 = ct.includes('audio/mpeg') || this.isMp3Header(chunk);
+            const isMp3 = this.isMp3Header(chunk);
             if (isMp3) {
               console.error(
                 `❌ [${session.callSid}] ElevenLabs devolvió MP3/ID3 pese a pedir ${normalizedFormat}; decodificando localmente`,
               );
               mp3Chunks = [];
-              mp3Chunks.push(chunk);
+              mp3Chunks.push(Buffer.from(chunk));
               return;
             }
           }
