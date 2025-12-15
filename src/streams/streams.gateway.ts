@@ -92,7 +92,8 @@ interface CallSession {
 })
 export class StreamsGateway {
   // Proveedor STT/TTS
-  private readonly sttProvider = process.env.STT_PROVIDER ?? 'elevenlabs';
+  // Forzamos Deepgram como único proveedor STT; ElevenLabs se usa solo para TTS
+  private readonly sttProvider = 'deepgram' as const;
   private readonly ttsProvider = process.env.TTS_PROVIDER ?? 'elevenlabs';
 
   // ElevenLabs
@@ -183,8 +184,8 @@ export class StreamsGateway {
   }
 
   private usingElevenLabs(session?: CallSession): boolean {
-    const provider = session?.sttProvider || this.sttProvider || 'elevenlabs';
-    return provider.toLowerCase() === 'elevenlabs';
+    const provider = session?.sttProvider || this.sttProvider;
+    return provider === 'elevenlabs';
   }
 
   handleConnection(client: WebSocketClient) {
@@ -289,9 +290,7 @@ export class StreamsGateway {
       callSid,
       streamSid: start?.streamSid,
       client,
-      sttProvider: (this.sttProvider || 'elevenlabs') as
-        | 'elevenlabs'
-        | 'deepgram',
+      sttProvider: this.sttProvider,
       customParameters,
       instructions,
       voiceId,
@@ -308,6 +307,12 @@ export class StreamsGateway {
     };
 
     this.sessions.set(callSid, session);
+    if (session.pendingGreeting) {
+      console.log(
+        '👋 Saludo firstInteraction detectado; reproduciendo con ElevenLabs TTS',
+      );
+      this.maybeSendPendingGreeting(session);
+    }
     if (this.usingElevenLabs(session)) {
       void this.connectToElevenLabs(session);
     } else {
@@ -1358,28 +1363,17 @@ export class StreamsGateway {
 
     const greeting = session.pendingGreeting;
 
-    if (this.usingElevenLabs(session)) {
-      console.log(
-        `👋 Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
-      );
-      session.greetingSent = true;
-      void this.streamTTSFromText(session, greeting).catch((error) => {
-        session.greetingSent = false;
-        console.error(
-          `❌ [${session.callSid}] Error reproduciendo greeting con ElevenLabs TTS:`,
-          error,
-        );
-      });
-      return;
-    }
-
-    // Enviar greeting a Deepgram usando InjectAgentMessage
-    // Esto hará que Deepgram lo procese y genere la respuesta, que luego interceptaremos
-    this.sendJsonToDeepgram(session, {
-      type: 'InjectAgentMessage',
-      message: greeting,
-    });
+    console.log(
+      `👋 Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
+    );
     session.greetingSent = true;
+    void this.streamTTSFromText(session, greeting).catch((error) => {
+      session.greetingSent = false;
+      console.error(
+        `❌ [${session.callSid}] Error reproduciendo greeting con ElevenLabs TTS:`,
+        error,
+      );
+    });
   }
 
   private sendJsonToDeepgram(session: CallSession, payload: unknown) {
