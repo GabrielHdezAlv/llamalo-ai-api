@@ -237,7 +237,7 @@ export class StreamsGateway {
         }
 
         if (msg.event === 'stop') {
-          console.log(`🛑 [${currentCallSid || 'unknown'}] Llamada terminada.`);
+          console.log(`🛑 Llamada terminada.`);
           this.cleanupSession(currentCallSid);
           client.close();
         }
@@ -937,9 +937,6 @@ export class StreamsGateway {
             if (role === 'assistant' || role === 'agent' || !role) {
               if (!session.agentSpeaking) {
                 // Si no está hablando pero hay texto del agente, podría ser el greeting
-                console.log(
-                  `📝 Texto del agente recibido antes de AgentStartedSpeaking (probablemente greeting)`,
-                );
                 session.agentSpeaking = true; // Marcar como hablando para procesar
                 // IMPORTANTE: Resetear interrupted cuando el agente empieza a hablar
                 session.interrupted = false;
@@ -959,9 +956,6 @@ export class StreamsGateway {
               // Acumular texto de respuesta del agente
               session.interceptedResponseText += text;
               // Generar TTS en tiempo real para cada fragmento
-              console.log(
-                `📝 Texto interceptado del agente: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
-              );
               void this.streamTTSFromText(session, text);
             } else if (role === 'user') {
               // Ignorar texto del usuario en ConversationText
@@ -1165,17 +1159,12 @@ export class StreamsGateway {
         }
       });
     await session.currentTTSRequest;
-    console.log(`✅ TTS request terminado`);
   }
 
   private async streamElevenLabsTTS(
     session: CallSession,
     text: string,
   ): Promise<void> {
-    console.log(
-      `🚀 streamElevenLabsTTS llamado con texto: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
-    );
-
     if (!this.elevenLabsApiKey) {
       console.error(
         `❌ [${session.callSid}] ELEVENLABS_API_KEY no configurado para TTS.`,
@@ -1198,7 +1187,7 @@ export class StreamsGateway {
 
       // Logging adicional para debugging
       console.log(
-        `📋 Payload: ${JSON.stringify({
+        `📋 Payload streamElevenLabsTTS: ${JSON.stringify({
           text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
           model_id: this.elevenLabsTtsModelId,
           output_format: 'ulaw_8000',
@@ -1275,8 +1264,6 @@ export class StreamsGateway {
       // Forzar el stream a modo flowing para que emita eventos 'data'
       audioStream.resume();
 
-      console.log(`📡 Stream ElevenLabs creado correctamente`);
-
       const cancel = () => {
         session.agentSpeaking = false;
         audioStream.destroy();
@@ -1290,8 +1277,6 @@ export class StreamsGateway {
           cancel();
           reject(new Error('Timeout esperando stream ElevenLabs TTS'));
         }, 30000);
-        let chunksReceived = 0;
-        let totalBytes = 0;
 
         audioStream.on('data', (chunk: Buffer) => {
           if (session.allowInterruptions !== false && session.interrupted) {
@@ -1302,16 +1287,11 @@ export class StreamsGateway {
             cancel();
             return;
           }
-          chunksReceived++;
-          totalBytes += chunk.length;
           this.relayAudioToTwilio(session, Buffer.from(chunk));
         });
         audioStream.on('end', () => {
           clearTimeout(timeout);
           session.ttsCancelStream = undefined;
-          console.log(
-            `✅ Stream ElevenLabs TTS terminado (${chunksReceived} chunks, ${totalBytes} bytes totales)`,
-          );
           resolve();
         });
         audioStream.on('close', () => {

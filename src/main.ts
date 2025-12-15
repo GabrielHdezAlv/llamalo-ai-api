@@ -60,8 +60,6 @@ async function bootstrap() {
   wss.on('connection', (ws: WebSocket, req) => {
     console.log('🛰️ Nueva conexión WebSocket establecida');
     console.log('📡 Cliente conectado desde:', req.socket.remoteAddress);
-    console.log('🌐 URL:', req.url);
-    console.log('📋 Headers:', req.headers);
 
     // Buffer para almacenar mensajes tempranos
     const earlyMessages: Buffer[] = [];
@@ -104,9 +102,6 @@ async function bootstrap() {
           handlerRegistered = true;
 
           // Procesar mensajes acumulados
-          console.log(
-            `📬 Procesando ${earlyMessages.length} mensajes tempranos acumulados`,
-          );
           for (const msg of earlyMessages) {
             callback(msg);
           }
