@@ -809,7 +809,11 @@ export class StreamsGateway {
     return ulaw8k;
   }
 
-  private relayAudioToTwilio(session: CallSession, chunk: Buffer) {
+  private relayAudioToTwilio(
+    session: CallSession,
+    chunk: Buffer,
+    ttsFormat?: string,
+  ) {
     // Si hay una interrupción activa y se permiten interrupciones, no reenviar audio
     if (session.allowInterruptions !== false && session.interrupted) {
       console.log(
@@ -827,6 +831,9 @@ export class StreamsGateway {
 
     try {
       let audioChunk = chunk;
+      const normalizedFormat = this.normalizeTtsFormat(
+        ttsFormat ?? this.elevenLabsTtsOutputFormat,
+      );
 
       const { payload, stripped } = this.stripWavHeaderIfPresent(audioChunk);
       if (stripped) {
@@ -836,18 +843,18 @@ export class StreamsGateway {
         audioChunk = payload;
       }
 
-      if (this.elevenLabsTtsOutputFormat === 'pcm_16000') {
+      if (normalizedFormat === 'pcm_16000') {
         audioChunk = this.convertPcm16kToUlaw8k(audioChunk);
-      } else if (this.elevenLabsTtsOutputFormat !== 'ulaw_8000') {
+      } else if (normalizedFormat !== 'ulaw_8000') {
         // Formato inesperado; enviar tal cual pero loguear advertencia
         console.warn(
-          `⚠️ [${session.callSid}] Formato TTS no μ-law/PCM16k (${this.elevenLabsTtsOutputFormat}); se envía sin convertir`,
+          `⚠️ [${session.callSid}] Formato TTS no μ-law/PCM16k (${String(normalizedFormat)}); se envía sin convertir`,
         );
       }
 
       const firstBytes = audioChunk.slice(0, 8).toString('hex');
       console.log(
-        `🎵 [${session.callSid}] Chunk TTS outbound fmt=${this.elevenLabsTtsOutputFormat} bytes=${audioChunk.length} first8=${firstBytes}`,
+        `🎵 [${session.callSid}] Chunk TTS outbound fmt=${String(normalizedFormat)} bytes=${audioChunk.length} first8=${firstBytes}`,
       );
 
       session.outboundBuffer = Buffer.concat([
@@ -878,6 +885,10 @@ export class StreamsGateway {
     }
   }
 
+  private normalizeTtsFormat(format: string): 'ulaw_8000' | 'pcm_16000' {
+    return format === 'pcm_16000' ? 'pcm_16000' : 'ulaw_8000';
+  }
+
   /**
    * ElevenLabs puede devolver WAV con cabecera aun cuando se solicita μ-law.
    * Si detectamos 'RIFF....WAVEfmt ' y chunk 'data', devolvemos solo el payload de datos.
@@ -904,6 +915,19 @@ export class StreamsGateway {
       offset = dataStart + chunkSize;
     }
     return { payload: buffer, stripped: false };
+  }
+
+  private isMp3Header(buffer: Buffer): boolean {
+    if (buffer.length < 4) return false;
+    // ID3 tag
+    if (buffer.subarray(0, 3).toString('ascii') === 'ID3') return true;
+    // MPEG frame sync 0xFF 0xFB / 0xF3 / 0xF2
+    const b0 = buffer[0];
+    const b1 = buffer[1];
+    if (b0 === 0xff && (b1 === 0xfb || b1 === 0xf3 || b1 === 0xf2)) {
+      return true;
+    }
+    return false;
   }
 
   private handleDeepgramMessage(
@@ -1223,6 +1247,8 @@ export class StreamsGateway {
   private async streamElevenLabsTTS(
     session: CallSession,
     text: string,
+    format?: string,
+    retried: boolean = false,
   ): Promise<void> {
     if (!this.elevenLabsApiKey) {
       console.error(
@@ -1245,11 +1271,15 @@ export class StreamsGateway {
       session.agentSpeaking = true;
 
       // Logging adicional para debugging
+      const normalizedFormat = this.normalizeTtsFormat(
+        format ?? this.elevenLabsTtsOutputFormat,
+      );
+
       console.log(
         `📋 Payload streamElevenLabsTTS: ${JSON.stringify({
           text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
           model_id: this.elevenLabsTtsModelId,
-          output_format: 'ulaw_8000',
+          output_format: normalizedFormat,
         })}`,
       );
 
@@ -1264,12 +1294,14 @@ export class StreamsGateway {
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
           },
-          output_format: this.elevenLabsTtsOutputFormat,
+          output_format: normalizedFormat,
         },
         {
           headers: {
             'xi-api-key': this.elevenLabsApiKey,
             'Content-Type': 'application/json',
+            Accept:
+              normalizedFormat === 'ulaw_8000' ? 'audio/basic' : 'audio/pcm',
           },
           responseType: 'stream',
           timeout: 10000, // Timeout reducido a 10 segundos
@@ -1310,6 +1342,7 @@ export class StreamsGateway {
         `📡 Headers de respuesta:`,
         JSON.stringify(response.headers).substring(0, 300),
       );
+      const contentType = (response.headers['content-type'] as string) || '';
 
       const audioStream = response.data as Readable;
 
@@ -1337,6 +1370,8 @@ export class StreamsGateway {
           reject(new Error('Timeout esperando stream ElevenLabs TTS'));
         }, 30000);
 
+        let firstChunkChecked = false;
+
         audioStream.on('data', (chunk: Buffer) => {
           if (session.allowInterruptions !== false && session.interrupted) {
             console.log(
@@ -1346,7 +1381,40 @@ export class StreamsGateway {
             cancel();
             return;
           }
-          this.relayAudioToTwilio(session, Buffer.from(chunk));
+
+          // Detectar MP3 por content-type o cabecera ID3/FF FB y reintentar en PCM16k -> μ-law
+          if (!firstChunkChecked) {
+            firstChunkChecked = true;
+            const isMp3 =
+              contentType.toLowerCase().includes('audio/mpeg') ||
+              this.isMp3Header(chunk);
+            if (isMp3) {
+              console.error(
+                `❌ [${session.callSid}] ElevenLabs devolvió MP3/ID3 pese a pedir ${normalizedFormat}; reintentando con pcm_16000`,
+              );
+              clearTimeout(timeout);
+              cancel();
+              // Reintento único en PCM16k, luego convertiremos a μ-law
+              if (!retried) {
+                void this.streamElevenLabsTTS(session, text, 'pcm_16000', true)
+                  .then(resolve)
+                  .catch(reject);
+              } else {
+                reject(
+                  new Error(
+                    'ElevenLabs devolvió MP3 incluso tras reintento pcm_16000',
+                  ),
+                );
+              }
+              return;
+            }
+          }
+
+          this.relayAudioToTwilio(
+            session,
+            Buffer.from(chunk),
+            normalizedFormat,
+          );
         });
         audioStream.on('end', () => {
           clearTimeout(timeout);
