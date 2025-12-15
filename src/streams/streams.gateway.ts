@@ -64,6 +64,7 @@ interface CallSession {
   voiceId?: string;
   language?: string;
   queuedAudio: Buffer[];
+  outboundBuffer?: Buffer;
   readyForAudio: boolean;
   pendingGreeting?: string;
   greetingSent: boolean;
@@ -296,6 +297,7 @@ export class StreamsGateway {
       voiceId,
       language,
       queuedAudio: [],
+      outboundBuffer: Buffer.alloc(0),
       readyForAudio: false,
       pendingGreeting: this.resolveGreeting(customParameters),
       greetingSent: false,
@@ -825,8 +827,17 @@ export class StreamsGateway {
 
     try {
       let audioChunk = chunk;
+
+      const { payload, stripped } = this.stripWavHeaderIfPresent(audioChunk);
+      if (stripped) {
+        console.log(
+          `ℹ️ [${session.callSid}] Cabecera WAV detectada en TTS; se envía payload μ-law crudo`,
+        );
+        audioChunk = payload;
+      }
+
       if (this.elevenLabsTtsOutputFormat === 'pcm_16000') {
-        audioChunk = this.convertPcm16kToUlaw8k(chunk);
+        audioChunk = this.convertPcm16kToUlaw8k(audioChunk);
       } else if (this.elevenLabsTtsOutputFormat !== 'ulaw_8000') {
         // Formato inesperado; enviar tal cual pero loguear advertencia
         console.warn(
@@ -834,22 +845,65 @@ export class StreamsGateway {
         );
       }
 
-      session.client.send(
-        JSON.stringify({
-          event: 'media',
-          streamSid: session.streamSid,
-          media: {
-            payload: audioChunk.toString('base64'),
-            track: 'outbound',
-          },
-        }),
+      const firstBytes = audioChunk.slice(0, 8).toString('hex');
+      console.log(
+        `🎵 [${session.callSid}] Chunk TTS outbound fmt=${this.elevenLabsTtsOutputFormat} bytes=${audioChunk.length} first8=${firstBytes}`,
       );
+
+      session.outboundBuffer = Buffer.concat([
+        session.outboundBuffer ?? Buffer.alloc(0),
+        audioChunk,
+      ]);
+
+      while (session.outboundBuffer.length >= 160) {
+        const frame = session.outboundBuffer.subarray(0, 160);
+        session.outboundBuffer = session.outboundBuffer.subarray(160);
+
+        session.client.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid: session.streamSid,
+            media: {
+              payload: frame.toString('base64'),
+              track: 'outbound',
+            },
+          }),
+        );
+      }
     } catch (error) {
       console.error(
         `❌ [${session.callSid}] Error enviando audio a Twilio:`,
         error,
       );
     }
+  }
+
+  /**
+   * ElevenLabs puede devolver WAV con cabecera aun cuando se solicita μ-law.
+   * Si detectamos 'RIFF....WAVEfmt ' y chunk 'data', devolvemos solo el payload de datos.
+   */
+  private stripWavHeaderIfPresent(buffer: Buffer): {
+    payload: Buffer;
+    stripped: boolean;
+  } {
+    if (buffer.length < 16) return { payload: buffer, stripped: false };
+    if (buffer.subarray(0, 4).toString('ascii') !== 'RIFF') {
+      return { payload: buffer, stripped: false };
+    }
+    // Recorre chunks RIFF hasta encontrar 'data'
+    let offset = 12; // saltar 'RIFF' + size + 'WAVE'
+    while (offset + 8 <= buffer.length) {
+      const chunkId = buffer.subarray(offset, offset + 4).toString('ascii');
+      const chunkSize = buffer.readUInt32LE(offset + 4);
+      const dataStart = offset + 8;
+      const dataEnd = dataStart + chunkSize;
+      if (chunkId === 'data' && dataStart <= buffer.length) {
+        const end = Math.min(dataEnd, buffer.length);
+        return { payload: buffer.subarray(dataStart, end), stripped: true };
+      }
+      offset = dataStart + chunkSize;
+    }
+    return { payload: buffer, stripped: false };
   }
 
   private handleDeepgramMessage(
