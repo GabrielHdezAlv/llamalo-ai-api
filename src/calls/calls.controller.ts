@@ -125,7 +125,7 @@ export class CallsController {
       addStreamParameter(
         'labsId',
         typeof agentProfile.labsId === 'string'
-          ? (agentProfile.labsId as string)
+          ? agentProfile.labsId
           : undefined,
       );
       addStreamParameter(
