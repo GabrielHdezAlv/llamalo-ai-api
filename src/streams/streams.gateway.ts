@@ -278,6 +278,9 @@ export class StreamsGateway {
       console.log(
         `📋 AgentInstruction recibido desde Twilio: "${customParameters.instructions.substring(0, 100)}..."`,
       );
+      console.log(
+        `ℹ️ AgentInstruction longitud=${customParameters.instructions.length} tail="${customParameters.instructions.slice(-60)}"`,
+      );
     } else {
       console.log(
         `⚠️ [${callSid}] No se recibió agentInstruction desde Twilio (customParameters.instructions está vacío)`,
@@ -316,9 +319,6 @@ export class StreamsGateway {
 
     this.sessions.set(callSid, session);
     if (session.pendingGreeting) {
-      console.log(
-        '👋 Saludo firstInteraction detectado; reproduciendo con ElevenLabs TTS',
-      );
       this.maybeSendPendingGreeting(session);
     }
     if (this.usingElevenLabs(session)) {
@@ -867,10 +867,6 @@ export class StreamsGateway {
         );
       }
 
-      const firstBytes = audioChunk.slice(0, 8).toString('hex');
-      console.log(
-        `🎵 [${session.callSid}] Chunk TTS outbound fmt=${String(normalizedFormat)} bytes=${audioChunk.length} first8=${firstBytes}`,
-      );
       this.enqueueOutboundFrames(session, audioChunk);
     } catch (error) {
       console.error(
