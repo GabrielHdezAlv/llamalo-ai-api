@@ -114,24 +114,24 @@ export class StreamsGateway {
     process.env.ELEVENLABS_STT_MODEL ?? 'scribe_v2';
   private readonly elevenLabsLanguage = process.env.ELEVENLABS_LANGUAGE ?? 'es';
   private readonly elevenLabsTtsVoiceId =
-    process.env.ELEVENLABS_TTS_VOICE_ID ?? 'zRUArUmK0DWSP7K6mmLW';
-  // Para Twilio usamos μ-law 8k directo (evita conversión adicional)
-  private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const;
+    process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP';
+
+  private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const; // Para Twilio usamos μ-law 8k directo (evita conversión adicional)
   private readonly elevenLabsTtsModelId =
-    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
+    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5';
   private readonly elevenLabsTtsStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5,
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.72,
   );
   private readonly elevenLabsTtsStyle = Number(
-    process.env.ELEVENLABS_TTS_STYLE ?? 0,
+    process.env.ELEVENLABS_TTS_STYLE ?? 0.05,
   );
   private readonly elevenLabsTtsSimilarity = Number(
-    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.75,
+    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.8,
   );
   private readonly elevenLabsTtsSpeakerBoost =
     (process.env.ELEVENLABS_TTS_SPEAKER_BOOST ?? 'true') === 'true';
   private readonly elevenLabsTtsVoiceSpeed = Number(
-    process.env.ELEVENLABS_TTS_VOICE_SPEED ?? 1.0,
+    process.env.ELEVENLABS_TTS_VOICE_SPEED ?? 0.98,
   );
 
   // Deepgram (fallback)
@@ -1374,6 +1374,7 @@ export class StreamsGateway {
             similarity_boost: this.elevenLabsTtsSimilarity,
             style: this.elevenLabsTtsStyle,
             use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
+            voice_speed: this.elevenLabsTtsVoiceSpeed,
           },
           // output_format va en la query; en el body mantenemos solo para trazabilidad
           output_format: normalizedFormat,
