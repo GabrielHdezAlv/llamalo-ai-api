@@ -268,12 +268,6 @@ export class StreamsGateway {
     const customParameters = this.extractCustomParameters(
       start?.customParameters,
     );
-    if (customParameters?.greetingUrl) {
-      console.warn(
-        `ℹ️ Se recibió greetingUrl (${customParameters.greetingUrl}) pero Deepgram Voice Agent no soporta reproducir URLs externas.`,
-      );
-    }
-
     if (customParameters?.instructions) {
       console.log(
         `📋 AgentInstruction recibido desde Twilio: "${customParameters.instructions.substring(0, 100)}..."`,
