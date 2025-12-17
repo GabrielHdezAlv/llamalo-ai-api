@@ -694,7 +694,12 @@ export class StreamsGateway {
       return;
     }
 
-    if (msg.media.track && msg.media.track !== 'inbound') {
+    // Aceptar tanto el track por defecto ("inbound") como el configurado en TwiML ("inbound_track")
+    if (
+      msg.media.track &&
+      msg.media.track !== 'inbound' &&
+      msg.media.track !== 'inbound_track'
+    ) {
       return;
     }
 
