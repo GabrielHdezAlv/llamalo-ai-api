@@ -7,6 +7,7 @@ import { AgentsModule } from './agents/agents.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { HealthModule } from './health/health.module';
 import { CallsModule } from './calls/calls.module';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { CallsModule } from './calls/calls.module';
     AgentsModule,
     TwilioModule,
     HealthModule,
+    MetricsModule,
   ],
   controllers: [],
   providers: [],
