@@ -156,14 +156,26 @@ export class MetricsService {
     const allCalls: TwilioCall[] = [];
     let nextPageUri: string | null = null;
 
-    // Formatear fechas para Twilio API (YYYY-MM-DD)
-    const startDateStr = startDate.toISOString().split('T')[0];
-    const endDateStr = endDate.toISOString().split('T')[0];
+    // Formatear fechas para Twilio API usando DateCreated
+    // Twilio espera formato YYYY-MM-DD o YYYY-MM-DD HH:MM:SS
+    // Usamos formato con hora para asegurar precisión, especialmente para el día actual
+    const formatDateForTwilio = (date: Date): string => {
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      const hours = String(date.getUTCHours()).padStart(2, '0');
+      const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    };
+
+    const startDateStr = formatDateForTwilio(startDate);
+    const endDateStr = formatDateForTwilio(endDate);
 
     do {
       const url: string =
         nextPageUri ||
-        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?StartTime>=${startDateStr}&EndTime<=${endDateStr}&PageSize=1000`;
+        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?DateCreated>=${encodeURIComponent(startDateStr)}&DateCreated<=${encodeURIComponent(endDateStr)}&PageSize=1000`;
 
       try {
         const response = await axios.get<TwilioCallsResponse>(url, {
@@ -271,14 +283,22 @@ export class MetricsService {
       fecha.setDate(fecha.getDate() - i);
       fecha.setHours(0, 0, 0, 0);
 
-      const fechaStr = fecha.toISOString().split('T')[0];
+      // Obtener fecha en formato YYYY-MM-DD (usando UTC para consistencia)
+      const year = fecha.getUTCFullYear();
+      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(fecha.getUTCDate()).padStart(2, '0');
+      const fechaStr = `${year}-${month}-${day}`;
 
       // Contar llamadas de ese día
+      // Las fechas de Twilio vienen en UTC, así que comparamos en UTC
       const llamadasDelDia = calls.filter((call) => {
         if (!call.dateCreated) return false;
         const callDate = new Date(call.dateCreated);
-        callDate.setHours(0, 0, 0, 0);
-        return callDate.getTime() === fecha.getTime();
+        const callYear = callDate.getUTCFullYear();
+        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
+        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
+        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
+        return callDateStr === fechaStr;
       });
 
       ultimos7Dias.push({
