@@ -76,15 +76,9 @@ export class MetricsService {
       // 2. Calcular fechas de los últimos 7 días
       const { startDate, endDate } = this.getLast7DaysRange();
 
-      // Log para debugging - fechas calculadas
-      console.log(
-        `[Metrics] Obteniendo métricas de los últimos 7 días - Start: ${startDate.toISOString()}, End: ${endDate.toISOString()}`,
-      );
-
       // 3. Obtener todas las llamadas de los últimos 7 días desde Twilio
       const calls = await this.fetchTwilioCalls(sid, token, startDate, endDate);
 
-      // Log para debugging
       console.log(`[Metrics] Llamadas obtenidas de Twilio: ${calls.length}`);
 
       // 4. Calcular resumen (últimos 7 días)
@@ -171,9 +165,6 @@ export class MetricsService {
 
     // Si el rango es mayor a 30 días, dividir en múltiples consultas
     if (diffDays > 30) {
-      console.log(
-        `[Metrics] Rango grande (${diffDays} días), dividiendo en múltiples consultas...`,
-      );
       return this.fetchTwilioCallsInChunks(sid, token, startDate, endDate, 30);
     }
 
@@ -201,10 +192,6 @@ export class MetricsService {
       if (currentEnd > endDate) {
         currentEnd.setTime(endDate.getTime());
       }
-
-      console.log(
-        `[Metrics] Consultando chunk: ${currentStart.toISOString()} hasta ${currentEnd.toISOString()}`,
-      );
 
       const chunkCalls = await this.fetchTwilioCallsSingle(
         sid,
@@ -248,20 +235,10 @@ export class MetricsService {
     const startDateStr = formatDateForTwilio(startDate);
     const endDateStr = formatDateForTwilio(endDate);
 
-    // Log para debugging
-    console.log(
-      `[Metrics] Consultando Twilio - desde ${startDateStr} hasta ${endDateStr}`,
-    );
-
     do {
       const url: string =
         nextPageUri ||
         `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?StartTime>=${encodeURIComponent(startDateStr)}&StartTime<=${encodeURIComponent(endDateStr)}&Direction=inbound&PageSize=1000`;
-
-      // Log de la URL solo en la primera petición
-      if (!nextPageUri) {
-        console.log(`[Metrics] URL de Twilio: ${url}`);
-      }
 
       try {
         const response = await axios.get<TwilioCallsResponse>(url, {
@@ -273,22 +250,9 @@ export class MetricsService {
         const calls = response.data.calls;
         if (calls && Array.isArray(calls)) {
           allCalls.push(...calls);
-          console.log(
-            `[Metrics] Página obtenida: ${calls.length} llamadas (Total acumulado: ${allCalls.length})`,
-          );
-          // Log de las primeras llamadas para verificar los datos
-          if (allCalls.length === calls.length && calls.length > 0) {
-            console.log(
-              `[Metrics] Ejemplo de llamada recibida (todos los campos):`,
-              JSON.stringify(calls[0], null, 2),
-            );
-          }
         }
 
         nextPageUri = response.data.next_page_uri || null;
-        if (nextPageUri) {
-          console.log(`[Metrics] Hay más páginas, continuando...`);
-        }
       } catch (error) {
         // Log detallado del error
         if (axios.isAxiosError(error)) {
@@ -330,7 +294,6 @@ export class MetricsService {
     // Convertir segundos a minutos
     const minutosUtilizados = Math.round(totalSegundos / 60);
 
-    // Log para debugging
     console.log(
       `[Metrics] Total de segundos de llamadas: ${totalSegundos} segundos (${minutosUtilizados} minutos)`,
     );
@@ -403,49 +366,6 @@ export class MetricsService {
     const ultimos7Dias: LlamadaPorDiaDto[] = [];
     const hoy = new Date();
 
-    // Log para debugging
-    console.log(
-      `[Metrics] Calculando llamadas de los últimos 7 días. Total de llamadas recibidas: ${calls.length}`,
-    );
-
-    // Log de resumen de fechas de las llamadas recibidas
-    if (calls.length > 0) {
-      const fechasUnicas = new Set<string>();
-      calls.forEach((call) => {
-        // Usar start_time si está disponible, sino date_created
-        const fechaLlamada = call.start_time || call.date_created;
-        if (fechaLlamada) {
-          const callDate = new Date(fechaLlamada);
-          const fechaStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
-          fechasUnicas.add(fechaStr);
-        }
-      });
-      console.log(
-        `[Metrics] Fechas únicas encontradas en las llamadas:`,
-        Array.from(fechasUnicas).sort().join(', '),
-      );
-      // Log detallado de cada llamada con su fecha
-      calls.forEach((call, index) => {
-        const fechaLlamada = call.start_time || call.date_created;
-        if (fechaLlamada) {
-          const callDate = new Date(fechaLlamada);
-          const fechaStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
-          console.log(
-            `[Metrics] Llamada ${index + 1}: fecha=${fechaLlamada} (${call.start_time ? 'start_time' : 'date_created'}), fechaStr=${fechaStr}`,
-          );
-        } else {
-          console.log(
-            `[Metrics] Llamada ${index + 1}: SIN start_time ni date_created, sid=${call.sid}`,
-          );
-        }
-      });
-    }
-
-    // Log de la fecha actual para debugging
-    console.log(
-      `[Metrics] Fecha actual (hoy): ${hoy.toISOString()}, UTC: ${hoy.getUTCFullYear()}-${String(hoy.getUTCMonth() + 1).padStart(2, '0')}-${String(hoy.getUTCDate()).padStart(2, '0')}`,
-    );
-
     for (let i = 6; i >= 0; i--) {
       // Calcular la fecha usando UTC para evitar problemas de zona horaria
       const fecha = new Date(hoy);
@@ -475,18 +395,8 @@ export class MetricsService {
         const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
         const callDay = String(callDate.getUTCDate()).padStart(2, '0');
         const callDateStr = `${callYear}-${callMonth}-${callDay}`;
-        const coincide = callDateStr === fechaStr;
-        if (coincide) {
-          console.log(
-            `[Metrics] Llamada coincide con ${fechaStr}: sid=${call.sid}, fecha=${fechaLlamada}`,
-          );
-        }
-        return coincide;
+        return callDateStr === fechaStr;
       });
-
-      console.log(
-        `[Metrics] Día ${fechaStr}: ${llamadasDelDia.length} llamadas`,
-      );
 
       ultimos7Dias.push({
         fecha: fechaStr,
