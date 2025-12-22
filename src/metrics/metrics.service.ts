@@ -321,8 +321,10 @@ export class MetricsService {
   private calculateSummary(calls: TwilioCall[]): SummaryDto {
     const totalLlamadas = calls.length;
     const minutosUtilizados = calls.reduce((total, call) => {
-      const duration = parseInt(call.duration || '0', 10);
-      return total + duration;
+      // El campo duration de Twilio viene en segundos, convertir a minutos
+      const durationSegundos = parseInt(call.duration || '0', 10);
+      const durationMinutos = Math.round(durationSegundos / 60);
+      return total + durationMinutos;
     }, 0);
 
     // Tiempo ahorrado = minutos utilizados × factor de ahorro
