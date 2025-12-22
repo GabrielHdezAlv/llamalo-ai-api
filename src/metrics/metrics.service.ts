@@ -16,6 +16,7 @@ interface TwilioCall {
   sid: string;
   duration: string;
   dateCreated: string;
+  startTime: string;
   direction: string;
   from: string;
   to: string;
@@ -390,10 +391,16 @@ export class MetricsService {
     const ultimos7Dias: LlamadaPorDiaDto[] = [];
     const hoy = new Date();
 
+    // Log para debugging
+    console.log(
+      `[Metrics] Calculando llamadas de los últimos 7 días. Total de llamadas recibidas: ${calls.length}`,
+    );
+
     for (let i = 6; i >= 0; i--) {
+      // Calcular la fecha usando UTC para evitar problemas de zona horaria
       const fecha = new Date(hoy);
-      fecha.setDate(fecha.getDate() - i);
-      fecha.setHours(0, 0, 0, 0);
+      fecha.setUTCDate(fecha.getUTCDate() - i);
+      fecha.setUTCHours(0, 0, 0, 0);
 
       // Obtener fecha en formato YYYY-MM-DD (usando UTC para consistencia)
       const year = fecha.getUTCFullYear();
@@ -402,16 +409,24 @@ export class MetricsService {
       const fechaStr = `${year}-${month}-${day}`;
 
       // Contar llamadas de ese día
+      // Usar startTime en lugar de dateCreated para agrupar por el día en que realmente comenzó la llamada
       // Las fechas de Twilio vienen en UTC, así que comparamos en UTC
       const llamadasDelDia = calls.filter((call) => {
-        if (!call.dateCreated) return false;
-        const callDate = new Date(call.dateCreated);
+        if (!call.startTime) {
+          console.warn(`[Metrics] Llamada sin startTime: ${call.sid}`);
+          return false;
+        }
+        const callDate = new Date(call.startTime);
         const callYear = callDate.getUTCFullYear();
         const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
         const callDay = String(callDate.getUTCDate()).padStart(2, '0');
         const callDateStr = `${callYear}-${callMonth}-${callDay}`;
         return callDateStr === fechaStr;
       });
+
+      console.log(
+        `[Metrics] Día ${fechaStr}: ${llamadasDelDia.length} llamadas`,
+      );
 
       ultimos7Dias.push({
         fecha: fechaStr,
