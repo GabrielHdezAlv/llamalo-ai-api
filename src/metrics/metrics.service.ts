@@ -15,8 +15,8 @@ import {
 interface TwilioCall {
   sid: string;
   duration: string;
-  dateCreated: string;
-  startTime: string;
+  date_created: string; // Twilio devuelve snake_case
+  start_time: string; // Twilio devuelve snake_case
   direction: string;
   from: string;
   to: string;
@@ -402,8 +402,8 @@ export class MetricsService {
     if (calls.length > 0) {
       const fechasUnicas = new Set<string>();
       calls.forEach((call) => {
-        // Usar startTime si está disponible, sino dateCreated
-        const fechaLlamada = call.startTime || call.dateCreated;
+        // Usar start_time si está disponible, sino date_created
+        const fechaLlamada = call.start_time || call.date_created;
         if (fechaLlamada) {
           const callDate = new Date(fechaLlamada);
           const fechaStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
@@ -416,16 +416,16 @@ export class MetricsService {
       );
       // Log detallado de cada llamada con su fecha
       calls.forEach((call, index) => {
-        const fechaLlamada = call.startTime || call.dateCreated;
+        const fechaLlamada = call.start_time || call.date_created;
         if (fechaLlamada) {
           const callDate = new Date(fechaLlamada);
           const fechaStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
           console.log(
-            `[Metrics] Llamada ${index + 1}: fecha=${fechaLlamada} (${call.startTime ? 'startTime' : 'dateCreated'}), fechaStr=${fechaStr}`,
+            `[Metrics] Llamada ${index + 1}: fecha=${fechaLlamada} (${call.start_time ? 'start_time' : 'date_created'}), fechaStr=${fechaStr}`,
           );
         } else {
           console.log(
-            `[Metrics] Llamada ${index + 1}: SIN startTime ni dateCreated, sid=${call.sid}`,
+            `[Metrics] Llamada ${index + 1}: SIN start_time ni date_created, sid=${call.sid}`,
           );
         }
       });
@@ -449,14 +449,14 @@ export class MetricsService {
       const fechaStr = `${year}-${month}-${day}`;
 
       // Contar llamadas de ese día
-      // Usar startTime si está disponible, sino usar dateCreated como fallback
+      // Usar start_time si está disponible, sino usar date_created como fallback
       // Las fechas de Twilio vienen en UTC, así que comparamos en UTC
       const llamadasDelDia = calls.filter((call) => {
-        // Intentar usar startTime primero, si no está disponible usar dateCreated
-        const fechaLlamada = call.startTime || call.dateCreated;
+        // Intentar usar start_time primero, si no está disponible usar date_created
+        const fechaLlamada = call.start_time || call.date_created;
         if (!fechaLlamada) {
           console.warn(
-            `[Metrics] Llamada sin startTime ni dateCreated: ${call.sid}`,
+            `[Metrics] Llamada sin start_time ni date_created: ${call.sid}`,
           );
           return false;
         }
@@ -487,7 +487,7 @@ export class MetricsService {
     // Resumen final para verificar que todas las llamadas se estén contando
     const totalContadas = ultimos7Dias.reduce((sum, dia) => sum + dia.total, 0);
     const llamadasSinFecha = calls.filter(
-      (call) => !call.startTime && !call.dateCreated,
+      (call) => !call.start_time && !call.date_created,
     ).length;
 
     console.log(
