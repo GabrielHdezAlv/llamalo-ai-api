@@ -136,9 +136,10 @@ export class MetricsService {
       ),
     );
 
-    // StartDate: inicio del día hace 7 días (00:00:00.000)
+    // StartDate: inicio del día hace 6 días (00:00:00.000)
+    // Restamos 6 días para obtener exactamente 7 días incluyendo hoy
     const weekAgo = new Date(now);
-    weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+    weekAgo.setUTCDate(weekAgo.getUTCDate() - 6);
     const startDate = new Date(
       Date.UTC(
         weekAgo.getUTCFullYear(),
@@ -458,6 +459,20 @@ export class MetricsService {
         fecha: fechaStr,
         total: llamadasDelDia.length,
       });
+    }
+
+    // Resumen final para verificar que todas las llamadas se estén contando
+    const totalContadas = ultimos7Dias.reduce((sum, dia) => sum + dia.total, 0);
+    const llamadasSinStartTime = calls.filter((call) => !call.startTime).length;
+
+    console.log(
+      `[Metrics] Resumen final - Total recibidas: ${calls.length}, Total contadas: ${totalContadas}, Sin startTime: ${llamadasSinStartTime}`,
+    );
+
+    if (totalContadas + llamadasSinStartTime !== calls.length) {
+      console.warn(
+        `[Metrics] ADVERTENCIA: Hay ${calls.length - totalContadas - llamadasSinStartTime} llamadas que no se están contando`,
+      );
     }
 
     return ultimos7Dias;
