@@ -76,13 +76,17 @@ export class MetricsService {
       // 2. Calcular fechas según el período
       const { startDate, endDate } = this.getDateRange(period);
 
+      // Log para debugging - fechas calculadas
+      console.log(`[Metrics] Período seleccionado: ${period}`);
+      console.log(
+        `[Metrics] Fechas calculadas - Start: ${startDate.toISOString()}, End: ${endDate.toISOString()}`,
+      );
+
       // 3. Obtener todas las llamadas del período desde Twilio
       const calls = await this.fetchTwilioCalls(sid, token, startDate, endDate);
 
       // Log para debugging
-      console.log(
-        `[Metrics] Período: ${period}, Llamadas obtenidas: ${calls.length}`,
-      );
+      console.log(`[Metrics] Llamadas obtenidas de Twilio: ${calls.length}`);
 
       // 4. Calcular resumen
       const resumen = this.calculateSummary(calls);
@@ -249,27 +253,22 @@ export class MetricsService {
     let nextPageUri: string | null = null;
 
     // Formatear fechas para Twilio API usando DateCreated
-    // Twilio acepta formato YYYY-MM-DD o YYYY-MM-DDTHH:MM:SSZ
-    // Para rangos de fechas, usamos formato YYYY-MM-DD para mejor compatibilidad
+    // Twilio requiere formato YYYY-MM-DD (solo fecha, sin hora)
+    // Las fechas deben estar en GMT/UTC
     const formatDateForTwilio = (date: Date): string => {
       const year = date.getUTCFullYear();
       const month = String(date.getUTCMonth() + 1).padStart(2, '0');
       const day = String(date.getUTCDate()).padStart(2, '0');
-      // Para el endDate, incluimos la hora para asegurar que incluya todo el día
-      const hours = String(date.getUTCHours()).padStart(2, '0');
-      const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-      const seconds = String(date.getUTCSeconds()).padStart(2, '0');
-
-      // Si es el último segundo del día (23:59:59), usar formato con hora
-      // De lo contrario, usar solo la fecha
-      if (hours === '23' && minutes === '59' && seconds === '59') {
-        return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}Z`;
-      }
       return `${year}-${month}-${day}`;
     };
 
+    // Para endDate, usar el día siguiente para asegurar que incluya todo el día actual
+    // porque DateCreated<=YYYY-MM-DD puede no incluir todo el día
+    const endDateForQuery = new Date(endDate);
+    endDateForQuery.setUTCDate(endDateForQuery.getUTCDate() + 1);
+
     const startDateStr = formatDateForTwilio(startDate);
-    const endDateStr = formatDateForTwilio(endDate);
+    const endDateStr = formatDateForTwilio(endDateForQuery);
 
     // Log para debugging
     console.log(
@@ -280,6 +279,11 @@ export class MetricsService {
       const url: string =
         nextPageUri ||
         `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?DateCreated>=${encodeURIComponent(startDateStr)}&DateCreated<=${encodeURIComponent(endDateStr)}&PageSize=1000`;
+
+      // Log de la URL solo en la primera petición
+      if (!nextPageUri) {
+        console.log(`[Metrics] URL de Twilio: ${url}`);
+      }
 
       try {
         const response = await axios.get<TwilioCallsResponse>(url, {
