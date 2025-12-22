@@ -233,7 +233,8 @@ export class MetricsService {
     const allCalls: TwilioCall[] = [];
     let nextPageUri: string | null = null;
 
-    // Formatear fechas para Twilio API usando DateCreated
+    // Formatear fechas para Twilio API usando StartTime y EndTime
+    // Según la documentación oficial de Twilio, debemos usar StartTime y EndTime, no DateCreated
     // Twilio requiere formato YYYY-MM-DD (solo fecha, sin hora)
     // Las fechas deben estar en GMT/UTC
     const formatDateForTwilio = (date: Date): string => {
@@ -244,7 +245,7 @@ export class MetricsService {
     };
 
     // Para endDate, usar el día siguiente para asegurar que incluya todo el día actual
-    // porque DateCreated<=YYYY-MM-DD puede no incluir todo el día
+    // porque EndTime<=YYYY-MM-DD puede no incluir todo el día
     const endDateForQuery = new Date(endDate);
     endDateForQuery.setUTCDate(endDateForQuery.getUTCDate() + 1);
 
@@ -259,7 +260,7 @@ export class MetricsService {
     do {
       const url: string =
         nextPageUri ||
-        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?DateCreated>=${encodeURIComponent(startDateStr)}&DateCreated<=${encodeURIComponent(endDateStr)}&Direction=inbound&PageSize=1000`;
+        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?StartTime>=${encodeURIComponent(startDateStr)}&EndTime<=${encodeURIComponent(endDateStr)}&Direction=inbound&PageSize=1000`;
 
       // Log de la URL solo en la primera petición
       if (!nextPageUri) {
