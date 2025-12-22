@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -6,7 +6,6 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { MetricsService } from './metrics.service';
-import { DashboardQueryDto, PeriodFilter } from './dto/dashboard-query.dto';
 import { DashboardMetricsResponseDto } from './dto/dashboard-metrics-response.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
@@ -22,7 +21,7 @@ export class MetricsController {
   @ApiOperation({
     summary: 'Obtener métricas del dashboard',
     description:
-      'Retorna resumen de llamadas, agentes y llamadas de los últimos 7 días. El resumen se puede filtrar por período.',
+      'Retorna resumen de llamadas, agentes y llamadas de los últimos 7 días. Los datos siempre corresponden a los últimos 7 días.',
   })
   @ApiResponse({
     status: 200,
@@ -31,11 +30,7 @@ export class MetricsController {
   })
   async getDashboardMetrics(
     @GetUser('uid') userId: string,
-    @Query() query: DashboardQueryDto,
   ): Promise<DashboardMetricsResponseDto> {
-    return this.metricsService.getDashboardMetrics(
-      userId,
-      query.period || PeriodFilter.WEEK,
-    );
+    return this.metricsService.getDashboardMetrics(userId);
   }
 }

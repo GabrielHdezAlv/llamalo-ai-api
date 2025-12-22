@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { getFirestore } from '../firebase/firebase.config';
-import { PeriodFilter } from './dto/dashboard-query.dto';
 import {
   DashboardMetricsResponseDto,
   SummaryDto,
@@ -41,10 +40,10 @@ export class MetricsService {
 
   /**
    * Obtiene las métricas del dashboard
+   * Siempre retorna datos de los últimos 7 días
    */
   async getDashboardMetrics(
     userId: string,
-    period: PeriodFilter = PeriodFilter.WEEK,
   ): Promise<DashboardMetricsResponseDto> {
     try {
       // 1. Obtener configuración de Twilio del usuario
@@ -73,25 +72,24 @@ export class MetricsService {
         );
       }
 
-      // 2. Calcular fechas según el período
-      const { startDate, endDate } = this.getDateRange(period);
+      // 2. Calcular fechas de los últimos 7 días
+      const { startDate, endDate } = this.getLast7DaysRange();
 
       // Log para debugging - fechas calculadas
-      console.log(`[Metrics] Período seleccionado: ${period}`);
       console.log(
-        `[Metrics] Fechas calculadas - Start: ${startDate.toISOString()}, End: ${endDate.toISOString()}`,
+        `[Metrics] Obteniendo métricas de los últimos 7 días - Start: ${startDate.toISOString()}, End: ${endDate.toISOString()}`,
       );
 
-      // 3. Obtener todas las llamadas del período desde Twilio
+      // 3. Obtener todas las llamadas de los últimos 7 días desde Twilio
       const calls = await this.fetchTwilioCalls(sid, token, startDate, endDate);
 
       // Log para debugging
       console.log(`[Metrics] Llamadas obtenidas de Twilio: ${calls.length}`);
 
-      // 4. Calcular resumen
+      // 4. Calcular resumen (últimos 7 días)
       const resumen = this.calculateSummary(calls);
 
-      // 5. Obtener agentes
+      // 5. Obtener agentes (con minutos de los últimos 7 días)
       const agentes = await this.getAgentes(userId, resumen.minutos_utilizados);
 
       // 6. Calcular llamadas de los últimos 7 días
@@ -116,15 +114,15 @@ export class MetricsService {
   }
 
   /**
-   * Obtiene el rango de fechas según el período seleccionado
+   * Obtiene el rango de fechas de los últimos 7 días
    */
-  private getDateRange(period: PeriodFilter): {
+  private getLast7DaysRange(): {
     startDate: Date;
     endDate: Date;
   } {
     const now = new Date();
 
-    // Usar UTC para consistencia con Twilio
+    // EndDate: fin del día actual (23:59:59.999)
     const endDate = new Date(
       Date.UTC(
         now.getUTCFullYear(),
@@ -137,112 +135,95 @@ export class MetricsService {
       ),
     );
 
-    let startDate: Date;
-
-    switch (period) {
-      case PeriodFilter.DAY: {
-        startDate = new Date(
-          Date.UTC(
-            now.getUTCFullYear(),
-            now.getUTCMonth(),
-            now.getUTCDate(),
-            0,
-            0,
-            0,
-            0,
-          ),
-        );
-        break;
-      }
-      case PeriodFilter.WEEK: {
-        const weekAgo = new Date(now);
-        weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
-        startDate = new Date(
-          Date.UTC(
-            weekAgo.getUTCFullYear(),
-            weekAgo.getUTCMonth(),
-            weekAgo.getUTCDate(),
-            0,
-            0,
-            0,
-            0,
-          ),
-        );
-        break;
-      }
-      case PeriodFilter.MONTH: {
-        const monthAgo = new Date(now);
-        monthAgo.setUTCMonth(monthAgo.getUTCMonth() - 1);
-        startDate = new Date(
-          Date.UTC(
-            monthAgo.getUTCFullYear(),
-            monthAgo.getUTCMonth(),
-            monthAgo.getUTCDate(),
-            0,
-            0,
-            0,
-            0,
-          ),
-        );
-        break;
-      }
-      case PeriodFilter.SIX_MONTHS: {
-        const sixMonthsAgo = new Date(now);
-        sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 6);
-        startDate = new Date(
-          Date.UTC(
-            sixMonthsAgo.getUTCFullYear(),
-            sixMonthsAgo.getUTCMonth(),
-            sixMonthsAgo.getUTCDate(),
-            0,
-            0,
-            0,
-            0,
-          ),
-        );
-        break;
-      }
-      case PeriodFilter.YEAR: {
-        const yearAgo = new Date(now);
-        yearAgo.setUTCFullYear(yearAgo.getUTCFullYear() - 1);
-        startDate = new Date(
-          Date.UTC(
-            yearAgo.getUTCFullYear(),
-            yearAgo.getUTCMonth(),
-            yearAgo.getUTCDate(),
-            0,
-            0,
-            0,
-            0,
-          ),
-        );
-        break;
-      }
-      default: {
-        // Default a semana
-        const defaultWeekAgo = new Date(now);
-        defaultWeekAgo.setUTCDate(defaultWeekAgo.getUTCDate() - 7);
-        startDate = new Date(
-          Date.UTC(
-            defaultWeekAgo.getUTCFullYear(),
-            defaultWeekAgo.getUTCMonth(),
-            defaultWeekAgo.getUTCDate(),
-            0,
-            0,
-            0,
-            0,
-          ),
-        );
-      }
-    }
+    // StartDate: inicio del día hace 7 días (00:00:00.000)
+    const weekAgo = new Date(now);
+    weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+    const startDate = new Date(
+      Date.UTC(
+        weekAgo.getUTCFullYear(),
+        weekAgo.getUTCMonth(),
+        weekAgo.getUTCDate(),
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
 
     return { startDate, endDate };
   }
 
   /**
    * Obtiene todas las llamadas de Twilio en el rango de fechas
+   * Si el rango es muy grande (>30 días), divide la consulta en múltiples consultas más pequeñas
    */
   private async fetchTwilioCalls(
+    sid: string,
+    token: string,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<TwilioCall[]> {
+    // Calcular días de diferencia
+    const diffTime = endDate.getTime() - startDate.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    // Si el rango es mayor a 30 días, dividir en múltiples consultas
+    if (diffDays > 30) {
+      console.log(
+        `[Metrics] Rango grande (${diffDays} días), dividiendo en múltiples consultas...`,
+      );
+      return this.fetchTwilioCallsInChunks(sid, token, startDate, endDate, 30);
+    }
+
+    return this.fetchTwilioCallsSingle(sid, token, startDate, endDate);
+  }
+
+  /**
+   * Obtiene llamadas dividiendo el rango en chunks más pequeños
+   */
+  private async fetchTwilioCallsInChunks(
+    sid: string,
+    token: string,
+    startDate: Date,
+    endDate: Date,
+    chunkDays: number,
+  ): Promise<TwilioCall[]> {
+    const allCalls: TwilioCall[] = [];
+    let currentStart = new Date(startDate);
+
+    while (currentStart < endDate) {
+      const currentEnd = new Date(currentStart);
+      currentEnd.setUTCDate(currentEnd.getUTCDate() + chunkDays);
+
+      // Asegurar que no exceda el endDate
+      if (currentEnd > endDate) {
+        currentEnd.setTime(endDate.getTime());
+      }
+
+      console.log(
+        `[Metrics] Consultando chunk: ${currentStart.toISOString()} hasta ${currentEnd.toISOString()}`,
+      );
+
+      const chunkCalls = await this.fetchTwilioCallsSingle(
+        sid,
+        token,
+        currentStart,
+        currentEnd,
+      );
+      allCalls.push(...chunkCalls);
+
+      // Mover al siguiente chunk
+      currentStart = new Date(currentEnd);
+      currentStart.setUTCDate(currentStart.getUTCDate() + 1);
+    }
+
+    return allCalls;
+  }
+
+  /**
+   * Obtiene todas las llamadas de Twilio en el rango de fechas (consulta única)
+   */
+  private async fetchTwilioCallsSingle(
     sid: string,
     token: string,
     startDate: Date,
@@ -295,12 +276,34 @@ export class MetricsService {
         const calls = response.data.calls;
         if (calls && Array.isArray(calls)) {
           allCalls.push(...calls);
+          console.log(
+            `[Metrics] Página obtenida: ${calls.length} llamadas (Total acumulado: ${allCalls.length})`,
+          );
         }
 
         nextPageUri = response.data.next_page_uri || null;
+        if (nextPageUri) {
+          console.log(`[Metrics] Hay más páginas, continuando...`);
+        }
       } catch (error) {
+        // Log detallado del error
+        if (axios.isAxiosError(error)) {
+          console.error(
+            `[Metrics] Error de Twilio API:`,
+            error.response?.status,
+            error.response?.statusText,
+          );
+          console.error(
+            `[Metrics] Respuesta de error:`,
+            JSON.stringify(error.response?.data, null, 2),
+          );
+        } else {
+          console.error(
+            '[Metrics] Error obteniendo llamadas de Twilio:',
+            error,
+          );
+        }
         // Si falla, retornar las llamadas que se hayan obtenido hasta ahora
-        console.error('Error obteniendo llamadas de Twilio:', error);
         break;
       }
     } while (nextPageUri);
