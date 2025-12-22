@@ -113,31 +113,118 @@ export class MetricsService {
     startDate: Date;
     endDate: Date;
   } {
-    const endDate = new Date();
-    endDate.setHours(23, 59, 59, 999); // Fin del día actual
+    const now = new Date();
 
-    const startDate = new Date();
+    // Usar UTC para consistencia con Twilio
+    const endDate = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
+
+    let startDate: Date;
 
     switch (period) {
-      case PeriodFilter.DAY:
-        startDate.setHours(0, 0, 0, 0);
+      case PeriodFilter.DAY: {
+        startDate = new Date(
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate(),
+            0,
+            0,
+            0,
+            0,
+          ),
+        );
         break;
-      case PeriodFilter.WEEK:
-        startDate.setDate(startDate.getDate() - 7);
-        startDate.setHours(0, 0, 0, 0);
+      }
+      case PeriodFilter.WEEK: {
+        const weekAgo = new Date(now);
+        weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+        startDate = new Date(
+          Date.UTC(
+            weekAgo.getUTCFullYear(),
+            weekAgo.getUTCMonth(),
+            weekAgo.getUTCDate(),
+            0,
+            0,
+            0,
+            0,
+          ),
+        );
         break;
-      case PeriodFilter.MONTH:
-        startDate.setMonth(startDate.getMonth() - 1);
-        startDate.setHours(0, 0, 0, 0);
+      }
+      case PeriodFilter.MONTH: {
+        const monthAgo = new Date(now);
+        monthAgo.setUTCMonth(monthAgo.getUTCMonth() - 1);
+        startDate = new Date(
+          Date.UTC(
+            monthAgo.getUTCFullYear(),
+            monthAgo.getUTCMonth(),
+            monthAgo.getUTCDate(),
+            0,
+            0,
+            0,
+            0,
+          ),
+        );
         break;
-      case PeriodFilter.SIX_MONTHS:
-        startDate.setMonth(startDate.getMonth() - 6);
-        startDate.setHours(0, 0, 0, 0);
+      }
+      case PeriodFilter.SIX_MONTHS: {
+        const sixMonthsAgo = new Date(now);
+        sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 6);
+        startDate = new Date(
+          Date.UTC(
+            sixMonthsAgo.getUTCFullYear(),
+            sixMonthsAgo.getUTCMonth(),
+            sixMonthsAgo.getUTCDate(),
+            0,
+            0,
+            0,
+            0,
+          ),
+        );
         break;
-      case PeriodFilter.YEAR:
-        startDate.setFullYear(startDate.getFullYear() - 1);
-        startDate.setHours(0, 0, 0, 0);
+      }
+      case PeriodFilter.YEAR: {
+        const yearAgo = new Date(now);
+        yearAgo.setUTCFullYear(yearAgo.getUTCFullYear() - 1);
+        startDate = new Date(
+          Date.UTC(
+            yearAgo.getUTCFullYear(),
+            yearAgo.getUTCMonth(),
+            yearAgo.getUTCDate(),
+            0,
+            0,
+            0,
+            0,
+          ),
+        );
         break;
+      }
+      default: {
+        // Default a semana
+        const defaultWeekAgo = new Date(now);
+        defaultWeekAgo.setUTCDate(defaultWeekAgo.getUTCDate() - 7);
+        startDate = new Date(
+          Date.UTC(
+            defaultWeekAgo.getUTCFullYear(),
+            defaultWeekAgo.getUTCMonth(),
+            defaultWeekAgo.getUTCDate(),
+            0,
+            0,
+            0,
+            0,
+          ),
+        );
+      }
     }
 
     return { startDate, endDate };
