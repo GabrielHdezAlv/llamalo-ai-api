@@ -236,22 +236,16 @@ export class MetricsService {
 
     // Formatear fechas para Twilio API usando StartTime y EndTime
     // Según la documentación oficial de Twilio, debemos usar StartTime y EndTime, no DateCreated
-    // Twilio requiere formato YYYY-MM-DD (solo fecha, sin hora)
-    // Las fechas deben estar en GMT/UTC
+    // Twilio acepta formato YYYY-MM-DD o YYYY-MM-DDTHH:mm:ssZ
+    // Usamos formato completo con hora para mayor precisión
     const formatDateForTwilio = (date: Date): string => {
-      const year = date.getUTCFullYear();
-      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(date.getUTCDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
+      // Formato ISO 8601 completo con UTC
+      return date.toISOString();
     };
 
-    // Para endDate, usar el día siguiente para asegurar que incluya todo el día actual
-    // porque EndTime<=YYYY-MM-DD puede no incluir todo el día
-    const endDateForQuery = new Date(endDate);
-    endDateForQuery.setUTCDate(endDateForQuery.getUTCDate() + 1);
-
+    // Usar las fechas directamente (ya están en UTC)
     const startDateStr = formatDateForTwilio(startDate);
-    const endDateStr = formatDateForTwilio(endDateForQuery);
+    const endDateStr = formatDateForTwilio(endDate);
 
     // Log para debugging
     console.log(
@@ -261,7 +255,7 @@ export class MetricsService {
     do {
       const url: string =
         nextPageUri ||
-        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?StartTime>=${encodeURIComponent(startDateStr)}&EndTime<=${encodeURIComponent(endDateStr)}&Direction=inbound&PageSize=1000`;
+        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?StartTime>=${encodeURIComponent(startDateStr)}&StartTime<=${encodeURIComponent(endDateStr)}&Direction=inbound&PageSize=1000`;
 
       // Log de la URL solo en la primera petición
       if (!nextPageUri) {
@@ -281,6 +275,22 @@ export class MetricsService {
           console.log(
             `[Metrics] Página obtenida: ${calls.length} llamadas (Total acumulado: ${allCalls.length})`,
           );
+          // Log de las primeras llamadas para verificar los datos
+          if (allCalls.length === calls.length && calls.length > 0) {
+            console.log(
+              `[Metrics] Ejemplo de llamada recibida:`,
+              JSON.stringify(
+                {
+                  sid: calls[0].sid,
+                  startTime: calls[0].startTime,
+                  dateCreated: calls[0].dateCreated,
+                  duration: calls[0].duration,
+                },
+                null,
+                2,
+              ),
+            );
+          }
         }
 
         nextPageUri = response.data.next_page_uri || null;
@@ -395,6 +405,22 @@ export class MetricsService {
     console.log(
       `[Metrics] Calculando llamadas de los últimos 7 días. Total de llamadas recibidas: ${calls.length}`,
     );
+
+    // Log de resumen de fechas de las llamadas recibidas
+    if (calls.length > 0) {
+      const fechasUnicas = new Set<string>();
+      calls.forEach((call) => {
+        if (call.startTime) {
+          const callDate = new Date(call.startTime);
+          const fechaStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
+          fechasUnicas.add(fechaStr);
+        }
+      });
+      console.log(
+        `[Metrics] Fechas únicas encontradas en las llamadas:`,
+        Array.from(fechasUnicas).sort().join(', '),
+      );
+    }
 
     for (let i = 6; i >= 0; i--) {
       // Calcular la fecha usando UTC para evitar problemas de zona horaria
