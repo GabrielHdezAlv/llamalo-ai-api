@@ -79,6 +79,11 @@ export class MetricsService {
       // 3. Obtener todas las llamadas del período desde Twilio
       const calls = await this.fetchTwilioCalls(sid, token, startDate, endDate);
 
+      // Log para debugging
+      console.log(
+        `[Metrics] Período: ${period}, Llamadas obtenidas: ${calls.length}`,
+      );
+
       // 4. Calcular resumen
       const resumen = this.calculateSummary(calls);
 
@@ -244,20 +249,32 @@ export class MetricsService {
     let nextPageUri: string | null = null;
 
     // Formatear fechas para Twilio API usando DateCreated
-    // Twilio espera formato YYYY-MM-DD o YYYY-MM-DD HH:MM:SS
-    // Usamos formato con hora para asegurar precisión, especialmente para el día actual
+    // Twilio acepta formato YYYY-MM-DD o YYYY-MM-DDTHH:MM:SSZ
+    // Para rangos de fechas, usamos formato YYYY-MM-DD para mejor compatibilidad
     const formatDateForTwilio = (date: Date): string => {
       const year = date.getUTCFullYear();
       const month = String(date.getUTCMonth() + 1).padStart(2, '0');
       const day = String(date.getUTCDate()).padStart(2, '0');
+      // Para el endDate, incluimos la hora para asegurar que incluya todo el día
       const hours = String(date.getUTCHours()).padStart(2, '0');
       const minutes = String(date.getUTCMinutes()).padStart(2, '0');
       const seconds = String(date.getUTCSeconds()).padStart(2, '0');
-      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+      // Si es el último segundo del día (23:59:59), usar formato con hora
+      // De lo contrario, usar solo la fecha
+      if (hours === '23' && minutes === '59' && seconds === '59') {
+        return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}Z`;
+      }
+      return `${year}-${month}-${day}`;
     };
 
     const startDateStr = formatDateForTwilio(startDate);
     const endDateStr = formatDateForTwilio(endDate);
+
+    // Log para debugging
+    console.log(
+      `[Metrics] Consultando Twilio - desde ${startDateStr} hasta ${endDateStr}`,
+    );
 
     do {
       const url: string =
