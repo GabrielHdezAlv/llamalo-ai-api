@@ -279,17 +279,8 @@ export class MetricsService {
           // Log de las primeras llamadas para verificar los datos
           if (allCalls.length === calls.length && calls.length > 0) {
             console.log(
-              `[Metrics] Ejemplo de llamada recibida:`,
-              JSON.stringify(
-                {
-                  sid: calls[0].sid,
-                  startTime: calls[0].startTime,
-                  dateCreated: calls[0].dateCreated,
-                  duration: calls[0].duration,
-                },
-                null,
-                2,
-              ),
+              `[Metrics] Ejemplo de llamada recibida (todos los campos):`,
+              JSON.stringify(calls[0], null, 2),
             );
           }
         }
@@ -411,8 +402,10 @@ export class MetricsService {
     if (calls.length > 0) {
       const fechasUnicas = new Set<string>();
       calls.forEach((call) => {
-        if (call.startTime) {
-          const callDate = new Date(call.startTime);
+        // Usar startTime si está disponible, sino dateCreated
+        const fechaLlamada = call.startTime || call.dateCreated;
+        if (fechaLlamada) {
+          const callDate = new Date(fechaLlamada);
           const fechaStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
           fechasUnicas.add(fechaStr);
         }
@@ -421,7 +414,27 @@ export class MetricsService {
         `[Metrics] Fechas únicas encontradas en las llamadas:`,
         Array.from(fechasUnicas).sort().join(', '),
       );
+      // Log detallado de cada llamada con su fecha
+      calls.forEach((call, index) => {
+        const fechaLlamada = call.startTime || call.dateCreated;
+        if (fechaLlamada) {
+          const callDate = new Date(fechaLlamada);
+          const fechaStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
+          console.log(
+            `[Metrics] Llamada ${index + 1}: fecha=${fechaLlamada} (${call.startTime ? 'startTime' : 'dateCreated'}), fechaStr=${fechaStr}`,
+          );
+        } else {
+          console.log(
+            `[Metrics] Llamada ${index + 1}: SIN startTime ni dateCreated, sid=${call.sid}`,
+          );
+        }
+      });
     }
+
+    // Log de la fecha actual para debugging
+    console.log(
+      `[Metrics] Fecha actual (hoy): ${hoy.toISOString()}, UTC: ${hoy.getUTCFullYear()}-${String(hoy.getUTCMonth() + 1).padStart(2, '0')}-${String(hoy.getUTCDate()).padStart(2, '0')}`,
+    );
 
     for (let i = 6; i >= 0; i--) {
       // Calcular la fecha usando UTC para evitar problemas de zona horaria
@@ -436,19 +449,29 @@ export class MetricsService {
       const fechaStr = `${year}-${month}-${day}`;
 
       // Contar llamadas de ese día
-      // Usar startTime en lugar de dateCreated para agrupar por el día en que realmente comenzó la llamada
+      // Usar startTime si está disponible, sino usar dateCreated como fallback
       // Las fechas de Twilio vienen en UTC, así que comparamos en UTC
       const llamadasDelDia = calls.filter((call) => {
-        if (!call.startTime) {
-          console.warn(`[Metrics] Llamada sin startTime: ${call.sid}`);
+        // Intentar usar startTime primero, si no está disponible usar dateCreated
+        const fechaLlamada = call.startTime || call.dateCreated;
+        if (!fechaLlamada) {
+          console.warn(
+            `[Metrics] Llamada sin startTime ni dateCreated: ${call.sid}`,
+          );
           return false;
         }
-        const callDate = new Date(call.startTime);
+        const callDate = new Date(fechaLlamada);
         const callYear = callDate.getUTCFullYear();
         const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
         const callDay = String(callDate.getUTCDate()).padStart(2, '0');
         const callDateStr = `${callYear}-${callMonth}-${callDay}`;
-        return callDateStr === fechaStr;
+        const coincide = callDateStr === fechaStr;
+        if (coincide) {
+          console.log(
+            `[Metrics] Llamada coincide con ${fechaStr}: sid=${call.sid}, fecha=${fechaLlamada}`,
+          );
+        }
+        return coincide;
       });
 
       console.log(
@@ -463,15 +486,17 @@ export class MetricsService {
 
     // Resumen final para verificar que todas las llamadas se estén contando
     const totalContadas = ultimos7Dias.reduce((sum, dia) => sum + dia.total, 0);
-    const llamadasSinStartTime = calls.filter((call) => !call.startTime).length;
+    const llamadasSinFecha = calls.filter(
+      (call) => !call.startTime && !call.dateCreated,
+    ).length;
 
     console.log(
-      `[Metrics] Resumen final - Total recibidas: ${calls.length}, Total contadas: ${totalContadas}, Sin startTime: ${llamadasSinStartTime}`,
+      `[Metrics] Resumen final - Total recibidas: ${calls.length}, Total contadas: ${totalContadas}, Sin fecha: ${llamadasSinFecha}`,
     );
 
-    if (totalContadas + llamadasSinStartTime !== calls.length) {
+    if (totalContadas + llamadasSinFecha !== calls.length) {
       console.warn(
-        `[Metrics] ADVERTENCIA: Hay ${calls.length - totalContadas - llamadasSinStartTime} llamadas que no se están contando`,
+        `[Metrics] ADVERTENCIA: Hay ${calls.length - totalContadas - llamadasSinFecha} llamadas que no se están contando`,
       );
     }
 
