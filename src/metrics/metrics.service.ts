@@ -278,7 +278,7 @@ export class MetricsService {
     do {
       const url: string =
         nextPageUri ||
-        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?DateCreated>=${encodeURIComponent(startDateStr)}&DateCreated<=${encodeURIComponent(endDateStr)}&PageSize=1000`;
+        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?DateCreated>=${encodeURIComponent(startDateStr)}&DateCreated<=${encodeURIComponent(endDateStr)}&Direction=inbound&PageSize=1000`;
 
       // Log de la URL solo en la primera petición
       if (!nextPageUri) {
