@@ -93,10 +93,7 @@ export class ShopifyService {
   /**
    * Crea una sesión OAuth y retorna el oauthSessionId
    */
-  async createOAuthSession(
-    userId: string,
-    shop: string,
-  ): Promise<string> {
+  async createOAuthSession(userId: string, shop: string): Promise<string> {
     try {
       // Verificar que el usuario existe
       const userDocRef = this.firestore.collection('users').doc(userId);
@@ -107,7 +104,9 @@ export class ShopifyService {
       }
 
       // Normalizar el shop
-      const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const normalizedShop = shop
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '');
 
       // Generar ID único para la sesión
       const sessionId = crypto.randomBytes(32).toString('hex');
@@ -116,7 +115,9 @@ export class ShopifyService {
       const now = admin.firestore.Timestamp.now();
       const expiresAt = new Date(now.toMillis() + 10 * 60 * 1000); // 10 minutos
 
-      const sessionRef = this.firestore.collection('oauthSessions').doc(sessionId);
+      const sessionRef = this.firestore
+        .collection('oauthSessions')
+        .doc(sessionId);
       await sessionRef.set({
         id: sessionId,
         userId: userId,
@@ -285,14 +286,17 @@ export class ShopifyService {
       }
 
       // Normalizar el shop
-      const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const normalizedShop = shop
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '');
 
       // Si no tenemos el shopName, obtenerlo de la API de Shopify
       let finalShopName = shopName;
       if (!finalShopName) {
         try {
           const client = this.createShopifyClient(normalizedShop, accessToken);
-          const storeResponse = await client.get<ShopifyStoreResponse>('/shop.json');
+          const storeResponse =
+            await client.get<ShopifyStoreResponse>('/shop.json');
           finalShopName = storeResponse.data.shop.name;
         } catch {
           // Si falla, usar el dominio como nombre
@@ -370,7 +374,9 @@ export class ShopifyService {
   async getAccessToken(userId: string, shop: string): Promise<string> {
     try {
       // Normalizar el shop
-      const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const normalizedShop = shop
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '');
 
       // Buscar en la colección shopifyStores
       const storeQuery = await this.firestore
@@ -469,7 +475,8 @@ export class ShopifyService {
       const accessToken = await this.getAccessToken(userId, shop);
       const client = this.createShopifyClient(shop, accessToken);
 
-      const response = await client.get<ShopifyProductsResponse>('/products.json');
+      const response =
+        await client.get<ShopifyProductsResponse>('/products.json');
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error)) {
@@ -530,7 +537,9 @@ export class ShopifyService {
   async revokeStore(userId: string, shop: string): Promise<void> {
     try {
       // Normalizar el shop
-      const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const normalizedShop = shop
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '');
 
       // Buscar la tienda
       const storeQuery = await this.firestore
@@ -558,19 +567,22 @@ export class ShopifyService {
       // Actualizar referencia en users - eliminar la referencia si no hay más tiendas activas
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
-      
+
       if (userSnapshot.exists) {
         const userData = userSnapshot.data() as Record<string, unknown>;
-        const integrations = (userData?.integrations as Record<string, unknown>) || {};
-        const shopifyIntegration = integrations.shopify as Record<string, unknown> | undefined;
-        
+        const integrations =
+          (userData?.integrations as Record<string, unknown>) || {};
+        const shopifyIntegration = integrations.shopify as
+          | Record<string, unknown>
+          | undefined;
+
         // Verificar si hay otras tiendas activas
         const activeStoresQuery = await this.firestore
           .collection('shopifyStores')
           .where('ownerUserId', '==', userId)
           .where('status', '==', 'active')
           .get();
-        
+
         if (activeStoresQuery.empty) {
           // No hay más tiendas activas, eliminar referencia
           if (shopifyIntegration) {
@@ -581,7 +593,8 @@ export class ShopifyService {
           // Hay otras tiendas activas, actualizar solo si esta era la tienda referenciada
           if (shopifyIntegration?.shopDomain === normalizedShop) {
             // Actualizar a la primera tienda activa disponible
-            const firstActiveStore = activeStoresQuery.docs[0].data() as ShopifyStoreDocument;
+            const firstActiveStore =
+              activeStoresQuery.docs[0].data() as ShopifyStoreDocument;
             await userDocRef.set(
               {
                 integrations: {

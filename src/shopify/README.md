@@ -32,14 +32,17 @@ APP_URL=http://localhost:3000  # URL base de tu aplicación (para callbacks)
 ## Endpoints
 
 ### 1. GET /shopify/auth
+
 **Protegido** - Inicia el flujo OAuth de Shopify (requiere autenticación Firebase)
 
 **Autenticación:** Requerida (Firebase Bearer Token)
 
 **Query Params:**
+
 - `shop` (requerido): Dominio de la tienda, ej: `llamaloai-dev.myshopify.com`
 
 **Ejemplo:**
+
 ```
 GET /shopify/auth?shop=llamaloai-dev.myshopify.com
 Authorization: Bearer <firebase_token>
@@ -52,14 +55,17 @@ Authorization: Bearer <firebase_token>
 ---
 
 ### 2. GET /shopify/callback
+
 **Público** - Callback OAuth de Shopify
 
 **Query Params:**
+
 - `shop` (requerido): Dominio de la tienda
 - `code` (requerido): Código de autorización de Shopify
 - `state` (requerido): ID de sesión OAuth (`oauthSessionId`) generado en `/auth`
 
 **Ejemplo:**
+
 ```
 GET /shopify/callback?shop=llamaloai-dev.myshopify.com&code=abc123&state=oauthSessionId123
 ```
@@ -67,6 +73,7 @@ GET /shopify/callback?shop=llamaloai-dev.myshopify.com&code=abc123&state=oauthSe
 **Nota:** El sistema valida la sesión OAuth, recupera el `userId` de forma segura y elimina la sesión después de usarla.
 
 **Respuesta:**
+
 ```json
 {
   "success": true,
@@ -77,20 +84,24 @@ GET /shopify/callback?shop=llamaloai-dev.myshopify.com&code=abc123&state=oauthSe
 ---
 
 ### 3. GET /shopify/store
+
 **Protegido** - Obtiene información de la tienda
 
 **Autenticación:** Requerida (Firebase Bearer Token)
 
 **Query Params:**
+
 - `shop` (requerido): Dominio de la tienda
 
 **Ejemplo:**
+
 ```
 GET /shopify/store?shop=llamaloai-dev.myshopify.com
 Authorization: Bearer <firebase_token>
 ```
 
 **Respuesta:**
+
 ```json
 {
   "shop": {
@@ -110,20 +121,24 @@ Authorization: Bearer <firebase_token>
 ---
 
 ### 4. GET /shopify/products
+
 **Protegido** - Obtiene lista de productos
 
 **Autenticación:** Requerida (Firebase Bearer Token)
 
 **Query Params:**
+
 - `shop` (requerido): Dominio de la tienda
 
 **Ejemplo:**
+
 ```
 GET /shopify/products?shop=llamaloai-dev.myshopify.com
 Authorization: Bearer <firebase_token>
 ```
 
 **Respuesta:**
+
 ```json
 {
   "products": [
@@ -141,20 +156,24 @@ Authorization: Bearer <firebase_token>
 ---
 
 ### 5. GET /shopify/orders
+
 **Protegido** - Obtiene lista de pedidos
 
 **Autenticación:** Requerida (Firebase Bearer Token)
 
 **Query Params:**
+
 - `shop` (requerido): Dominio de la tienda
 
 **Ejemplo:**
+
 ```
 GET /shopify/orders?shop=llamaloai-dev.myshopify.com
 Authorization: Bearer <firebase_token>
 ```
 
 **Respuesta:**
+
 ```json
 {
   "orders": [
@@ -173,10 +192,12 @@ Authorization: Bearer <firebase_token>
 ## Flujo OAuth Completo (Seguro)
 
 1. **Usuario autenticado inicia conexión:**
+
    ```
    GET /shopify/auth?shop=tienda.myshopify.com
    Authorization: Bearer <firebase_token>
    ```
+
    - El sistema crea una sesión OAuth segura (`oauthSessionId`)
    - Se guarda en Firestore con `userId`, `shopDomain`, `createdAt`, `expiresAt` (10 min)
    - Se redirige a Shopify con `state=oauthSessionId`
@@ -184,6 +205,7 @@ Authorization: Bearer <firebase_token>
 2. **Usuario es redirigido a Shopify** para autorizar la aplicación
 
 3. **Shopify redirige de vuelta:**
+
    ```
    GET /shopify/callback?shop=tienda.myshopify.com&code=abc123&state=oauthSessionId
    ```
@@ -231,6 +253,7 @@ Sesiones OAuth temporales para el flujo de autenticación:
 ```
 
 **Características:**
+
 - Expiran en 10 minutos
 - Se eliminan después de usarse (one-time use)
 - Previenen ataques CSRF
@@ -245,7 +268,13 @@ Los tokens y datos de las tiendas se guardan en una colección dedicada:
   "shopDomain": "tienda.myshopify.com",
   "shopName": "Mi Tienda",
   "accessToken": "shpat_xxxxx",
-  "scopes": ["read_products", "read_orders", "read_customers", "read_fulfillments", "read_shipping"],
+  "scopes": [
+    "read_products",
+    "read_orders",
+    "read_customers",
+    "read_fulfillments",
+    "read_shipping"
+  ],
   "ownerUserId": "user123",
   "status": "active",
   "createdAt": "2024-01-01T00:00:00.000Z",
@@ -275,6 +304,7 @@ En la colección `users` solo se guarda una referencia simple:
 ### Scopes por Defecto (v1 - Cumplimiento GDPR)
 
 El módulo solicita los siguientes permisos por defecto:
+
 - `read_products` - Leer productos
 - `read_orders` - Leer pedidos
 - `read_fulfillments` - Leer cumplimientos/envíos
@@ -297,6 +327,7 @@ SHOPIFY_SCOPES=read_products,read_orders,read_customers,read_fulfillments,read_s
 ```
 
 **Antes de agregar `read_customers`, asegúrate de:**
+
 1. Tener base legal para procesar datos personales (GDPR Art. 6)
 2. Tener política de privacidad actualizada
 3. Documentar el propósito del procesamiento
@@ -345,4 +376,3 @@ Para que las consultas funcionen correctamente, necesitas crear los siguientes �
 2. Busca el tag `shopify`
 3. Prueba los endpoints directamente desde la interfaz de Swagger
 4. Para endpoints protegidos, usa el botón "Authorize" con tu token Firebase
-
