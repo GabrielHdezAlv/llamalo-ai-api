@@ -61,13 +61,34 @@ interface ShopifyOrdersResponse {
 export class ShopifyService {
   private readonly firestore = getFirestore();
   private readonly apiVersion = '2026-01';
-  private readonly scopes = [
-    'read_products',
-    'read_orders',
-    'read_customers',
-    'read_fulfillments',
-    'read_shipping',
-  ].join(',');
+
+  /**
+   * Scopes de Shopify por defecto (sin read_customers por cumplimiento GDPR)
+   * Para agregar read_customers, configurar SHOPIFY_SCOPES en variables de entorno
+   *
+   * ⚠️ ADVERTENCIA LEGAL:
+   * - read_customers da acceso a datos personales (GDPR)
+   * - Requiere justificación legal en la UE
+   * - Shopify puede solicitar revisión de la app
+   * - Solo incluir si es estrictamente necesario
+   */
+  private readonly scopes = this.getScopes();
+
+  private getScopes(): string {
+    // Si hay scopes personalizados en env, usarlos
+    const customScopes = process.env.SHOPIFY_SCOPES;
+    if (customScopes) {
+      return customScopes;
+    }
+
+    // Scopes por defecto (sin read_customers para cumplimiento GDPR)
+    return [
+      'read_products',
+      'read_orders',
+      'read_fulfillments',
+      'read_shipping',
+    ].join(',');
+  }
 
   /**
    * Crea una sesión OAuth y retorna el oauthSessionId
@@ -167,7 +188,11 @@ export class ShopifyService {
   /**
    * Genera la URL de autorización OAuth de Shopify usando oauthSessionId como state
    */
-  getAuthUrl(shop: string, redirectUri: string, oauthSessionId: string): string {
+  getAuthUrl(
+    shop: string,
+    redirectUri: string,
+    oauthSessionId: string,
+  ): string {
     const apiKey = process.env.SHOPIFY_API_KEY;
     if (!apiKey) {
       throw new InternalServerErrorException(
@@ -385,7 +410,10 @@ export class ShopifyService {
   /**
    * Crea una instancia de Axios configurada para llamar a la API de Shopify
    */
-  private createShopifyClient(shop: string, accessToken: string): AxiosInstance {
+  private createShopifyClient(
+    shop: string,
+    accessToken: string,
+  ): AxiosInstance {
     const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
     return axios.create({
@@ -610,4 +638,3 @@ export class ShopifyService {
     }
   }
 }
-

@@ -272,12 +272,35 @@ En la colección `users` solo se guarda una referencia simple:
 
 ## Scopes de Shopify
 
-El módulo solicita los siguientes permisos:
-- `read_products`
-- `read_orders`
-- `read_customers`
-- `read_fulfillments`
-- `read_shipping`
+### Scopes por Defecto (v1 - Cumplimiento GDPR)
+
+El módulo solicita los siguientes permisos por defecto:
+- `read_products` - Leer productos
+- `read_orders` - Leer pedidos
+- `read_fulfillments` - Leer cumplimientos/envíos
+- `read_shipping` - Leer información de envío
+
+### ⚠️ ADVERTENCIA LEGAL: read_customers
+
+**`read_customers` NO está incluido por defecto** por razones de cumplimiento legal:
+
+- **GDPR (UE)**: Acceso a datos personales requiere justificación legal
+- **Revisión de Shopify**: Pueden solicitar revisión de la aplicación
+- **Responsabilidad**: Debes tener base legal para procesar datos personales
+
+### Agregar read_customers (si es necesario)
+
+Si necesitas acceso a datos de clientes, configura la variable de entorno:
+
+```env
+SHOPIFY_SCOPES=read_products,read_orders,read_customers,read_fulfillments,read_shipping
+```
+
+**Antes de agregar `read_customers`, asegúrate de:**
+1. Tener base legal para procesar datos personales (GDPR Art. 6)
+2. Tener política de privacidad actualizada
+3. Documentar el propósito del procesamiento
+4. Considerar solicitar consentimiento explícito
 
 ## Versión de API
 
