@@ -192,20 +192,40 @@ Authorization: Bearer <firebase_token>
 
 ## Almacenamiento en Firestore
 
-Los tokens se guardan en la colección `users` bajo el campo `shopify`:
+### Colección `shopifyStores`
+
+Los tokens y datos de las tiendas se guardan en una colección dedicada:
 
 ```json
 {
-  "shopify": {
-    "shops": {
-      "tienda.myshopify.com": {
-        "accessToken": "shpat_xxxxx",
-        "connectedAt": "2024-01-01T00:00:00.000Z"
-      }
+  "id": "store123",
+  "shopDomain": "tienda.myshopify.com",
+  "shopName": "Mi Tienda",
+  "accessToken": "shpat_xxxxx",
+  "scopes": ["read_products", "read_orders", "read_customers", "read_fulfillments", "read_shipping"],
+  "ownerUserId": "user123",
+  "status": "active",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+```
+
+### Referencia en `users`
+
+En la colección `users` solo se guarda una referencia simple:
+
+```json
+{
+  "integrations": {
+    "shopify": {
+      "connected": true,
+      "shopDomain": "tienda.myshopify.com"
     }
   }
 }
 ```
+
+**Importante:** Los tokens NUNCA se guardan en la colección `users`, solo referencias.
 
 ## Scopes de Shopify
 
@@ -220,11 +240,33 @@ El módulo solicita los siguientes permisos:
 
 Se utiliza la versión **2026-01** de la API de Shopify.
 
+## Índices de Firestore Requeridos
+
+Para que las consultas funcionen correctamente, necesitas crear los siguientes índices compuestos en Firestore:
+
+1. **shopifyStores** - Para búsquedas por dominio y usuario:
+   - Collection: `shopifyStores`
+   - Fields: `shopDomain` (Ascending), `ownerUserId` (Ascending)
+   - Query scope: Collection
+
+2. **shopifyStores** - Para búsquedas por dominio, usuario y estado:
+   - Collection: `shopifyStores`
+   - Fields: `shopDomain` (Ascending), `ownerUserId` (Ascending), `status` (Ascending)
+   - Query scope: Collection
+
+3. **shopifyStores** - Para búsquedas por usuario y estado:
+   - Collection: `shopifyStores`
+   - Fields: `ownerUserId` (Ascending), `status` (Ascending)
+   - Query scope: Collection
+
+**Nota:** Firestore te mostrará un enlace para crear estos índices automáticamente cuando ejecutes las consultas por primera vez.
+
 ## Notas de Seguridad
 
 - El `userId` en el parámetro `state` del OAuth debería estar encriptado en producción
-- Los tokens de acceso se almacenan de forma segura en Firestore
+- Los tokens de acceso se almacenan en la colección dedicada `shopifyStores`, nunca en `users`
 - Todos los endpoints protegidos requieren autenticación Firebase
+- Los tokens se pueden encriptar antes de guardar (recomendado para producción)
 
 ## Testing en Swagger
 

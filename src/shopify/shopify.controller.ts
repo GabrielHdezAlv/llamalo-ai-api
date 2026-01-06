@@ -152,11 +152,12 @@ export class ShopifyController {
         );
       }
 
-      // Guardar el token en Firestore
+      // Guardar el token en shopifyStores y actualizar referencia en users
       await this.shopifyService.saveAccessToken(
         userId,
         query.shop,
         tokenResponse.access_token,
+        tokenResponse.scope,
       );
 
       return res.json({

@@ -6,11 +6,24 @@ import {
 } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { getFirestore } from '../firebase/firebase.config';
+import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 
 interface ShopifyTokenResponse {
   access_token: string;
   scope: string;
+}
+
+interface ShopifyStoreDocument {
+  id: string;
+  shopDomain: string;
+  shopName: string;
+  accessToken: string;
+  scopes: string[];
+  ownerUserId: string;
+  status: 'active' | 'revoked';
+  createdAt: admin.firestore.Timestamp | Date;
+  updatedAt: admin.firestore.Timestamp | Date;
 }
 
 interface ShopifyStoreResponse {
@@ -128,15 +141,17 @@ export class ShopifyService {
   }
 
   /**
-   * Guarda el access_token en Firestore
-   * Nota: Este método es abstracto según las restricciones, pero implementamos la estructura básica
+   * Guarda el access_token en la colección shopifyStores y actualiza la referencia en users
    */
   async saveAccessToken(
     userId: string,
     shop: string,
     accessToken: string,
+    scopes: string,
+    shopName?: string,
   ): Promise<void> {
     try {
+      // Verificar que el usuario existe
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
 
@@ -147,24 +162,66 @@ export class ShopifyService {
       // Normalizar el shop
       const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
-      // Obtener configuración existente de Shopify o crear nueva
-      const userData = userSnapshot.data() as Record<string, unknown>;
-      const shopifyConfig =
-        (userData?.shopify as Record<string, unknown>) || {};
+      // Si no tenemos el shopName, obtenerlo de la API de Shopify
+      let finalShopName = shopName;
+      if (!finalShopName) {
+        try {
+          const client = this.createShopifyClient(normalizedShop, accessToken);
+          const storeResponse = await client.get<ShopifyStoreResponse>('/shop.json');
+          finalShopName = storeResponse.data.shop.name;
+        } catch {
+          // Si falla, usar el dominio como nombre
+          finalShopName = normalizedShop;
+        }
+      }
 
-      // Actualizar o crear la configuración de esta tienda
-      const shops = (shopifyConfig.shops as Record<string, unknown>) || {};
-      shops[normalizedShop] = {
-        accessToken: accessToken,
-        connectedAt: new Date().toISOString(),
-      };
+      // Convertir scopes string a array
+      const scopesArray = scopes.split(',').map((s) => s.trim());
 
-      // Guardar en Firestore
+      // Buscar si ya existe un documento para esta tienda y usuario
+      const existingStoreQuery = await this.firestore
+        .collection('shopifyStores')
+        .where('shopDomain', '==', normalizedShop)
+        .where('ownerUserId', '==', userId)
+        .limit(1)
+        .get();
+
+      const now = admin.firestore.Timestamp.now();
+
+      if (!existingStoreQuery.empty) {
+        // Actualizar documento existente
+        const existingDoc = existingStoreQuery.docs[0];
+        await existingDoc.ref.update({
+          shopName: finalShopName,
+          accessToken: accessToken,
+          scopes: scopesArray,
+          status: 'active',
+          updatedAt: now,
+        });
+      } else {
+        // Crear nuevo documento
+        const newStoreRef = this.firestore.collection('shopifyStores').doc();
+        await newStoreRef.set({
+          id: newStoreRef.id,
+          shopDomain: normalizedShop,
+          shopName: finalShopName,
+          accessToken: accessToken,
+          scopes: scopesArray,
+          ownerUserId: userId,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      // Actualizar referencia en users
       await userDocRef.set(
         {
-          shopify: {
-            ...shopifyConfig,
-            shops: shops,
+          integrations: {
+            shopify: {
+              connected: true,
+              shopDomain: normalizedShop,
+            },
           },
         },
         { merge: true },
@@ -183,48 +240,38 @@ export class ShopifyService {
   }
 
   /**
-   * Obtiene el access_token del usuario para una tienda específica
+   * Obtiene el access_token del usuario para una tienda específica desde shopifyStores
    */
   async getAccessToken(userId: string, shop: string): Promise<string> {
     try {
-      const userDocRef = this.firestore.collection('users').doc(userId);
-      const userSnapshot = await userDocRef.get();
-
-      if (!userSnapshot.exists) {
-        throw new UnauthorizedException('Usuario no encontrado');
-      }
-
-      const userData = userSnapshot.data() as Record<string, unknown>;
-      const shopifyConfig = userData?.shopify as
-        | Record<string, unknown>
-        | undefined;
-
-      if (!shopifyConfig) {
-        throw new UnauthorizedException(
-          'No hay tiendas Shopify conectadas para este usuario',
-        );
-      }
-
       // Normalizar el shop
       const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
-      const shops = shopifyConfig.shops as Record<string, unknown> | undefined;
-      if (!shops || !shops[normalizedShop]) {
+      // Buscar en la colección shopifyStores
+      const storeQuery = await this.firestore
+        .collection('shopifyStores')
+        .where('shopDomain', '==', normalizedShop)
+        .where('ownerUserId', '==', userId)
+        .where('status', '==', 'active')
+        .limit(1)
+        .get();
+
+      if (storeQuery.empty) {
         throw new UnauthorizedException(
-          `No hay token de acceso para la tienda: ${normalizedShop}`,
+          `No hay tienda Shopify activa conectada para: ${normalizedShop}`,
         );
       }
 
-      const shopData = shops[normalizedShop] as Record<string, unknown>;
-      const accessToken = shopData.accessToken as string | undefined;
+      const storeDoc = storeQuery.docs[0];
+      const storeData = storeDoc.data() as ShopifyStoreDocument;
 
-      if (!accessToken) {
+      if (!storeData.accessToken) {
         throw new UnauthorizedException(
           'Token de acceso no encontrado para esta tienda',
         );
       }
 
-      return accessToken;
+      return storeData.accessToken;
     } catch (error) {
       if (error instanceof UnauthorizedException) {
         throw error;
@@ -345,6 +392,89 @@ export class ShopifyService {
       }
       throw new InternalServerErrorException(
         `Error desconocido: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Revoca/desconecta una tienda Shopify
+   */
+  async revokeStore(userId: string, shop: string): Promise<void> {
+    try {
+      // Normalizar el shop
+      const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+      // Buscar la tienda
+      const storeQuery = await this.firestore
+        .collection('shopifyStores')
+        .where('shopDomain', '==', normalizedShop)
+        .where('ownerUserId', '==', userId)
+        .limit(1)
+        .get();
+
+      if (storeQuery.empty) {
+        throw new BadRequestException(
+          `No se encontró la tienda: ${normalizedShop}`,
+        );
+      }
+
+      const storeDoc = storeQuery.docs[0];
+      const now = admin.firestore.Timestamp.now();
+
+      // Actualizar estado a revoked
+      await storeDoc.ref.update({
+        status: 'revoked',
+        updatedAt: now,
+      });
+
+      // Actualizar referencia en users - eliminar la referencia si no hay más tiendas activas
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+      
+      if (userSnapshot.exists) {
+        const userData = userSnapshot.data() as Record<string, unknown>;
+        const integrations = (userData?.integrations as Record<string, unknown>) || {};
+        const shopifyIntegration = integrations.shopify as Record<string, unknown> | undefined;
+        
+        // Verificar si hay otras tiendas activas
+        const activeStoresQuery = await this.firestore
+          .collection('shopifyStores')
+          .where('ownerUserId', '==', userId)
+          .where('status', '==', 'active')
+          .get();
+        
+        if (activeStoresQuery.empty) {
+          // No hay más tiendas activas, eliminar referencia
+          if (shopifyIntegration) {
+            delete integrations.shopify;
+            await userDocRef.set({ integrations }, { merge: true });
+          }
+        } else {
+          // Hay otras tiendas activas, actualizar solo si esta era la tienda referenciada
+          if (shopifyIntegration?.shopDomain === normalizedShop) {
+            // Actualizar a la primera tienda activa disponible
+            const firstActiveStore = activeStoresQuery.docs[0].data() as ShopifyStoreDocument;
+            await userDocRef.set(
+              {
+                integrations: {
+                  ...integrations,
+                  shopify: {
+                    connected: true,
+                    shopDomain: firstActiveStore.shopDomain,
+                  },
+                },
+              },
+              { merge: true },
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        `Error al revocar tienda: ${(error as Error).message}`,
       );
     }
   }
