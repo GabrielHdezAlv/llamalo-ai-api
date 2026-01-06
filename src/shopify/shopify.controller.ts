@@ -29,6 +29,7 @@ import { ShopifyCallbackResponseDto } from './dto/shopify-callback-response.dto'
 import { ShopifyStoreResponseDto } from './dto/shopify-store-response.dto';
 import { ShopifyProductsResponseDto } from './dto/shopify-products-response.dto';
 import { ShopifyOrdersResponseDto } from './dto/shopify-orders-response.dto';
+import { ShopifyAuthResponseDto } from './dto/shopify-auth-response.dto';
 
 @ApiTags('shopify')
 @Controller('shopify')
@@ -41,7 +42,7 @@ export class ShopifyController {
   @ApiOperation({
     summary: 'Iniciar flujo OAuth de Shopify',
     description:
-      'Crea una sesión OAuth segura y redirige al usuario al flujo de autorización de Shopify. Requiere autenticación Firebase.',
+      'Crea una sesión OAuth segura y redirige al usuario al flujo de autorización de Shopify. Requiere autenticación Firebase. Si redirect=false, devuelve la URL en JSON en lugar de redirigir (útil para Swagger).',
   })
   @ApiQuery({
     name: 'shop',
@@ -50,9 +51,23 @@ export class ShopifyController {
     description: 'Dominio de la tienda Shopify (sin https://)',
     required: true,
   })
+  @ApiQuery({
+    name: 'redirect',
+    type: Boolean,
+    example: true,
+    description:
+      'Si es false, devuelve la URL en JSON en lugar de redirigir (útil para probar en Swagger)',
+    required: false,
+  })
   @ApiResponse({
     status: 302,
-    description: 'Redirección a la página de autorización de Shopify',
+    description:
+      'Redirección a la página de autorización de Shopify (cuando redirect=true o no se especifica)',
+  })
+  @ApiResponse({
+    status: 200,
+    type: ShopifyAuthResponseDto,
+    description: 'URL de autorización en JSON (cuando redirect=false)',
   })
   @ApiResponse({
     status: 400,
@@ -64,7 +79,7 @@ export class ShopifyController {
   })
   async auth(
     @GetUser('uid') userId: string,
-    @Query() query: ShopifyAuthQueryDto,
+    @Query() query: ShopifyAuthQueryDto & { redirect?: string },
     @Res() res: Response,
   ) {
     try {
@@ -89,7 +104,15 @@ export class ShopifyController {
         oauthSessionId,
       );
 
-      // Redirigir al usuario
+      // Si redirect=false, devolver JSON para Swagger
+      if (query.redirect === 'false') {
+        return res.json({
+          authUrl: authUrl,
+          message: 'Visita esta URL para autorizar la aplicación en Shopify',
+        });
+      }
+
+      // Por defecto, redirigir
       return res.redirect(authUrl);
     } catch (error) {
       throw new BadRequestException(
