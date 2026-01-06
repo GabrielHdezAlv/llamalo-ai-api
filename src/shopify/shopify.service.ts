@@ -34,7 +34,7 @@ interface OAuthSessionDocument {
   expiresAt: admin.firestore.Timestamp | Date;
 }
 
-interface ShopifyStoreResponse {
+export interface ShopifyStoreResponse {
   shop: {
     id: number;
     name: string;
@@ -49,11 +49,11 @@ interface ShopifyStoreResponse {
   };
 }
 
-interface ShopifyProductsResponse {
+export interface ShopifyProductsResponse {
   products: unknown[];
 }
 
-interface ShopifyOrdersResponse {
+export interface ShopifyOrdersResponse {
   orders: unknown[];
 }
 

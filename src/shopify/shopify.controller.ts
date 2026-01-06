@@ -14,8 +14,13 @@ import {
   ApiResponse,
   ApiQuery,
 } from '@nestjs/swagger';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { ShopifyService } from './shopify.service';
+import type {
+  ShopifyStoreResponse,
+  ShopifyProductsResponse,
+  ShopifyOrdersResponse,
+} from './shopify.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 import { ShopifyAuthQueryDto } from './dto/shopify-auth-query.dto';
@@ -131,7 +136,8 @@ export class ShopifyController {
   })
   @ApiResponse({
     status: 401,
-    description: 'Sesión OAuth inválida, expirada o código de autorización inválido',
+    description:
+      'Sesión OAuth inválida, expirada o código de autorización inválido',
   })
   async callback(
     @Query() query: ShopifyCallbackQueryDto,
@@ -150,7 +156,9 @@ export class ShopifyController {
       );
 
       // Verificar que el shopDomain coincide
-      const normalizedShop = query.shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const normalizedShop = query.shop
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '');
       if (oauthSession.shopDomain !== normalizedShop) {
         throw new BadRequestException(
           'El dominio de la tienda no coincide con la sesión OAuth',
@@ -222,7 +230,7 @@ export class ShopifyController {
   async getStore(
     @GetUser('uid') userId: string,
     @Query('shop') shop: string,
-  ) {
+  ): Promise<ShopifyStoreResponse> {
     if (!shop) {
       throw new BadRequestException('El parámetro shop es obligatorio');
     }
@@ -261,7 +269,7 @@ export class ShopifyController {
   async getProducts(
     @GetUser('uid') userId: string,
     @Query('shop') shop: string,
-  ) {
+  ): Promise<ShopifyProductsResponse> {
     if (!shop) {
       throw new BadRequestException('El parámetro shop es obligatorio');
     }
@@ -300,7 +308,7 @@ export class ShopifyController {
   async getOrders(
     @GetUser('uid') userId: string,
     @Query('shop') shop: string,
-  ) {
+  ): Promise<ShopifyOrdersResponse> {
     if (!shop) {
       throw new BadRequestException('El parámetro shop es obligatorio');
     }
@@ -308,4 +316,3 @@ export class ShopifyController {
     return this.shopifyService.getOrders(userId, shop);
   }
 }
-
