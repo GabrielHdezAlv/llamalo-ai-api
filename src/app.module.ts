@@ -8,6 +8,7 @@ import { TwilioModule } from './twilio/twilio.module';
 import { HealthModule } from './health/health.module';
 import { CallsModule } from './calls/calls.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { ShopifyModule } from './shopify/shopify.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { MetricsModule } from './metrics/metrics.module';
     TwilioModule,
     HealthModule,
     MetricsModule,
+    ShopifyModule,
   ],
   controllers: [],
   providers: [],
