@@ -32,18 +32,22 @@ APP_URL=http://localhost:3000  # URL base de tu aplicación (para callbacks)
 ## Endpoints
 
 ### 1. GET /shopify/auth
-**Público** - Inicia el flujo OAuth de Shopify
+**Protegido** - Inicia el flujo OAuth de Shopify (requiere autenticación Firebase)
+
+**Autenticación:** Requerida (Firebase Bearer Token)
 
 **Query Params:**
 - `shop` (requerido): Dominio de la tienda, ej: `llamaloai-dev.myshopify.com`
-- `userId` (opcional): ID del usuario para asociar la tienda
 
 **Ejemplo:**
 ```
-GET /shopify/auth?shop=llamaloai-dev.myshopify.com&userId=user123
+GET /shopify/auth?shop=llamaloai-dev.myshopify.com
+Authorization: Bearer <firebase_token>
 ```
 
 **Respuesta:** Redirección 302 a la página de autorización de Shopify
+
+**Nota:** El sistema crea automáticamente una sesión OAuth segura y la usa como `state` en el flujo OAuth.
 
 ---
 
@@ -53,12 +57,14 @@ GET /shopify/auth?shop=llamaloai-dev.myshopify.com&userId=user123
 **Query Params:**
 - `shop` (requerido): Dominio de la tienda
 - `code` (requerido): Código de autorización de Shopify
-- `state` (opcional): Contiene el userId pasado en el flujo OAuth
+- `state` (requerido): ID de sesión OAuth (`oauthSessionId`) generado en `/auth`
 
 **Ejemplo:**
 ```
-GET /shopify/callback?shop=llamaloai-dev.myshopify.com&code=abc123&state=user123
+GET /shopify/callback?shop=llamaloai-dev.myshopify.com&code=abc123&state=oauthSessionId123
 ```
+
+**Nota:** El sistema valida la sesión OAuth, recupera el `userId` de forma segura y elimina la sesión después de usarla.
 
 **Respuesta:**
 ```json
@@ -164,33 +170,70 @@ Authorization: Bearer <firebase_token>
 }
 ```
 
-## Flujo OAuth Completo
+## Flujo OAuth Completo (Seguro)
 
-1. **Usuario inicia conexión:**
+1. **Usuario autenticado inicia conexión:**
    ```
-   GET /shopify/auth?shop=tienda.myshopify.com&userId=user123
+   GET /shopify/auth?shop=tienda.myshopify.com
+   Authorization: Bearer <firebase_token>
    ```
+   - El sistema crea una sesión OAuth segura (`oauthSessionId`)
+   - Se guarda en Firestore con `userId`, `shopDomain`, `createdAt`, `expiresAt` (10 min)
+   - Se redirige a Shopify con `state=oauthSessionId`
 
 2. **Usuario es redirigido a Shopify** para autorizar la aplicación
 
 3. **Shopify redirige de vuelta:**
    ```
-   GET /shopify/callback?shop=tienda.myshopify.com&code=abc123&state=user123
+   GET /shopify/callback?shop=tienda.myshopify.com&code=abc123&state=oauthSessionId
    ```
 
 4. **El sistema:**
+   - Valida la sesión OAuth (existe, no expirada, shopDomain coincide)
+   - Recupera el `userId` de la sesión
    - Intercambia el código por un `access_token`
-   - Guarda el token en Firestore asociado al `userId`
+   - Guarda el token en `shopifyStores` asociado al `userId`
+   - Elimina la sesión OAuth (one-time use)
    - Responde con éxito
 
 5. **Usuario puede usar los endpoints protegidos:**
    ```
    GET /shopify/store?shop=tienda.myshopify.com
+   Authorization: Bearer <firebase_token>
    GET /shopify/products?shop=tienda.myshopify.com
+   Authorization: Bearer <firebase_token>
    GET /shopify/orders?shop=tienda.myshopify.com
+   Authorization: Bearer <firebase_token>
    ```
 
+### Seguridad
+
+- ✅ El `userId` nunca se expone en URLs o parámetros públicos
+- ✅ Las sesiones OAuth expiran en 10 minutos
+- ✅ Las sesiones son de un solo uso (se eliminan después del callback)
+- ✅ Validación de `shopDomain` para prevenir ataques CSRF
+- ✅ El endpoint `/auth` ahora requiere autenticación Firebase
+
 ## Almacenamiento en Firestore
+
+### Colección `oauthSessions`
+
+Sesiones OAuth temporales para el flujo de autenticación:
+
+```json
+{
+  "id": "oauthSessionId123",
+  "userId": "user123",
+  "shopDomain": "tienda.myshopify.com",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "expiresAt": "2024-01-01T00:10:00.000Z"
+}
+```
+
+**Características:**
+- Expiran en 10 minutos
+- Se eliminan después de usarse (one-time use)
+- Previenen ataques CSRF
 
 ### Colección `shopifyStores`
 
@@ -244,17 +287,22 @@ Se utiliza la versión **2026-01** de la API de Shopify.
 
 Para que las consultas funcionen correctamente, necesitas crear los siguientes índices compuestos en Firestore:
 
-1. **shopifyStores** - Para búsquedas por dominio y usuario:
+1. **oauthSessions** - Para búsquedas por ID:
+   - Collection: `oauthSessions`
+   - Fields: `id` (Ascending) - Este es el document ID, no requiere índice compuesto
+   - Query scope: Collection
+
+2. **shopifyStores** - Para búsquedas por dominio y usuario:
    - Collection: `shopifyStores`
    - Fields: `shopDomain` (Ascending), `ownerUserId` (Ascending)
    - Query scope: Collection
 
-2. **shopifyStores** - Para búsquedas por dominio, usuario y estado:
+3. **shopifyStores** - Para búsquedas por dominio, usuario y estado:
    - Collection: `shopifyStores`
    - Fields: `shopDomain` (Ascending), `ownerUserId` (Ascending), `status` (Ascending)
    - Query scope: Collection
 
-3. **shopifyStores** - Para búsquedas por usuario y estado:
+4. **shopifyStores** - Para búsquedas por usuario y estado:
    - Collection: `shopifyStores`
    - Fields: `ownerUserId` (Ascending), `status` (Ascending)
    - Query scope: Collection

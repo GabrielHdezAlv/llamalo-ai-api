@@ -5,6 +5,7 @@ import {
   Res,
   UseGuards,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,10 +31,12 @@ export class ShopifyController {
   constructor(private readonly shopifyService: ShopifyService) {}
 
   @Get('auth')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Iniciar flujo OAuth de Shopify',
     description:
-      'Redirige al usuario al flujo de autorización OAuth de Shopify. Este endpoint es público y no requiere autenticación. El userId debe pasarse como query param para asociar la tienda al usuario.',
+      'Crea una sesión OAuth segura y redirige al usuario al flujo de autorización de Shopify. Requiere autenticación Firebase.',
   })
   @ApiQuery({
     name: 'shop',
@@ -41,13 +44,6 @@ export class ShopifyController {
     example: 'llamaloai-dev.myshopify.com',
     description: 'Dominio de la tienda Shopify (sin https://)',
     required: true,
-  })
-  @ApiQuery({
-    name: 'userId',
-    type: String,
-    example: 'user123',
-    description: 'ID del usuario (se incluirá en el state del OAuth)',
-    required: false,
   })
   @ApiResponse({
     status: 302,
@@ -57,11 +53,22 @@ export class ShopifyController {
     status: 400,
     description: 'Parámetros inválidos',
   })
+  @ApiResponse({
+    status: 401,
+    description: 'No autorizado',
+  })
   async auth(
-    @Query() query: ShopifyAuthQueryDto & { userId?: string },
+    @GetUser('uid') userId: string,
+    @Query() query: ShopifyAuthQueryDto,
     @Res() res: Response,
   ) {
     try {
+      // Crear sesión OAuth segura
+      const oauthSessionId = await this.shopifyService.createOAuthSession(
+        userId,
+        query.shop,
+      );
+
       // Construir la URL de callback
       const baseUrl =
         process.env.NODE_ENV === 'production'
@@ -70,15 +77,11 @@ export class ShopifyController {
 
       const redirectUri = `${baseUrl}/shopify/callback`;
 
-      // Incluir userId en el state para el callback
-      // Nota: En producción, deberías encriptar/codificar el userId para mayor seguridad
-      const state = query.userId || '';
-
-      // Obtener URL de autorización
+      // Obtener URL de autorización con oauthSessionId como state
       const authUrl = this.shopifyService.getAuthUrl(
         query.shop,
         redirectUri,
-        state,
+        oauthSessionId,
       );
 
       // Redirigir al usuario
@@ -94,7 +97,7 @@ export class ShopifyController {
   @ApiOperation({
     summary: 'Callback OAuth de Shopify',
     description:
-      'Endpoint de callback que recibe el código de autorización de Shopify, lo intercambia por un access_token y lo guarda en la base de datos. Este endpoint es público. El userId debe venir en el parámetro state del flujo OAuth.',
+      'Endpoint de callback que recibe el código de autorización de Shopify. Valida la sesión OAuth, intercambia el código por access_token y lo guarda en la base de datos. Este endpoint es público.',
   })
   @ApiQuery({
     name: 'shop',
@@ -113,9 +116,9 @@ export class ShopifyController {
   @ApiQuery({
     name: 'state',
     type: String,
-    example: 'userId123',
-    description: 'Estado que contiene el userId (debe ser incluido en el flujo OAuth)',
-    required: false,
+    example: 'oauthSessionId123',
+    description: 'ID de sesión OAuth (oauthSessionId)',
+    required: true,
   })
   @ApiResponse({
     status: 200,
@@ -128,44 +131,58 @@ export class ShopifyController {
   })
   @ApiResponse({
     status: 401,
-    description: 'Código de autorización inválido o expirado',
+    description: 'Sesión OAuth inválida, expirada o código de autorización inválido',
   })
   async callback(
-    @Query() query: ShopifyCallbackQueryDto & { state?: string },
+    @Query() query: ShopifyCallbackQueryDto,
     @Res() res: Response,
   ) {
     try {
+      if (!query.state) {
+        throw new BadRequestException(
+          'El parámetro state (oauthSessionId) es requerido',
+        );
+      }
+
+      // Validar sesión OAuth y recuperar userId
+      const oauthSession = await this.shopifyService.validateOAuthSession(
+        query.state,
+      );
+
+      // Verificar que el shopDomain coincide
+      const normalizedShop = query.shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      if (oauthSession.shopDomain !== normalizedShop) {
+        throw new BadRequestException(
+          'El dominio de la tienda no coincide con la sesión OAuth',
+        );
+      }
+
       // Intercambiar código por access_token
       const tokenResponse = await this.shopifyService.exchangeCodeForToken(
         query.shop,
         query.code,
       );
 
-      // Extraer userId del parámetro state
-      // Nota: En producción, deberías encriptar/codificar el userId en el state
-      // para mayor seguridad. Por ahora, asumimos que viene directamente.
-      const userId = query.state;
-
-      if (!userId) {
-        throw new BadRequestException(
-          'El parámetro state (userId) es requerido. Asegúrate de incluirlo en el flujo OAuth.',
-        );
-      }
-
       // Guardar el token en shopifyStores y actualizar referencia en users
       await this.shopifyService.saveAccessToken(
-        userId,
+        oauthSession.userId,
         query.shop,
         tokenResponse.access_token,
         tokenResponse.scope,
       );
+
+      // Eliminar sesión OAuth después de usarla (one-time use)
+      await this.shopifyService.deleteOAuthSession(query.state);
 
       return res.json({
         success: true,
         message: 'Token de acceso guardado correctamente',
       });
     } catch (error) {
-      if (error instanceof BadRequestException) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof UnauthorizedException
+      ) {
         throw error;
       }
       throw new BadRequestException(

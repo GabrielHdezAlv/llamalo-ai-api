@@ -19,12 +19,12 @@ export class ShopifyCallbackQueryDto {
   code: string;
 
   @ApiProperty({
-    example: 'userId123',
-    description: 'Estado que contiene el userId (incluido en el flujo OAuth)',
-    required: false,
+    example: 'oauthSessionId123',
+    description: 'ID de sesión OAuth (oauthSessionId) generado en el endpoint /auth',
+    required: true,
   })
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
-  state?: string;
+  state: string;
 }
 

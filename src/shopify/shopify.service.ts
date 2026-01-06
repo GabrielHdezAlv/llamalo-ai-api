@@ -26,6 +26,14 @@ interface ShopifyStoreDocument {
   updatedAt: admin.firestore.Timestamp | Date;
 }
 
+interface OAuthSessionDocument {
+  id: string;
+  userId: string;
+  shopDomain: string;
+  createdAt: admin.firestore.Timestamp | Date;
+  expiresAt: admin.firestore.Timestamp | Date;
+}
+
 interface ShopifyStoreResponse {
   shop: {
     id: number;
@@ -62,9 +70,104 @@ export class ShopifyService {
   ].join(',');
 
   /**
-   * Genera la URL de autorización OAuth de Shopify
+   * Crea una sesión OAuth y retorna el oauthSessionId
    */
-  getAuthUrl(shop: string, redirectUri: string, state?: string): string {
+  async createOAuthSession(
+    userId: string,
+    shop: string,
+  ): Promise<string> {
+    try {
+      // Verificar que el usuario existe
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new BadRequestException('Usuario no encontrado');
+      }
+
+      // Normalizar el shop
+      const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+      // Generar ID único para la sesión
+      const sessionId = crypto.randomBytes(32).toString('hex');
+
+      // Crear sesión con expiración de 10 minutos
+      const now = admin.firestore.Timestamp.now();
+      const expiresAt = new Date(now.toMillis() + 10 * 60 * 1000); // 10 minutos
+
+      const sessionRef = this.firestore.collection('oauthSessions').doc(sessionId);
+      await sessionRef.set({
+        id: sessionId,
+        userId: userId,
+        shopDomain: normalizedShop,
+        createdAt: now,
+        expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+      });
+
+      return sessionId;
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        `Error al crear sesión OAuth: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Valida y recupera una sesión OAuth
+   */
+  async validateOAuthSession(sessionId: string): Promise<OAuthSessionDocument> {
+    try {
+      const sessionDoc = await this.firestore
+        .collection('oauthSessions')
+        .doc(sessionId)
+        .get();
+
+      if (!sessionDoc.exists) {
+        throw new UnauthorizedException('Sesión OAuth no encontrada');
+      }
+
+      const sessionData = sessionDoc.data() as OAuthSessionDocument;
+
+      // Verificar expiración
+      const expiresAt = sessionData.expiresAt as admin.firestore.Timestamp;
+      const now = admin.firestore.Timestamp.now();
+
+      if (expiresAt.toMillis() < now.toMillis()) {
+        // Eliminar sesión expirada
+        await sessionDoc.ref.delete();
+        throw new UnauthorizedException('Sesión OAuth expirada');
+      }
+
+      return sessionData;
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        `Error al validar sesión OAuth: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Elimina una sesión OAuth después de usarla
+   */
+  async deleteOAuthSession(sessionId: string): Promise<void> {
+    try {
+      await this.firestore.collection('oauthSessions').doc(sessionId).delete();
+    } catch (error) {
+      // No lanzar error si falla la eliminación, solo loguear
+      console.error(`Error al eliminar sesión OAuth ${sessionId}:`, error);
+    }
+  }
+
+  /**
+   * Genera la URL de autorización OAuth de Shopify usando oauthSessionId como state
+   */
+  getAuthUrl(shop: string, redirectUri: string, oauthSessionId: string): string {
     const apiKey = process.env.SHOPIFY_API_KEY;
     if (!apiKey) {
       throw new InternalServerErrorException(
@@ -75,14 +178,11 @@ export class ShopifyService {
     // Normalizar el shop (eliminar https:// si existe)
     const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
-    // Usar el state proporcionado o generar uno aleatorio
-    const oauthState = state || crypto.randomBytes(16).toString('hex');
-
     const params = new URLSearchParams({
       client_id: apiKey,
       scope: this.scopes,
       redirect_uri: redirectUri,
-      state: oauthState,
+      state: oauthSessionId, // Usar oauthSessionId como state
     });
 
     return `https://${normalizedShop}/admin/oauth/authorize?${params.toString()}`;
@@ -476,6 +576,37 @@ export class ShopifyService {
       throw new InternalServerErrorException(
         `Error al revocar tienda: ${(error as Error).message}`,
       );
+    }
+  }
+
+  /**
+   * Limpia sesiones OAuth expiradas (método de mantenimiento)
+   * Puede ser llamado periódicamente por un cron job
+   */
+  async cleanupExpiredSessions(): Promise<number> {
+    try {
+      const now = admin.firestore.Timestamp.now();
+      const expiredSessions = await this.firestore
+        .collection('oauthSessions')
+        .where('expiresAt', '<', now)
+        .get();
+
+      const batch = this.firestore.batch();
+      let deletedCount = 0;
+
+      expiredSessions.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+        deletedCount++;
+      });
+
+      if (deletedCount > 0) {
+        await batch.commit();
+      }
+
+      return deletedCount;
+    } catch (error) {
+      console.error('Error al limpiar sesiones expiradas:', error);
+      return 0;
     }
   }
 }
