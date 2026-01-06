@@ -3,6 +3,7 @@ import {
   Get,
   Query,
   Res,
+  Req,
   UseGuards,
   BadRequestException,
   UnauthorizedException,
@@ -14,7 +15,7 @@ import {
   ApiResponse,
   ApiQuery,
 } from '@nestjs/swagger';
-import type { Response } from 'express';
+import type { Response, Request } from 'express';
 import { ShopifyService } from './shopify.service';
 import type {
   ShopifyStoreResponse,
@@ -42,7 +43,7 @@ export class ShopifyController {
   @ApiOperation({
     summary: 'Iniciar flujo OAuth de Shopify',
     description:
-      'Crea una sesión OAuth segura y redirige al usuario al flujo de autorización de Shopify. Requiere autenticación Firebase. Si redirect=false, devuelve la URL en JSON en lugar de redirigir (útil para Swagger).',
+      'Crea una sesión OAuth segura y redirige al usuario al flujo de autorización de Shopify. Requiere autenticación Firebase. Si la petición viene de Swagger, automáticamente devuelve la URL en JSON en lugar de redirigir. También puedes usar redirect=false para forzar el modo JSON.',
   })
   @ApiQuery({
     name: 'shop',
@@ -56,7 +57,7 @@ export class ShopifyController {
     type: Boolean,
     example: true,
     description:
-      'Si es false, devuelve la URL en JSON en lugar de redirigir (útil para probar en Swagger)',
+      'Si es false, devuelve la URL en JSON en lugar de redirigir. Nota: Swagger se detecta automáticamente y devuelve JSON sin necesidad de este parámetro.',
     required: false,
   })
   @ApiResponse({
@@ -81,8 +82,19 @@ export class ShopifyController {
     @GetUser('uid') userId: string,
     @Query() query: ShopifyAuthQueryDto & { redirect?: string },
     @Res() res: Response,
+    @Req() req: Request,
   ) {
     try {
+      // Detectar si la petición viene de Swagger
+      // Swagger UI típicamente envía referer con /api o swagger en la URL
+      const referer = req.headers['referer'] || '';
+      const userAgent = req.headers['user-agent'] || '';
+      const isFromSwagger =
+        query.redirect === 'false' ||
+        referer.includes('/api') ||
+        referer.includes('swagger') ||
+        userAgent.includes('Swagger');
+
       // Crear sesión OAuth segura
       const oauthSessionId = await this.shopifyService.createOAuthSession(
         userId,
@@ -104,8 +116,8 @@ export class ShopifyController {
         oauthSessionId,
       );
 
-      // Si redirect=false, devolver JSON para Swagger
-      if (query.redirect === 'false') {
+      // Si viene de Swagger, devolver JSON automáticamente
+      if (isFromSwagger) {
         return res.json({
           authUrl: authUrl,
           message: 'Visita esta URL para autorizar la aplicación en Shopify',
