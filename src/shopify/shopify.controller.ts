@@ -21,6 +21,7 @@ import type {
   NormalizedStoreResponse,
   NormalizedProductsResponse,
   NormalizedOrdersResponse,
+  ShopifyMasterDataResponse,
 } from './shopify.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
@@ -31,6 +32,7 @@ import { ShopifyStoreResponseDto } from './dto/shopify-store-response.dto';
 import { ShopifyProductsResponseDto } from './dto/shopify-products-response.dto';
 import { ShopifyOrdersResponseDto } from './dto/shopify-orders-response.dto';
 import { ShopifyAuthResponseDto } from './dto/shopify-auth-response.dto';
+import { ShopifyMasterDataResponseDto } from './dto/shopify-master-data-response.dto';
 
 @ApiTags('shopify')
 @Controller('shopify')
@@ -349,5 +351,45 @@ export class ShopifyController {
     }
 
     return this.shopifyService.getOrders(userId, shop);
+  }
+
+  @Get('master-data')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Obtener datos maestros de la tienda Shopify',
+    description:
+      'Obtiene todos los datos normalizados de la tienda (store, products, orders) en un solo objeto. Útil para análisis, dashboards o envío a otros sistemas. Requiere autenticación Firebase y que la tienda esté previamente conectada.',
+  })
+  @ApiQuery({
+    name: 'shop',
+    type: String,
+    example: 'llamaloai-dev.myshopify.com',
+    description: 'Dominio de la tienda Shopify',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    type: ShopifyMasterDataResponseDto,
+    description:
+      'Datos maestros obtenidos correctamente. Los arrays de products y orders siempre estarán presentes, incluso si están vacíos.',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Token de acceso inválido o tienda no conectada',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'No autorizado',
+  })
+  async getMasterData(
+    @GetUser('uid') userId: string,
+    @Query('shop') shop: string,
+  ): Promise<ShopifyMasterDataResponse> {
+    if (!shop) {
+      throw new BadRequestException('El parámetro shop es obligatorio');
+    }
+
+    return this.shopifyService.getMasterData(userId, shop);
   }
 }

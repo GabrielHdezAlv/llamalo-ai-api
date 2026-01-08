@@ -143,6 +143,13 @@ export interface NormalizedStoreResponse {
   store: NormalizedStore;
 }
 
+// Interface para datos maestros combinados
+export interface ShopifyMasterDataResponse {
+  store: NormalizedStore;
+  products: NormalizedProduct[];
+  orders: NormalizedOrder[];
+}
+
 @Injectable()
 export class ShopifyService {
   private readonly firestore = getFirestore();
@@ -825,6 +832,44 @@ export class ShopifyService {
       }
       throw new InternalServerErrorException(
         `Error al revocar tienda: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Obtiene todos los datos maestros de la tienda (store, products, orders) en un solo objeto
+   * Útil para análisis, dashboards o envío a otros sistemas
+   */
+  async getMasterData(
+    userId: string,
+    shop: string,
+  ): Promise<ShopifyMasterDataResponse> {
+    try {
+      // Obtener los tres conjuntos de datos en paralelo para mejor rendimiento
+      const [storeResponse, productsResponse, ordersResponse] =
+        await Promise.all([
+          this.getStoreInfo(userId, shop),
+          this.getProducts(userId, shop),
+          this.getOrders(userId, shop),
+        ]);
+
+      // Combinar en un objeto maestro
+      return {
+        store: storeResponse.store,
+        products: productsResponse.products, // Array completo, puede estar vacío []
+        orders: ordersResponse.orders, // Array completo, puede estar vacío []
+      };
+    } catch (error) {
+      // Re-lanzar errores de los métodos subyacentes
+      if (
+        error instanceof UnauthorizedException ||
+        error instanceof BadRequestException ||
+        error instanceof InternalServerErrorException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        `Error al obtener datos maestros: ${(error as Error).message}`,
       );
     }
   }
