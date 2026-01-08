@@ -18,7 +18,7 @@ import {
 import type { Response, Request } from 'express';
 import { ShopifyService } from './shopify.service';
 import type {
-  ShopifyStoreResponse,
+  NormalizedStoreResponse,
   NormalizedProductsResponse,
   NormalizedOrdersResponse,
 } from './shopify.service';
@@ -265,7 +265,7 @@ export class ShopifyController {
   async getStore(
     @GetUser('uid') userId: string,
     @Query('shop') shop: string,
-  ): Promise<ShopifyStoreResponse> {
+  ): Promise<NormalizedStoreResponse> {
     if (!shop) {
       throw new BadRequestException('El parámetro shop es obligatorio');
     }

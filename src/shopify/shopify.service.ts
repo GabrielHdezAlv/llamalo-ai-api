@@ -125,6 +125,24 @@ export interface NormalizedProductsResponse {
   products: NormalizedProduct[];
 }
 
+// Interfaces para tienda normalizada
+export interface NormalizedStore {
+  storeId: number;
+  name: string;
+  domain: string;
+  email: string;
+  province: string | null;
+  country: string;
+  currency: string;
+  timezone: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NormalizedStoreResponse {
+  store: NormalizedStore;
+}
+
 @Injectable()
 export class ShopifyService {
   private readonly firestore = getFirestore();
@@ -500,18 +518,36 @@ export class ShopifyService {
   }
 
   /**
-   * Obtiene información de la tienda
+   * Obtiene información de la tienda normalizada
    */
   async getStoreInfo(
     userId: string,
     shop: string,
-  ): Promise<ShopifyStoreResponse> {
+  ): Promise<NormalizedStoreResponse> {
     try {
       const accessToken = await this.getAccessToken(userId, shop);
       const client = this.createShopifyClient(shop, accessToken);
 
       const response = await client.get<ShopifyStoreResponse>('/shop.json');
-      return response.data;
+      const shopData = response.data.shop;
+
+      // Transformar al formato normalizado
+      const normalizedStore: NormalizedStore = {
+        storeId: shopData.id || 0,
+        name: shopData.name || '',
+        domain: shopData.domain || '',
+        email: shopData.email || '',
+        province: shopData.province || null,
+        country: shopData.country || '',
+        currency: shopData.currency || '',
+        timezone: shopData.timezone || '',
+        createdAt: shopData.created_at || new Date().toISOString(),
+        updatedAt: shopData.updated_at || new Date().toISOString(),
+      };
+
+      return {
+        store: normalizedStore,
+      };
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401 || error.response?.status === 403) {
