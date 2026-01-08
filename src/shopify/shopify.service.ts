@@ -92,6 +92,39 @@ export interface NormalizedOrdersResponse {
   orders: NormalizedOrder[];
 }
 
+// Interfaces para productos normalizados
+export interface NormalizedVariant {
+  id: number;
+  title: string;
+  sku: string | null;
+  price: number;
+  inventoryQuantity: number | null;
+}
+
+export interface NormalizedImage {
+  id: number;
+  src: string;
+  altText: string | null;
+}
+
+export interface NormalizedProduct {
+  productId: number;
+  title: string;
+  handle: string;
+  description: string | null;
+  vendor: string | null;
+  productType: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  variants: NormalizedVariant[];
+  images: NormalizedImage[];
+}
+
+export interface NormalizedProductsResponse {
+  products: NormalizedProduct[];
+}
+
 @Injectable()
 export class ShopifyService {
   private readonly firestore = getFirestore();
@@ -500,19 +533,73 @@ export class ShopifyService {
   }
 
   /**
-   * Obtiene la lista de productos
+   * Obtiene la lista de productos normalizados
    */
   async getProducts(
     userId: string,
     shop: string,
-  ): Promise<ShopifyProductsResponse> {
+  ): Promise<NormalizedProductsResponse> {
     try {
       const accessToken = await this.getAccessToken(userId, shop);
       const client = this.createShopifyClient(shop, accessToken);
 
       const response =
         await client.get<ShopifyProductsResponse>('/products.json');
-      return response.data;
+      const rawProducts = response.data.products as Array<
+        Record<string, unknown>
+      >;
+
+      // Transformar cada producto al formato normalizado
+      const normalizedProducts: NormalizedProduct[] = rawProducts.map(
+        (product) => {
+          // Normalizar variants
+          const normalizedVariants: NormalizedVariant[] = [];
+          if (Array.isArray(product.variants)) {
+            normalizedVariants.push(
+              ...product.variants.map((variant: Record<string, unknown>) => ({
+                id: (variant.id as number) || 0,
+                title: (variant.title as string) || '',
+                sku: (variant.sku as string) || null,
+                price: parseFloat((variant.price as string) || '0'),
+                inventoryQuantity:
+                  (variant.inventory_quantity as number) ?? null,
+              })),
+            );
+          }
+
+          // Normalizar images
+          const normalizedImages: NormalizedImage[] = [];
+          if (Array.isArray(product.images)) {
+            normalizedImages.push(
+              ...product.images.map((image: Record<string, unknown>) => ({
+                id: (image.id as number) || 0,
+                src: (image.src as string) || '',
+                altText: (image.alt as string) || null,
+              })),
+            );
+          }
+
+          return {
+            productId: (product.id as number) || 0,
+            title: (product.title as string) || '',
+            handle: (product.handle as string) || '',
+            description: (product.body_html as string) || null,
+            vendor: (product.vendor as string) || null,
+            productType: (product.product_type as string) || null,
+            status: (product.status as string) || '',
+            createdAt:
+              (product.created_at as string) || new Date().toISOString(),
+            updatedAt:
+              (product.updated_at as string) || new Date().toISOString(),
+            variants: normalizedVariants,
+            images: normalizedImages,
+          };
+        },
+      );
+
+      return {
+        products: normalizedProducts,
+      };
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401 || error.response?.status === 403) {
