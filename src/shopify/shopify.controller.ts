@@ -20,7 +20,7 @@ import { ShopifyService } from './shopify.service';
 import type {
   ShopifyStoreResponse,
   ShopifyProductsResponse,
-  ShopifyOrdersResponse,
+  NormalizedOrdersResponse,
 } from './shopify.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
@@ -343,7 +343,7 @@ export class ShopifyController {
   async getOrders(
     @GetUser('uid') userId: string,
     @Query('shop') shop: string,
-  ): Promise<ShopifyOrdersResponse> {
+  ): Promise<NormalizedOrdersResponse> {
     if (!shop) {
       throw new BadRequestException('El parámetro shop es obligatorio');
     }

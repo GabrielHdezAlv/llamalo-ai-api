@@ -57,6 +57,41 @@ export interface ShopifyOrdersResponse {
   orders: unknown[];
 }
 
+// Interfaces para pedidos normalizados
+export interface NormalizedLineItem {
+  id: number;
+  productId: number | null;
+  variantId: number | null;
+  title: string;
+  quantity: number;
+  price: number;
+  currency: string;
+}
+
+export interface NormalizedCustomer {
+  id: number | null;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+}
+
+export interface NormalizedOrder {
+  orderId: number;
+  orderName: string;
+  status: string;
+  fulfillmentStatus: string | null;
+  totalPrice: number;
+  currency: string;
+  createdAt: string;
+  updatedAt: string;
+  customer: NormalizedCustomer | null;
+  lineItems: NormalizedLineItem[];
+}
+
+export interface NormalizedOrdersResponse {
+  orders: NormalizedOrder[];
+}
+
 @Injectable()
 export class ShopifyService {
   private readonly firestore = getFirestore();
@@ -499,18 +534,69 @@ export class ShopifyService {
   }
 
   /**
-   * Obtiene la lista de pedidos
+   * Obtiene la lista de pedidos normalizados
    */
   async getOrders(
     userId: string,
     shop: string,
-  ): Promise<ShopifyOrdersResponse> {
+  ): Promise<NormalizedOrdersResponse> {
     try {
       const accessToken = await this.getAccessToken(userId, shop);
       const client = this.createShopifyClient(shop, accessToken);
 
       const response = await client.get<ShopifyOrdersResponse>('/orders.json');
-      return response.data;
+      const rawOrders = response.data.orders as Array<Record<string, unknown>>;
+
+      // Transformar cada pedido al formato normalizado
+      const normalizedOrders: NormalizedOrder[] = rawOrders.map((order) => {
+        // Normalizar customer
+        let normalizedCustomer: NormalizedCustomer | null = null;
+        if (order.customer && typeof order.customer === 'object') {
+          const customer = order.customer as Record<string, unknown>;
+          normalizedCustomer = {
+            id: (customer.id as number) || null,
+            firstName: (customer.first_name as string) || null,
+            lastName: (customer.last_name as string) || null,
+            email: (customer.email as string) || null,
+          };
+        }
+
+        // Normalizar line items
+        const normalizedLineItems: NormalizedLineItem[] = [];
+        if (Array.isArray(order.line_items)) {
+          normalizedLineItems.push(
+            ...order.line_items.map((item: Record<string, unknown>) => ({
+              id: (item.id as number) || 0,
+              productId: (item.product_id as number) || null,
+              variantId: (item.variant_id as number) || null,
+              title: (item.title as string) || '',
+              quantity: (item.quantity as number) || 0,
+              price: parseFloat((item.price as string) || '0'),
+              currency: (item.currency as string) || (order.currency as string) || 'USD',
+            })),
+          );
+        }
+
+        // Convertir total_price de string a número
+        const totalPrice = parseFloat((order.total_price as string) || '0');
+
+        return {
+          orderId: (order.id as number) || 0,
+          orderName: (order.name as string) || '',
+          status: (order.financial_status as string) || '',
+          fulfillmentStatus: (order.fulfillment_status as string) || null,
+          totalPrice: totalPrice,
+          currency: (order.currency as string) || 'USD',
+          createdAt: (order.created_at as string) || new Date().toISOString(),
+          updatedAt: (order.updated_at as string) || new Date().toISOString(),
+          customer: normalizedCustomer,
+          lineItems: normalizedLineItems,
+        };
+      });
+
+      return {
+        orders: normalizedOrders,
+      };
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401 || error.response?.status === 403) {

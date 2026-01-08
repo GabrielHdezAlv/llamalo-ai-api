@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class ShopifyCallbackQueryDto {
   @ApiProperty({
@@ -20,11 +20,11 @@ export class ShopifyCallbackQueryDto {
 
   @ApiProperty({
     example: 'oauthSessionId123',
-    description: 'ID de sesión OAuth (oauthSessionId) generado en el endpoint /auth',
+    description:
+      'ID de sesión OAuth (oauthSessionId) generado en el endpoint /auth',
     required: true,
   })
   @IsNotEmpty()
   @IsString()
   state: string;
 }
-
