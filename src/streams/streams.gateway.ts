@@ -8,6 +8,10 @@ import { spawn } from 'child_process';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import ffmpegStaticPath from 'ffmpeg-static';
+import {
+  NormalizedStore,
+  NormalizedProduct,
+} from '../shopify/shopify.service';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -57,6 +61,13 @@ type DeepgramJsonEvent = {
 type Role = 'user' | 'assistant';
 type Message = { role: Role; content: string };
 
+interface ShopifyContext {
+  shopDomain?: string;
+  store?: NormalizedStore;
+  featuredProducts?: NormalizedProduct[];
+  loadedAt?: number; // timestamp para cache
+}
+
 interface CallSession {
   callSid: string;
   streamSid?: string;
@@ -88,6 +99,9 @@ interface CallSession {
   greetingPlaybackDone?: boolean;
   currentTTSRequest?: Promise<void>;
   ttsCancelStream?: () => void;
+  // Shopify integration
+  userId?: string;
+  shopifyContext?: ShopifyContext;
 }
 
 @WebSocketGateway({
