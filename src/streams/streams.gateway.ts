@@ -521,6 +521,52 @@ export class StreamsGateway {
     }
   }
 
+  /**
+   * Enriquece las instrucciones del sistema con datos de Shopify si están disponibles
+   * Formatea los datos de la tienda y productos destacados como JSON dentro del prompt
+   */
+  private enrichInstructionsWithShopify(session: CallSession): string {
+    const baseInstructions = session.instructions;
+    const shopifyContext = session.shopifyContext;
+
+    // Si no hay contexto de Shopify o no tiene datos, retornar instrucciones originales
+    if (!shopifyContext || (!shopifyContext.store && !shopifyContext.featuredProducts?.length)) {
+      return baseInstructions;
+    }
+
+    // Construir contexto de Shopify como JSON estructurado
+    const shopifyData: {
+      tienda?: NormalizedStore;
+      productosDestacados?: NormalizedProduct[];
+    } = {};
+
+    if (shopifyContext.store) {
+      shopifyData.tienda = shopifyContext.store;
+    }
+
+    if (shopifyContext.featuredProducts && shopifyContext.featuredProducts.length > 0) {
+      shopifyData.productosDestacados = shopifyContext.featuredProducts;
+    }
+
+    // Formatear como JSON para que el LLM lo entienda fácilmente
+    const shopifyContextJson = JSON.stringify(shopifyData, null, 2);
+
+    // Enriquecer las instrucciones agregando el contexto de Shopify
+    const enrichedInstructions = `${baseInstructions}
+
+## Contexto de la tienda Shopify
+
+Tienes acceso a información de la tienda Shopify conectada. Usa esta información para responder preguntas sobre productos, la tienda, y otros detalles relevantes:
+
+\`\`\`json
+${shopifyContextJson}
+\`\`\`
+
+Cuando el usuario pregunte sobre productos, información de la tienda, o datos relacionados, utiliza esta información para proporcionar respuestas precisas y útiles.`;
+
+    return enrichedInstructions;
+  }
+
   private connectToElevenLabs(session: CallSession) {
     if (!this.elevenLabsApiKey) {
       console.error('❌ ELEVENLABS_API_KEY ausente. No se puede iniciar STT.');
@@ -697,12 +743,15 @@ export class StreamsGateway {
       `🧾 Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
     );
     try {
+      // Enriquecer las instrucciones con datos de Shopify si están disponibles
+      const enrichedInstructions = this.enrichInstructionsWithShopify(session);
+
       const completion = await this.openai.chat.completions.create({
         model: this.llmModel,
         temperature: this.llmTemperature,
         max_tokens: this.llmMaxTokens,
         messages: [
-          { role: 'system', content: session.instructions },
+          { role: 'system', content: enrichedInstructions },
           ...session.history,
         ],
       });
