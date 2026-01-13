@@ -743,6 +743,18 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
       `🧾 Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
     );
     try {
+      // Consultar datos de Shopify bajo demanda si el usuario necesita información fresca
+      // Si falla o hay timeout, se usa el cache existente en session.shopifyContext
+      try {
+        await this.queryShopifyDataIfNeeded(session, text);
+      } catch (error) {
+        // Manejar errores silenciosamente (usar cache existente)
+        console.warn(
+          `⚠️ [${session.callSid}] Error consultando datos Shopify bajo demanda (usando cache):`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+
       // Enriquecer las instrucciones con datos de Shopify si están disponibles
       const enrichedInstructions = this.enrichInstructionsWithShopify(session);
 
