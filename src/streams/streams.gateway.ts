@@ -295,6 +295,17 @@ export class StreamsGateway {
       );
     }
 
+    // Extraer userId y shopDomain de customParameters para integración Shopify
+    const userId = customParameters?.userId?.trim();
+    const shopDomain = customParameters?.shopDomain?.trim();
+    
+    if (userId) {
+      console.log(`👤 [${callSid}] userId extraído: ${userId}`);
+    }
+    if (shopDomain) {
+      console.log(`🛍️ [${callSid}] shopDomain extraído: ${shopDomain}`);
+    }
+
     const instructions = this.resolveInstructions(customParameters);
     const voiceId = this.resolveVoiceId(customParameters);
     if (!voiceId) {
@@ -323,6 +334,8 @@ export class StreamsGateway {
       interceptedResponseText: '',
       agentSpeaking: false,
       interrupted: false,
+      userId,
+      shopifyContext: shopDomain ? { shopDomain } : undefined,
     };
 
     this.sessions.set(callSid, session);
