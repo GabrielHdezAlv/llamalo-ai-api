@@ -47,8 +47,18 @@ export class CallsController {
         return res.type('text/xml').send(r.toString());
       }
 
-      const agent = agentSnapshot.docs[0].data();
+      const agentDoc = agentSnapshot.docs[0];
+      const userId = agentDoc.id;
+      const agent = agentDoc.data();
       const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
+      
+      // Obtener shopDomain de integrations.shopify si existe
+      const integrations = (agent.integrations as Record<string, unknown>) || {};
+      const shopifyIntegration = (integrations.shopify as Record<string, unknown>) || {};
+      const shopDomain =
+        typeof shopifyIntegration.shopDomain === 'string'
+          ? shopifyIntegration.shopDomain
+          : undefined;
 
       // // 🔹 Verificar antigüedad de la cuenta (deshabilitado temporalmente)
       // if (agent.createdAt) {
@@ -135,6 +145,10 @@ export class CallsController {
           ? ((agentProfile.language as Record<string, unknown>).code as string)
           : undefined,
       );
+
+      // Agregar userId y shopDomain como customParameters para Shopify
+      addStreamParameter('userId', userId);
+      addStreamParameter('shopDomain', shopDomain);
 
       // Debug: mostrar TwiML generado
       const twimlString = r.toString();
