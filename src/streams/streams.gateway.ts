@@ -370,8 +370,12 @@ export class StreamsGateway {
     const shopDomain = session.shopifyContext.shopDomain;
 
     // Timeout de 5 segundos para carga inicial
+    let timeoutId: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Timeout cargando contexto Shopify')), 5000);
+      timeoutId = setTimeout(
+        () => reject(new Error('Timeout cargando contexto Shopify')),
+        5000,
+      );
     });
 
     try {
@@ -381,9 +385,30 @@ export class StreamsGateway {
       ]);
 
       const [storeResponse, productsResponse] = await Promise.race([
-        loadPromise,
+        loadPromise.then((results) => {
+          // Limpiar timeout si la promesa se resuelve antes
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          return results;
+        }),
         timeoutPromise,
       ]);
+
+      // Validar respuestas antes de usarlas
+      if (!storeResponse || !storeResponse.store) {
+        console.warn(
+          `⚠️ [${session.callSid}] Respuesta de tienda Shopify inválida o vacía (userId: ${userId}, shopDomain: ${shopDomain})`,
+        );
+        return;
+      }
+
+      if (!productsResponse || !Array.isArray(productsResponse.products)) {
+        console.warn(
+          `⚠️ [${session.callSid}] Respuesta de productos Shopify inválida o vacía (userId: ${userId}, shopDomain: ${shopDomain})`,
+        );
+        return;
+      }
 
       // Filtrar productos destacados (buscar campo featured o usar primeros 10)
       let featuredProducts = productsResponse.products;
@@ -396,20 +421,41 @@ export class StreamsGateway {
 
       // Actualizar el contexto de Shopify en la sesión
       if (session.shopifyContext) {
-        session.shopifyContext.store = storeResponse.store;
-        session.shopifyContext.featuredProducts = featuredProducts;
-        session.shopifyContext.loadedAt = Date.now();
+        try {
+          session.shopifyContext.store = storeResponse.store;
+          session.shopifyContext.featuredProducts = featuredProducts;
+          session.shopifyContext.loadedAt = Date.now();
+
+          const storeName =
+            storeResponse.store.name || shopDomain || 'tienda desconocida';
+          console.log(
+            `✅ [${session.callSid}] Contexto Shopify cargado: tienda "${storeName}", ${featuredProducts.length} productos destacados (userId: ${userId}, shopDomain: ${shopDomain})`,
+          );
+        } catch (contextError) {
+          console.error(
+            `❌ [${session.callSid}] Error actualizando contexto Shopify en sesión:`,
+            contextError instanceof Error ? contextError.message : String(contextError),
+          );
+        }
+      }
+    } catch (error) {
+      // Limpiar timeout si hubo un error
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
 
-      console.log(
-        `✅ [${session.callSid}] Contexto Shopify cargado: tienda "${storeResponse.store.name}", ${featuredProducts.length} productos destacados`,
-      );
-    } catch (error) {
       // Manejar errores silenciosamente (log sin bloquear)
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorDetails =
+        error instanceof Error && error.stack
+          ? ` - Stack: ${error.stack.substring(0, 200)}`
+          : '';
+
       console.warn(
-        `⚠️ [${session.callSid}] Error cargando contexto Shopify (continuando sin datos):`,
-        error instanceof Error ? error.message : String(error),
+        `⚠️ [${session.callSid}] Error cargando contexto Shopify (continuando sin datos) - userId: ${userId}, shopDomain: ${shopDomain}, error: ${errorMessage}${errorDetails}`,
       );
+
       // Continuar sin datos de Shopify - la sesión funciona sin ellos
     }
   }
@@ -430,29 +476,30 @@ export class StreamsGateway {
     const userId = session.userId;
     const shopDomain = session.shopifyContext.shopDomain;
 
-    // Heurística simple para detectar qué tipo de datos necesita el usuario
-    const textLower = userText.toLowerCase();
-    const needsProducts = /\b(producto|productos|artículo|artículos|item|items|catálogo|catálogos|catalogo|catalogos)\b/.test(
-      textLower,
-    );
-    const needsStoreInfo = /\b(tienda|información|info|datos|nombre|email|contacto)\b/.test(
-      textLower,
-    );
-
-    // Si no hay indicios claros, no hacer consulta (usar cache)
-    if (!needsProducts && !needsStoreInfo) {
-      return null;
-    }
-
-    // Timeout de 3 segundos para consultas durante conversación
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error('Timeout consultando datos Shopify')),
-        3000,
-      );
-    });
-
     try {
+      // Heurística simple para detectar qué tipo de datos necesita el usuario
+      const textLower = userText.toLowerCase();
+      const needsProducts = /\b(producto|productos|artículo|artículos|item|items|catálogo|catálogos|catalogo|catalogos)\b/.test(
+        textLower,
+      );
+      const needsStoreInfo = /\b(tienda|información|info|datos|nombre|email|contacto)\b/.test(
+        textLower,
+      );
+
+      // Si no hay indicios claros, no hacer consulta (usar cache)
+      if (!needsProducts && !needsStoreInfo) {
+        return null;
+      }
+
+      // Timeout de 3 segundos para consultas durante conversación
+      let timeoutId: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('Timeout consultando datos Shopify')),
+          3000,
+        );
+      });
+
       // Actualizar contexto según los resultados
       if (!session.shopifyContext) {
         session.shopifyContext = { shopDomain };
@@ -476,35 +523,80 @@ export class StreamsGateway {
       }
 
       const results = await Promise.race([
-        Promise.all(queries),
+        Promise.all(queries).then((results) => {
+          // Limpiar timeout si la promesa se resuelve antes
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          return results;
+        }),
         timeoutPromise,
       ]);
 
       let updated = false;
 
       // Procesar resultados según el tipo de consulta
-      results.forEach((result, index) => {
-        const queryType = queryTypes[index];
-        if (queryType === 'products') {
-          const productsResponse = result as NormalizedProductsResponse;
-          // Filtrar productos destacados (primeros 10)
-          let featuredProducts = productsResponse.products;
-          if (featuredProducts.length > 10) {
-            featuredProducts = featuredProducts.slice(0, 10);
+      try {
+        results.forEach((result, index) => {
+          const queryType = queryTypes[index];
+          if (!result) {
+            console.warn(
+              `⚠️ [${session.callSid}] Resultado de consulta Shopify vacío para tipo: ${queryType}`,
+            );
+            return;
           }
-          session.shopifyContext!.featuredProducts = featuredProducts;
-          updated = true;
-        } else if (queryType === 'store') {
-          const storeResponse = result as NormalizedStoreResponse;
-          session.shopifyContext!.store = storeResponse.store;
-          updated = true;
-        }
-      });
 
-      if (updated) {
+          if (queryType === 'products') {
+            const productsResponse = result as NormalizedProductsResponse;
+            if (
+              !productsResponse ||
+              !Array.isArray(productsResponse.products)
+            ) {
+              console.warn(
+                `⚠️ [${session.callSid}] Respuesta de productos Shopify inválida`,
+              );
+              return;
+            }
+
+            // Filtrar productos destacados (primeros 10)
+            let featuredProducts = productsResponse.products;
+            if (featuredProducts.length > 10) {
+              featuredProducts = featuredProducts.slice(0, 10);
+            }
+
+            if (session.shopifyContext) {
+              session.shopifyContext.featuredProducts = featuredProducts;
+              updated = true;
+            }
+          } else if (queryType === 'store') {
+            const storeResponse = result as NormalizedStoreResponse;
+            if (!storeResponse || !storeResponse.store) {
+              console.warn(
+                `⚠️ [${session.callSid}] Respuesta de tienda Shopify inválida`,
+              );
+              return;
+            }
+
+            if (session.shopifyContext) {
+              session.shopifyContext.store = storeResponse.store;
+              updated = true;
+            }
+          }
+        });
+      } catch (processingError) {
+        console.error(
+          `❌ [${session.callSid}] Error procesando resultados de consulta Shopify:`,
+          processingError instanceof Error
+            ? processingError.message
+            : String(processingError),
+        );
+        // Continuar sin actualizar el contexto si hay error en el procesamiento
+      }
+
+      if (updated && session.shopifyContext) {
         session.shopifyContext.loadedAt = Date.now();
         console.log(
-          `✅ [${session.callSid}] Datos Shopify actualizados bajo demanda`,
+          `✅ [${session.callSid}] Datos Shopify actualizados bajo demanda (userId: ${userId}, shopDomain: ${shopDomain})`,
         );
         return session.shopifyContext;
       }
@@ -512,10 +604,17 @@ export class StreamsGateway {
       return null;
     } catch (error) {
       // Manejar errores silenciosamente (log sin bloquear)
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorDetails =
+        error instanceof Error && error.stack
+          ? ` - Stack: ${error.stack.substring(0, 200)}`
+          : '';
+
       console.warn(
-        `⚠️ [${session.callSid}] Error consultando datos Shopify bajo demanda (usando cache):`,
-        error instanceof Error ? error.message : String(error),
+        `⚠️ [${session.callSid}] Error consultando datos Shopify bajo demanda (usando cache) - userId: ${userId}, shopDomain: ${shopDomain}, error: ${errorMessage}${errorDetails}`,
       );
+
       // Retornar null para usar cache existente
       return null;
     }
@@ -527,32 +626,61 @@ export class StreamsGateway {
    */
   private enrichInstructionsWithShopify(session: CallSession): string {
     const baseInstructions = session.instructions;
-    const shopifyContext = session.shopifyContext;
 
-    // Si no hay contexto de Shopify o no tiene datos, retornar instrucciones originales
-    if (!shopifyContext || (!shopifyContext.store && !shopifyContext.featuredProducts?.length)) {
-      return baseInstructions;
-    }
+    try {
+      const shopifyContext = session.shopifyContext;
 
-    // Construir contexto de Shopify como JSON estructurado
-    const shopifyData: {
-      tienda?: NormalizedStore;
-      productosDestacados?: NormalizedProduct[];
-    } = {};
+      // Si no hay contexto de Shopify o no tiene datos, retornar instrucciones originales
+      if (
+        !shopifyContext ||
+        (!shopifyContext.store && !shopifyContext.featuredProducts?.length)
+      ) {
+        return baseInstructions;
+      }
 
-    if (shopifyContext.store) {
-      shopifyData.tienda = shopifyContext.store;
-    }
+      // Construir contexto de Shopify como JSON estructurado
+      const shopifyData: {
+        tienda?: NormalizedStore;
+        productosDestacados?: NormalizedProduct[];
+      } = {};
 
-    if (shopifyContext.featuredProducts && shopifyContext.featuredProducts.length > 0) {
-      shopifyData.productosDestacados = shopifyContext.featuredProducts;
-    }
+      try {
+        if (shopifyContext.store) {
+          shopifyData.tienda = shopifyContext.store;
+        }
 
-    // Formatear como JSON para que el LLM lo entienda fácilmente
-    const shopifyContextJson = JSON.stringify(shopifyData, null, 2);
+        if (
+          shopifyContext.featuredProducts &&
+          shopifyContext.featuredProducts.length > 0
+        ) {
+          shopifyData.productosDestacados = shopifyContext.featuredProducts;
+        }
+      } catch (dataError) {
+        console.warn(
+          `⚠️ [${session.callSid}] Error construyendo datos de Shopify para enriquecimiento:`,
+          dataError instanceof Error ? dataError.message : String(dataError),
+        );
+        // Continuar sin datos si hay error construyendo el objeto
+        return baseInstructions;
+      }
 
-    // Enriquecer las instrucciones agregando el contexto de Shopify
-    const enrichedInstructions = `${baseInstructions}
+      // Formatear como JSON para que el LLM lo entienda fácilmente
+      let shopifyContextJson: string;
+      try {
+        shopifyContextJson = JSON.stringify(shopifyData, null, 2);
+      } catch (jsonError) {
+        // JSON.stringify puede fallar con objetos circulares o datos inválidos
+        console.error(
+          `❌ [${session.callSid}] Error serializando datos Shopify a JSON:`,
+          jsonError instanceof Error ? jsonError.message : String(jsonError),
+        );
+        // Retornar instrucciones base si no se puede serializar
+        return baseInstructions;
+      }
+
+      // Enriquecer las instrucciones agregando el contexto de Shopify
+      try {
+        const enrichedInstructions = `${baseInstructions}
 
 ## Contexto de la tienda Shopify
 
@@ -564,7 +692,26 @@ ${shopifyContextJson}
 
 Cuando el usuario pregunte sobre productos, información de la tienda, o datos relacionados, utiliza esta información para proporcionar respuestas precisas y útiles.`;
 
-    return enrichedInstructions;
+        return enrichedInstructions;
+      } catch (stringError) {
+        console.error(
+          `❌ [${session.callSid}] Error construyendo instrucciones enriquecidas:`,
+          stringError instanceof Error
+            ? stringError.message
+            : String(stringError),
+        );
+        // Retornar instrucciones base si hay error construyendo el string
+        return baseInstructions;
+      }
+    } catch (error) {
+      // Manejar cualquier error inesperado sin bloquear el flujo
+      console.error(
+        `❌ [${session.callSid}] Error en enrichInstructionsWithShopify:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      // Retornar instrucciones base como fallback
+      return baseInstructions;
+    }
   }
 
   private connectToElevenLabs(session: CallSession) {
@@ -756,7 +903,17 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
       }
 
       // Enriquecer las instrucciones con datos de Shopify si están disponibles
-      const enrichedInstructions = this.enrichInstructionsWithShopify(session);
+      let enrichedInstructions: string;
+      try {
+        enrichedInstructions = this.enrichInstructionsWithShopify(session);
+      } catch (error) {
+        // Si falla el enriquecimiento, usar instrucciones base
+        console.warn(
+          `⚠️ [${session.callSid}] Error enriqueciendo instrucciones con Shopify (usando instrucciones base):`,
+          error instanceof Error ? error.message : String(error),
+        );
+        enrichedInstructions = session.instructions;
+      }
 
       const completion = await this.openai.chat.completions.create({
         model: this.llmModel,
