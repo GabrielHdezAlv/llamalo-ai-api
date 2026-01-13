@@ -348,6 +348,68 @@ export class StreamsGateway {
     } else {
       void this.connectToDeepgram(session);
     }
+
+    // Cargar contexto inicial de Shopify en background (no bloquea)
+    if (userId && shopDomain && session.shopifyContext) {
+      void this.loadInitialShopifyContext(session);
+    }
+  }
+
+  /**
+   * Carga el contexto inicial de Shopify (tienda y productos destacados)
+   * Se ejecuta en background sin bloquear la inicialización de la sesión
+   */
+  private async loadInitialShopifyContext(session: CallSession): Promise<void> {
+    if (!session.userId || !session.shopifyContext?.shopDomain) {
+      return;
+    }
+
+    const userId = session.userId;
+    const shopDomain = session.shopifyContext.shopDomain;
+
+    // Timeout de 5 segundos para carga inicial
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout cargando contexto Shopify')), 5000);
+    });
+
+    try {
+      const loadPromise = Promise.all([
+        this.shopifyService.getStoreInfo(userId, shopDomain),
+        this.shopifyService.getProducts(userId, shopDomain),
+      ]);
+
+      const [storeResponse, productsResponse] = await Promise.race([
+        loadPromise,
+        timeoutPromise,
+      ]);
+
+      // Filtrar productos destacados (buscar campo featured o usar primeros 10)
+      let featuredProducts = productsResponse.products;
+      
+      // Intentar buscar productos con campo featured (aunque no esté en la interfaz normalizada)
+      // Si no hay campo featured, usar primeros 10 productos
+      if (featuredProducts.length > 10) {
+        featuredProducts = featuredProducts.slice(0, 10);
+      }
+
+      // Actualizar el contexto de Shopify en la sesión
+      if (session.shopifyContext) {
+        session.shopifyContext.store = storeResponse.store;
+        session.shopifyContext.featuredProducts = featuredProducts;
+        session.shopifyContext.loadedAt = Date.now();
+      }
+
+      console.log(
+        `✅ [${session.callSid}] Contexto Shopify cargado: tienda "${storeResponse.store.name}", ${featuredProducts.length} productos destacados`,
+      );
+    } catch (error) {
+      // Manejar errores silenciosamente (log sin bloquear)
+      console.warn(
+        `⚠️ [${session.callSid}] Error cargando contexto Shopify (continuando sin datos):`,
+        error instanceof Error ? error.message : String(error),
+      );
+      // Continuar sin datos de Shopify - la sesión funciona sin ellos
+    }
   }
 
   private connectToElevenLabs(session: CallSession) {
