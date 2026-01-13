@@ -11,6 +11,7 @@ import ffmpegStaticPath from 'ffmpeg-static';
 import {
   NormalizedStore,
   NormalizedProduct,
+  ShopifyService,
 } from '../shopify/shopify.service';
 
 type TwilioMediaIn = {
@@ -195,7 +196,7 @@ export class StreamsGateway {
 
   private sessions: Map<string, CallSession> = new Map();
 
-  constructor() {
+  constructor(private readonly shopifyService: ShopifyService) {
     if (!this.elevenLabsApiKey) {
       console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
     }
