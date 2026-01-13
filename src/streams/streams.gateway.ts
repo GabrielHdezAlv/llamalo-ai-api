@@ -11,6 +11,8 @@ import ffmpegStaticPath from 'ffmpeg-static';
 import {
   NormalizedStore,
   NormalizedProduct,
+  NormalizedStoreResponse,
+  NormalizedProductsResponse,
   ShopifyService,
 } from '../shopify/shopify.service';
 
@@ -409,6 +411,113 @@ export class StreamsGateway {
         error instanceof Error ? error.message : String(error),
       );
       // Continuar sin datos de Shopify - la sesión funciona sin ellos
+    }
+  }
+
+  /**
+   * Consulta datos de Shopify bajo demanda según el texto del usuario
+   * Usa timeout de 3 segundos para no bloquear la conversación
+   * Retorna los datos actualizados o null si falla/timeout
+   */
+  private async queryShopifyDataIfNeeded(
+    session: CallSession,
+    userText: string,
+  ): Promise<ShopifyContext | null> {
+    if (!session.userId || !session.shopifyContext?.shopDomain) {
+      return null;
+    }
+
+    const userId = session.userId;
+    const shopDomain = session.shopifyContext.shopDomain;
+
+    // Heurística simple para detectar qué tipo de datos necesita el usuario
+    const textLower = userText.toLowerCase();
+    const needsProducts = /\b(producto|productos|artículo|artículos|item|items|catálogo|catálogos|catalogo|catalogos)\b/.test(
+      textLower,
+    );
+    const needsStoreInfo = /\b(tienda|información|info|datos|nombre|email|contacto)\b/.test(
+      textLower,
+    );
+
+    // Si no hay indicios claros, no hacer consulta (usar cache)
+    if (!needsProducts && !needsStoreInfo) {
+      return null;
+    }
+
+    // Timeout de 3 segundos para consultas durante conversación
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error('Timeout consultando datos Shopify')),
+        3000,
+      );
+    });
+
+    try {
+      // Actualizar contexto según los resultados
+      if (!session.shopifyContext) {
+        session.shopifyContext = { shopDomain };
+      }
+
+      // Hacer consultas en paralelo si ambas son necesarias
+      const queries: Promise<unknown>[] = [];
+      const queryTypes: ('products' | 'store')[] = [];
+
+      if (needsProducts) {
+        queries.push(this.shopifyService.getProducts(userId, shopDomain));
+        queryTypes.push('products');
+      }
+      if (needsStoreInfo) {
+        queries.push(this.shopifyService.getStoreInfo(userId, shopDomain));
+        queryTypes.push('store');
+      }
+
+      if (queries.length === 0) {
+        return null;
+      }
+
+      const results = await Promise.race([
+        Promise.all(queries),
+        timeoutPromise,
+      ]);
+
+      let updated = false;
+
+      // Procesar resultados según el tipo de consulta
+      results.forEach((result, index) => {
+        const queryType = queryTypes[index];
+        if (queryType === 'products') {
+          const productsResponse = result as NormalizedProductsResponse;
+          // Filtrar productos destacados (primeros 10)
+          let featuredProducts = productsResponse.products;
+          if (featuredProducts.length > 10) {
+            featuredProducts = featuredProducts.slice(0, 10);
+          }
+          session.shopifyContext!.featuredProducts = featuredProducts;
+          updated = true;
+        } else if (queryType === 'store') {
+          const storeResponse = result as NormalizedStoreResponse;
+          session.shopifyContext!.store = storeResponse.store;
+          updated = true;
+        }
+      });
+
+      if (updated) {
+        session.shopifyContext.loadedAt = Date.now();
+        console.log(
+          `✅ [${session.callSid}] Datos Shopify actualizados bajo demanda`,
+        );
+        return session.shopifyContext;
+      }
+
+      return null;
+    } catch (error) {
+      // Manejar errores silenciosamente (log sin bloquear)
+      console.warn(
+        `⚠️ [${session.callSid}] Error consultando datos Shopify bajo demanda (usando cache):`,
+        error instanceof Error ? error.message : String(error),
+      );
+      // Retornar null para usar cache existente
+      return null;
     }
   }
 
