@@ -32,7 +32,11 @@ export function getFirebaseApp(): admin.app.App {
 
       console.log('✅ Firebase inicializado correctamente');
     } catch (error) {
-      console.error('❌ Error al inicializar Firebase:', error);
+      // 🔒 No loggear el error completo que podría exponer credenciales del serviceAccount
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      const errorName = error instanceof Error ? error.name : 'Error';
+      console.error(`❌ Error al inicializar Firebase: ${errorName} - ${errorMessage}`);
+      // No loggear el stack trace completo ni el objeto error completo
       throw error;
     }
   }

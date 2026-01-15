@@ -254,21 +254,28 @@ export class MetricsService {
 
         nextPageUri = response.data.next_page_uri || null;
       } catch (error) {
-        // Log detallado del error
+        // Log detallado del error (sin exponer información sensible)
         if (axios.isAxiosError(error)) {
           console.error(
             `[Metrics] Error de Twilio API:`,
             error.response?.status,
             error.response?.statusText,
           );
-          console.error(
-            `[Metrics] Respuesta de error:`,
-            JSON.stringify(error.response?.data, null, 2),
-          );
+          // 🔒 No loggear el contenido completo de error.response?.data que podría contener tokens o información sensible
+          // Solo loggear el tipo de error si existe
+          if (error.response?.data) {
+            const errorType = typeof error.response.data === 'object' && error.response.data !== null
+              ? (error.response.data as { message?: string; error?: string })?.message || 
+                (error.response.data as { message?: string; error?: string })?.error || 
+                'Error desconocido'
+              : 'Error desconocido';
+            console.error(`[Metrics] Tipo de error: ${errorType}`);
+          }
         } else {
+          const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
           console.error(
             '[Metrics] Error obteniendo llamadas de Twilio:',
-            error,
+            errorMessage,
           );
         }
         // Si falla, retornar las llamadas que se hayan obtenido hasta ahora

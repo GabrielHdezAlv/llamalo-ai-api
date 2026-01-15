@@ -59,7 +59,12 @@ async function bootstrap() {
 
   wss.on('connection', (ws: WebSocket, req) => {
     console.log('🛰️ Nueva conexión WebSocket establecida');
-    console.log('📡 Cliente conectado desde:', req.socket.remoteAddress);
+    // 🔒 No loggear dirección IP completa por privacidad
+    const remoteAddress = req.socket.remoteAddress;
+    const maskedIp = remoteAddress 
+      ? remoteAddress.split('.').slice(0, 2).join('.') + '.***.***'
+      : 'desconocida';
+    console.log('📡 Cliente conectado desde:', maskedIp);
 
     // Buffer para almacenar mensajes tempranos
     const earlyMessages: Buffer[] = [];

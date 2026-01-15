@@ -13,14 +13,24 @@ class IncomingDto {
 export class CallsController {
   constructor(private readonly twilio: TwilioService) {}
 
+  // 🔒 Helper para enmascarar números de teléfono
+  private maskPhoneNumber(phone?: string): string {
+    if (!phone) return 'N/A';
+    // Mostrar solo los últimos 4 dígitos: +34****1234
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length <= 4) return '****';
+    return `${phone.substring(0, phone.length - 4)}****`;
+  }
+
   @Post('incoming')
   async incoming(@Body() body: IncomingDto, @Res() res: Response) {
     const r = this.twilio.newVoiceResponse();
     const firestore = admin.firestore();
 
     console.log('📞 Llamada entrante detectada');
-    console.log('➡️ Número marcado (To):', body.To);
-    console.log('➡️ Número del cliente (From):', body.From);
+    // 🔒 Enmascarar números de teléfono para proteger privacidad
+    console.log('➡️ Número marcado (To):', this.maskPhoneNumber(body.To));
+    console.log('➡️ Número del cliente (From):', this.maskPhoneNumber(body.From));
 
     try {
       // 🔹 Buscar agente por su número Twilio (body.To)
@@ -150,12 +160,14 @@ export class CallsController {
       addStreamParameter('userId', userId);
       addStreamParameter('shopDomain', shopDomain);
 
-      // Debug: mostrar TwiML generado
+      // ✅ TwiML generado correctamente (sin loggear el contenido completo)
       const twimlString = r.toString();
-      console.log('✅ TwiML generado correctamente.');
+      console.log('✅ TwiML generado correctamente (longitud:', twimlString.length, 'caracteres)');
       res.type('text/xml').send(twimlString);
     } catch (error) {
-      console.error('❌ Error al procesar la llamada entrante:', error);
+      // 🔒 No loggear el error completo que podría contener información sensible
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      console.error('❌ Error al procesar la llamada entrante:', errorMessage);
       (r.say as any)(
         'Ha ocurrido un error interno. Por favor, inténtelo más tarde.',
         {
@@ -185,7 +197,8 @@ export class CallsController {
     });
 
     const twimlString = r.toString();
-    console.log('📄 TwiML resume generado:', twimlString);
+    // ✅ Solo loggear longitud, no el contenido completo
+    console.log('📄 TwiML resume generado (longitud:', twimlString.length, 'caracteres)');
     res.type('text/xml').send(twimlString);
   }
 }
