@@ -1725,10 +1725,12 @@ ${shopifyContextJson}
                 }, 3000);
               }
             } else if (role === 'user') {
-              // Ignorar texto del usuario en ConversationText
+              // Procesar texto del usuario como transcript final
               console.log(
-                `👤 Texto del usuario en ConversationText (ignorado)`,
+                `👤 Texto del usuario en ConversationText - procesando como transcript final`,
               );
+              // El usuario ha terminado de hablar, procesar su mensaje
+              void this.handleFinalTranscript(session, text);
             }
           } else {
             console.warn(
