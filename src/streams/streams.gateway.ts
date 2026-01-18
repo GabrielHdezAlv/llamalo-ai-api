@@ -1588,7 +1588,7 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
                   console.log(
                     `📞 [${session.callSid}] Ejecutando colgado programado por despedida`,
                   );
-                  this.hangupCall(session);
+                  void this.hangupCall(session);
                 }, 3000);
               }
             } else if (role === 'user') {
@@ -2112,28 +2112,48 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
     }
   }
 
-  private hangupCall(session: CallSession) {
+  private async hangupCall(session: CallSession) {
     try {
-      if (!session.streamSid) {
-        console.warn(
-          `⚠️ [${session.callSid}] No hay streamSid para colgar la llamada`,
+      console.log(`📞 [${session.callSid}] Iniciando colgado de llamada`);
+
+      // 1. Cerrar el media stream si existe
+      if (session.streamSid) {
+        session.client.send(
+          JSON.stringify({
+            event: 'stop',
+            streamSid: session.streamSid,
+          }),
         );
-        return;
+        console.log(`🔇 [${session.callSid}] Media stream cerrado`);
       }
 
-      console.log(
-        `📞 [${session.callSid}] Enviando comando de colgar a Twilio`,
-      );
+      // 2. Colgar la llamada usando API REST de Twilio
+      const accountSid = process.env.TWILIO_ACCOUNT_SID;
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
 
-      // Enviar evento 'stop' a Twilio para finalizar el stream
-      session.client.send(
-        JSON.stringify({
-          event: 'stop',
-          streamSid: session.streamSid,
-        }),
-      );
+      if (!accountSid || !authToken) {
+        console.warn(
+          `⚠️ [${session.callSid}] Credenciales Twilio no disponibles para colgar llamada`,
+        );
+      } else {
+        const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${session.callSid}.json`;
 
-      // Cerrar conexiones activas
+        await axios.post(url, 'Status=completed', {
+          auth: {
+            username: accountSid,
+            password: authToken,
+          },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        });
+
+        console.log(
+          `✅ [${session.callSid}] Llamada colgada exitosamente vía API Twilio`,
+        );
+      }
+
+      // 3. Cerrar conexiones WebSocket
       if (
         session.voiceAgentSocket &&
         session.voiceAgentSocket.readyState === WebSocket.OPEN
@@ -2147,7 +2167,7 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
         session.sttSocket.close();
       }
 
-      console.log(`✅ [${session.callSid}] Llamada finalizada por el agente`);
+      console.log(`🏁 [${session.callSid}] Proceso de colgado completado`);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Error desconocido';
