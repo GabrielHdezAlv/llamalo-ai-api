@@ -1547,6 +1547,17 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
           if (text) {
             // Procesar incluso si agentSpeaking es false (podría ser el greeting)
             if (role === 'assistant' || role === 'agent' || !role) {
+              // Detectar marcador de finalización [END_CALL]
+              const shouldHangup = text.includes('[END_CALL]');
+              // Limpiar el marcador del texto antes de procesarlo
+              const cleanText = text.replace(/\[END_CALL\]/gi, '').trim();
+
+              if (shouldHangup) {
+                console.log(
+                  `👋 [${session.callSid}] Marcador [END_CALL] detectado en despedida`,
+                );
+              }
+
               if (!session.agentSpeaking) {
                 // Si no está hablando pero hay texto del agente, podría ser el greeting
                 session.agentSpeaking = true; // Marcar como hablando para procesar
@@ -1565,10 +1576,21 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
                 }
               }
 
-              // Acumular texto de respuesta del agente
-              session.interceptedResponseText += text;
-              // Generar TTS en tiempo real para cada fragmento
-              void this.streamTTSFromText(session, text);
+              // Acumular texto de respuesta del agente (con texto limpio)
+              session.interceptedResponseText += cleanText;
+              // Generar TTS en tiempo real para cada fragmento (con texto limpio)
+              void this.streamTTSFromText(session, cleanText);
+
+              // Si debe colgar, programar el colgado después de que termine el TTS
+              if (shouldHangup) {
+                // Esperar 3 segundos para que el TTS termine y haya un pequeño silencio
+                setTimeout(() => {
+                  console.log(
+                    `📞 [${session.callSid}] Ejecutando colgado programado por despedida`,
+                  );
+                  this.hangupCall(session);
+                }, 3000);
+              }
             } else if (role === 'user') {
               // Ignorar texto del usuario en ConversationText
               console.log(
@@ -2087,6 +2109,49 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
     if (session.keepAliveTimer) {
       clearInterval(session.keepAliveTimer);
       session.keepAliveTimer = undefined;
+    }
+  }
+
+  private hangupCall(session: CallSession) {
+    try {
+      if (!session.streamSid) {
+        console.warn(
+          `⚠️ [${session.callSid}] No hay streamSid para colgar la llamada`,
+        );
+        return;
+      }
+
+      console.log(
+        `📞 [${session.callSid}] Enviando comando de colgar a Twilio`,
+      );
+
+      // Enviar evento 'stop' a Twilio para finalizar el stream
+      session.client.send(
+        JSON.stringify({
+          event: 'stop',
+          streamSid: session.streamSid,
+        }),
+      );
+
+      // Cerrar conexiones activas
+      if (
+        session.voiceAgentSocket &&
+        session.voiceAgentSocket.readyState === WebSocket.OPEN
+      ) {
+        session.voiceAgentSocket.close();
+      }
+      if (
+        session.sttSocket &&
+        session.sttSocket.readyState === WebSocket.OPEN
+      ) {
+        session.sttSocket.close();
+      }
+
+      console.log(`✅ [${session.callSid}] Llamada finalizada por el agente`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error(`❌ [${session.callSid}] Error al colgar: ${errorMessage}`);
     }
   }
 
