@@ -86,7 +86,7 @@ Mantén fluidez. Habla como lo harías con un amigo al que le explicas algo.
 
 2. **Lenguaje simple y directo**: Sin tecnicismos innecesarios. Si usas un término técnico, explícalo brevemente.
 
-3. **Reformula para confirmar**: 
+3. **Reformula para confirmar**:
    - Usuario: "Quiero conectar Shopify"
    - Tú: "Perfecto, quieres vincular tu tienda de Shopify. Te explico cómo..."
 
@@ -124,7 +124,7 @@ Integraciones futuras: menciónlas solo como "próximas" o "en desarrollo", sin 
 Si el usuario necesita ayuda especializada, puedes mencionar:
 
 - Anás Midoúl – CEO
-- Gabriel Hernández Álvarez – CTO  
+- Gabriel Hernández Álvarez – CTO
 - Sergio González – Desarrollador
 
 No inventes horarios ni prometas tiempos de respuesta del equipo.
@@ -227,12 +227,12 @@ Mantén coherencia:
 
 ## FINALIZACIÓN DE LLAMADA
 
-Cuando la conversación termine naturalmente (el usuario se despide), 
+Cuando la conversación termine naturalmente (el usuario se despide),
 debes finalizar con una despedida cálida.
 
 ⚠️ IMPORTANTE: Al final de tu despedida, añade EXACTAMENTE: [END_CALL]
 
-Este marcador es interno y NO se dirá en voz. Es solo para que el 
+Este marcador es interno y NO se dirá en voz. Es solo para que el
 sistema sepa que debe colgar automáticamente.
 
 Ejemplo correcto:
@@ -295,21 +295,25 @@ FIN DE INSTRUCCIONES
 Después de implementar:
 
 ### Test 1: Despedida Normal
+
 - Usuario: "Gracias, adiós"
 - Agente: "Ha sido un placer ayudarte. Que vaya bien. [END_CALL]"
 - ✅ Debería colgar automáticamente ~3 segundos después
 
 ### Test 2: Sin Despedida
+
 - Usuario: "¿Cómo configuro X?"
 - Agente: "Para configurar X..."
 - ✅ NO debería colgar (conversación continúa)
 
 ### Test 3: Falso Positivo
+
 - Usuario: "Gracias, ¿y cómo hago Y?"
 - Agente: "Para hacer Y..."
 - ✅ NO debería colgar (usuario sigue preguntando)
 
 ### Test 4: Enumeración Natural
+
 - Usuario: "¿Cómo empiezo?"
 - Agente: "Es sencillo: primero creas tu agente, después configuras la voz, y luego conectas tus herramientas."
 - ✅ NO debe decir "Paso 1", "Paso 2" ni usar asteriscos
