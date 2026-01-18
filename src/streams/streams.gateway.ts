@@ -336,8 +336,10 @@ export class StreamsGateway {
     const voiceId = this.resolveVoiceId(customParameters);
     if (!voiceId) {
       console.warn(
-        `⚠️ [${callSid}] No se recibió labsId/voiceId; se usará fallback de entorno`,
+        `⚠️ [${callSid}] No se recibió labsId/voiceId; se usará fallback de entorno: ${this.elevenLabsTtsVoiceId}`,
       );
+    } else {
+      console.log(`🎤 [${callSid}] Voice ID configurado: ${voiceId}`);
     }
     const language = this.resolveLanguage(customParameters);
 
@@ -1789,6 +1791,9 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
       );
       return;
     }
+    
+    // Log del voiceId que se está usando para TTS
+    console.log(`🎙️ [${session.callSid}] Usando Voice ID para TTS: ${voiceId}`);
 
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,
