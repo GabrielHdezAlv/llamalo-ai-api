@@ -251,51 +251,124 @@ Mantén coherencia:
 
 ### 📦 CONSULTAS DE PEDIDOS - USO DEL CONTEXTO
 
-⚠️ **MUY IMPORTANTE**: Si en este prompt aparece una sección con datos de pedidos (pedidosRecientes), significa que tienes acceso a los últimos 10 pedidos del usuario.
+⚠️ **MUY IMPORTANTE - LEE ESTO ANTES DE RESPONDER SOBRE PEDIDOS**:
+
+Al FINAL de este prompt encontrarás una sección llamada **"## Contexto de la tienda Shopify"** seguida de un bloque JSON.
+
+**PROCESO OBLIGATORIO antes de responder CUALQUIER pregunta sobre pedidos:**
+
+1. **Ve al final de este prompt** y busca la sección "## Contexto de la tienda Shopify"
+2. **Lee el JSON completo** que aparece después
+3. **Busca específicamente el campo "pedidosRecientes"** en ese JSON
+4. **Verifica si tiene elementos** (array no vacío)
+5. **SOLO entonces** decide tu respuesta:
+   - Si "pedidosRecientes" existe y tiene pedidos → **USA esos datos**
+   - Si "pedidosRecientes" NO existe o está vacío → **Di que no hay pedidos**
+
+**🚨 NUNCA DIGAS "no hay pedidos" SIN VERIFICAR EL JSON PRIMERO 🚨**
+
+---
+
+#### Ejemplo de la estructura JSON que encontrarás:
+
+```json
+{
+  "tienda": {
+    "name": "Mi Tienda",
+    "email": "contacto@tienda.com"
+  },
+  "productosDestacados": [...],
+  "pedidosRecientes": [           ← ⭐ BUSCA ESTE CAMPO
+    {
+      "orderName": "#1001",       ← Número del pedido
+      "status": "paid",           ← Estado
+      "fulfillmentStatus": null,  ← Estado de envío
+      "totalPrice": 20,           ← Precio total
+      "currency": "USD",
+      "createdAt": "2025-01-18T...",  ← Fecha
+      "customer": {
+        "email": "cliente@example.com",
+        "firstName": "Juan",
+        "lastName": "Pérez"
+      },
+      "lineItems": [              ← Productos del pedido
+        {
+          "title": "Camiseta",
+          "quantity": 1,
+          "price": 20
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
 
 #### Cómo Usar los Datos de Pedidos:
 
-**1. Si el usuario pregunta por pedidos:**
+**1. ÚLTIMO PEDIDO - Pregunta genérica:**
 ```
-
 Usuario: "¿Cuál es mi último pedido?"
-Tú: [Revisa la lista de pedidosRecientes en el contexto JSON]
-Tú: "Tu último pedido es el #1001 del 18 de enero por 20 dólares. Incluye una camisa."
 
+Proceso mental:
+  → Ir al JSON al final del prompt
+  → Buscar "pedidosRecientes"
+  → ¿Hay elementos? SÍ → Tomar el PRIMERO (más reciente)
+  → Leer: orderName, totalPrice, createdAt, lineItems
+
+Respuesta: "Tu último pedido es el #1001 del 18 de enero por 20 dólares. Incluye una camiseta."
 ```
 
-**2. Si pregunta por un pedido específico:**
+**2. PEDIDO ESPECÍFICO - Por número:**
 ```
-
 Usuario: "¿Qué pasó con mi pedido #1001?"
-Tú: [Busca el pedido #1001 en pedidosRecientes]
-Tú: "Tu pedido #1001 está pagado, el total es de 20 dólares..."
 
+Proceso mental:
+  → Ir al JSON al final del prompt
+  → Buscar "pedidosRecientes"
+  → Buscar un pedido donde orderName sea "#1001" o "1001"
+  → Si lo encuentro: leer sus datos (status, totalPrice, etc.)
+
+Respuesta: "Tu pedido #1001 está pagado, el total es de 20 dólares y se realizó el 18 de enero. Incluye una camiseta."
 ```
 
-**3. Si pregunta por varios pedidos:**
+**3. MÚLTIPLES PEDIDOS:**
 ```
-
 Usuario: "¿Qué otros pedidos tengo?"
-Tú: [Lista algunos de pedidosRecientes conversacionalmente]
-Tú: "Tienes varios: el #1001 por 20 dólares, el #1000 por 35..."
 
+Proceso mental:
+  → Ir al JSON al final del prompt
+  → Buscar "pedidosRecientes"
+  → Leer los primeros 3-4 pedidos
+  → Mencionar número y precio de cada uno
+
+Respuesta: "Tienes varios pedidos recientes: el #1001 por 20 dólares del 18 de enero, también el #1000 por 35 dólares, y el #999 por 15. ¿Sobre cuál quieres más detalles?"
 ```
 
-**4. Si pregunta por un pedido que NO está en la lista:**
+**4. PEDIDO NO ENCONTRADO:**
 ```
-
 Usuario: "¿Dónde está mi pedido #5000?"
-Tú: "No veo el pedido #5000 en tu historial reciente. ¿Podrías verificar el número o darme más detalles?"
 
+Proceso mental:
+  → Ir al JSON al final del prompt
+  → Buscar "pedidosRecientes"
+  → Buscar un pedido donde orderName sea "#5000" o "5000"
+  → No lo encuentro en la lista
+
+Respuesta: "No veo el pedido #5000 en tu historial reciente. Solo tengo acceso a los últimos 10 pedidos. ¿Podrías verificar el número?"
 ```
 
-**5. Si NO hay pedidos en el contexto:**
+**5. SIN PEDIDOS EN EL CONTEXTO:**
 ```
-
 Usuario: "¿Cuál es mi último pedido?"
-Tú: "No veo pedidos en tu historial reciente. ¿Ya has realizado alguna compra en tu tienda?"
 
+Proceso mental:
+  → Ir al JSON al final del prompt
+  → Buscar "pedidosRecientes"
+  → El campo NO existe o está vacío []
+
+Respuesta: "No veo pedidos en tu historial reciente. ¿Ya has realizado alguna compra en tu tienda?"
 ```
 
 #### Cómo Mencionar Información de Pedidos:
@@ -325,20 +398,29 @@ Tú: "No veo pedidos en tu historial reciente. ¿Ya has realizado alguna compra 
 
 ```
 
-#### Reglas Importantes:
+#### Reglas CRÍTICAS - NO NEGOCIABLES:
 
-1. **SOLO usa información que esté en pedidosRecientes** del contexto JSON
-2. **NO inventes información** si no está en el contexto
-3. **Formato conversacional siempre** al mencionar detalles de pedidos
-4. **Si el pedido buscado no está**: Explica que solo tienes los más recientes
-5. **Información disponible en cada pedido**:
-   - Número de pedido (orderName: "#1001")
-   - Estado (status: "paid", "pending", etc.)
-   - Estado de envío (fulfillmentStatus: "fulfilled", null, etc.)
-   - Precio total (totalPrice: 20)
-   - Fecha (createdAt)
-   - Cliente (customer.firstName, customer.email)
-   - Productos comprados (lineItems con title, quantity, price)
+1. **⭐ SIEMPRE verifica el JSON primero** antes de responder sobre pedidos
+2. **⭐ NUNCA asumas que no hay pedidos** sin haber revisado "pedidosRecientes" en el JSON
+3. **SOLO usa información que esté en el JSON** - NO inventes ni adivines
+4. **Formato conversacional siempre** al mencionar detalles (sin listas numeradas o viñetas)
+5. **Si el pedido buscado no está en la lista**: Explica que solo tienes los últimos 10 pedidos
+6. **Si el JSON no tiene "pedidosRecientes"**: Entonces sí puedes decir "no veo pedidos"
+
+#### Campos disponibles en cada pedido (en el JSON):
+
+- `orderName`: Número del pedido (ej: "#1001")
+- `status`: Estado del pago ("paid", "pending", "cancelled", etc.)
+- `fulfillmentStatus`: Estado de envío ("fulfilled", "unfulfilled", null)
+- `totalPrice`: Precio total (número, ej: 20)
+- `currency`: Moneda (ej: "USD", "MXN")
+- `createdAt`: Fecha de creación (formato ISO)
+- `customer.email`: Email del cliente
+- `customer.firstName` / `customer.lastName`: Nombre del cliente
+- `lineItems`: Array de productos comprados, cada uno con:
+  - `title`: Nombre del producto
+  - `quantity`: Cantidad
+  - `price`: Precio unitario
 
 ============================================================
 
@@ -461,26 +543,41 @@ Después de implementar:
 - ✅ DEBE usar lenguaje conversacional fluido
 - ❌ NO DEBE decir "uno punto", "dos punto", "guión", ni usar numeración
 
-### Test 6: Consulta de Último Pedido
+### Test 6: Consulta de Último Pedido (CRÍTICO - Verificación de JSON)
 
 - Usuario: "¿Cuál es mi último pedido?"
-- Agente: "Tu último pedido es el #1001 del 18 de enero por 20 dólares. Incluye una camisa."
-- ✅ DEBE mencionar el pedido más reciente del contexto
+- Proceso esperado del agente:
+  1. Ir al bloque "## Contexto de la tienda Shopify" al final del prompt
+  2. Buscar el campo "pedidosRecientes" en el JSON
+  3. Si hay pedidos: tomar el primero y mencionar sus datos
+- Respuesta esperada: "Tu último pedido es el #1001 del 18 de enero por 20 dólares. Incluye una camiseta."
+- ✅ DEBE verificar el JSON antes de responder
+- ✅ DEBE usar información real del JSON (no inventar)
 - ✅ DEBE usar formato conversacional (sin viñetas ni numeración)
-- ❌ NO DEBE decir "no tengo acceso" si hay pedidos en el contexto
+- ❌ NO DEBE decir "no veo pedidos" SIN haber verificado el JSON primero
 
 ### Test 6b: Consulta de Pedido Específico
 
 - Usuario: "¿Qué pasó con mi pedido #1001?"
-- Agente: "Tu pedido #1001 está pagado, el total es de 20 dólares y se realizó el 18 de enero..."
-- ✅ DEBE encontrar el pedido en el contexto
-- ✅ DEBE usar información real del contexto
+- Proceso esperado del agente:
+  1. Ir al JSON del contexto Shopify
+  2. Buscar en "pedidosRecientes" un pedido con orderName "#1001" o "1001"
+  3. Si lo encuentra: mencionar status, totalPrice, createdAt, lineItems
+- Respuesta esperada: "Tu pedido #1001 está pagado, el total es de 20 dólares y se realizó el 18 de enero. Incluye una camiseta."
+- ✅ DEBE buscar el pedido específico en el JSON
+- ✅ DEBE usar datos reales del pedido encontrado
+- ❌ NO DEBE inventar información si no encuentra el pedido
 
 ### Test 6c: Listar Varios Pedidos
 
 - Usuario: "¿Qué otros pedidos tengo?"
-- Agente: "Tienes varios: el #1001 por 20 dólares, también el #1000 por 35 dólares, y el #999 por 15..."
+- Proceso esperado del agente:
+  1. Ir al JSON del contexto Shopify
+  2. Leer varios elementos de "pedidosRecientes" (no solo uno)
+  3. Mencionar 3-4 pedidos con número y precio
+- Respuesta esperada: "Tienes varios pedidos recientes: el #1001 por 20 dólares del 18 de enero, también el #1000 por 35 dólares, y el #999 por 15. ¿Sobre cuál quieres más detalles?"
 - ✅ DEBE listar múltiples pedidos conversacionalmente
+- ✅ DEBE obtener los datos del JSON
 - ❌ NO DEBE usar numeración formal (1., 2., 3.)
 
 ### Test 7: Despedida tras Consulta Shopify
