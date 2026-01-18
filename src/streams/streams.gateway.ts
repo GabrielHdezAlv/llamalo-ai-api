@@ -2127,13 +2127,13 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
         console.log(`🔇 [${session.callSid}] Media stream cerrado`);
       }
 
-      // 2. Colgar la llamada usando API REST de Twilio
-      const accountSid = process.env.TWILIO_ACCOUNT_SID;
-      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      // 2. Colgar la llamada usando API REST de Twilio (credenciales del usuario)
+      const accountSid = session.customParameters?.twilioSid;
+      const authToken = session.customParameters?.twilioToken;
 
       if (!accountSid || !authToken) {
         console.warn(
-          `⚠️ [${session.callSid}] Credenciales Twilio no disponibles para colgar llamada`,
+          `⚠️ [${session.callSid}] Credenciales Twilio del usuario no disponibles para colgar llamada`,
         );
       } else {
         const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${session.callSid}.json`;
@@ -2149,7 +2149,7 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
         });
 
         console.log(
-          `✅ [${session.callSid}] Llamada colgada exitosamente vía API Twilio`,
+          `✅ [${session.callSid}] Llamada colgada exitosamente vía API Twilio del usuario`,
         );
       }
 

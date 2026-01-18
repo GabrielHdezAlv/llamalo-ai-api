@@ -184,6 +184,18 @@ export class CallsController {
           ? ((agentData.language as Record<string, unknown>).code as string)
           : undefined,
       );
+      addStreamParameter(
+        'twilioSid',
+        typeof twilioConfig.twilioSid === 'string'
+          ? twilioConfig.twilioSid
+          : undefined,
+      );
+      addStreamParameter(
+        'twilioToken',
+        typeof twilioConfig.twilioToken === 'string'
+          ? twilioConfig.twilioToken
+          : undefined,
+      );
 
       // Agregar userId y shopDomain como customParameters para Shopify
       addStreamParameter('userId', userId);
