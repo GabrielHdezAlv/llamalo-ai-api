@@ -285,6 +285,22 @@ export class StreamsGateway {
     const customParameters = this.extractCustomParameters(
       start?.customParameters,
     );
+    
+    // 🔍 Debug: Log de todos los customParameters recibidos
+    if (customParameters && Object.keys(customParameters).length > 0) {
+      console.log(`🔍 [${callSid}] CustomParameters recibidos:`, Object.keys(customParameters).join(', '));
+      if (customParameters.userId) {
+        console.log(`👤 [${callSid}] userId en customParameters: ${customParameters.userId}`);
+      }
+      if (customParameters.shopDomain) {
+        console.log(`🛍️ [${callSid}] shopDomain en customParameters: ${customParameters.shopDomain}`);
+      } else {
+        console.warn(`⚠️ [${callSid}] shopDomain NO está en customParameters`);
+      }
+    } else {
+      console.warn(`⚠️ [${callSid}] No se recibieron customParameters`);
+    }
+    
     if (customParameters?.instructions) {
       console.log(
         `📋 AgentInstruction recibido desde Twilio: "${customParameters.instructions.substring(0, 100)}..."`,

@@ -70,6 +70,20 @@ export class CallsController {
           ? shopifyIntegration.shopDomain
           : undefined;
 
+      // 🔍 Logging para debugging de Shopify
+      if (!integrations || Object.keys(integrations).length === 0) {
+        console.log(`⚠️ [Calls] Usuario ${userId} no tiene integraciones configuradas`);
+      } else if (!shopifyIntegration || Object.keys(shopifyIntegration).length === 0) {
+        console.log(`⚠️ [Calls] Usuario ${userId} no tiene integración Shopify configurada`);
+      } else if (!shopDomain) {
+        console.log(`⚠️ [Calls] Usuario ${userId} tiene integración Shopify pero no shopDomain. Datos:`, {
+          connected: shopifyIntegration.connected,
+          shopDomain: shopifyIntegration.shopDomain,
+        });
+      } else {
+        console.log(`✅ [Calls] ShopDomain encontrado para usuario ${userId}: ${shopDomain}`);
+      }
+
       // // 🔹 Verificar antigüedad de la cuenta (deshabilitado temporalmente)
       // if (agent.createdAt) {
       //   const createdAt = (
@@ -158,7 +172,12 @@ export class CallsController {
 
       // Agregar userId y shopDomain como customParameters para Shopify
       addStreamParameter('userId', userId);
-      addStreamParameter('shopDomain', shopDomain);
+      if (shopDomain) {
+        addStreamParameter('shopDomain', shopDomain);
+        console.log(`✅ [Calls] ShopDomain agregado a parámetros de stream: ${shopDomain}`);
+      } else {
+        console.warn(`⚠️ [Calls] ShopDomain no agregado (no está configurado para usuario ${userId})`);
+      }
 
       // ✅ TwiML generado correctamente (sin loggear el contenido completo)
       const twimlString = r.toString();
