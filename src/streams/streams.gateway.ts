@@ -560,6 +560,18 @@ export class StreamsGateway {
     const userId = session.userId;
     const shopDomain = session.shopifyContext.shopDomain;
 
+    // DEBUG: Ver estado del contexto ANTES de cualquier operación
+    console.log(
+      `🔍 [DEBUG-${session.callSid}] queryShopifyDataIfNeeded llamado:`,
+      {
+        userText: userText.substring(0, 50),
+        hasContext: !!session.shopifyContext,
+        hasStore: !!session.shopifyContext?.store,
+        productsCount: session.shopifyContext?.featuredProducts?.length || 0,
+        ordersCount: session.shopifyContext?.orders?.length || 0,
+      },
+    );
+
     try {
       // Heurística simple para detectar qué tipo de datos necesita el usuario
       const textLower = userText.toLowerCase();
@@ -574,6 +586,9 @@ export class StreamsGateway {
 
       // Si no hay indicios claros, no hacer consulta (usar cache)
       if (!needsProducts && !needsStoreInfo) {
+        console.log(
+          `🔍 [DEBUG-${session.callSid}] No se detectó necesidad de consultar Shopify, usando cache existente`,
+        );
         return null;
       }
 
@@ -586,10 +601,9 @@ export class StreamsGateway {
         );
       });
 
-      // Actualizar contexto según los resultados
-      if (!session.shopifyContext) {
-        session.shopifyContext = { shopDomain };
-      }
+      // NOTA: NO resetear session.shopifyContext aquí
+      // Ya existe y contiene datos del cache inicial (productos, pedidos, store)
+      // Solo actualizaremos campos específicos si se consultan
 
       // Hacer consultas en paralelo si ambas son necesarias
       const queries: Promise<unknown>[] = [];
@@ -716,6 +730,18 @@ export class StreamsGateway {
     try {
       const shopifyContext = session.shopifyContext;
 
+      // DEBUG CRÍTICO: Ver qué hay en el contexto cuando se llama esta función
+      console.log(
+        `🔍 [DEBUG-${session.callSid}] enrichInstructionsWithShopify llamado:`,
+        {
+          hasContext: !!shopifyContext,
+          hasStore: !!shopifyContext?.store,
+          productsCount: shopifyContext?.featuredProducts?.length || 0,
+          ordersCount: shopifyContext?.orders?.length || 0,
+          orders: shopifyContext?.orders?.map((o) => o.orderName) || [],
+        },
+      );
+
       // Si no hay contexto de Shopify o no tiene datos, retornar instrucciones originales
       if (
         !shopifyContext ||
@@ -723,6 +749,9 @@ export class StreamsGateway {
           !shopifyContext.featuredProducts?.length &&
           !shopifyContext.orders?.length)
       ) {
+        console.warn(
+          `⚠️ [DEBUG-${session.callSid}] Saliendo sin enriquecer - no hay datos suficientes en contexto`,
+        );
         return baseInstructions;
       }
 
