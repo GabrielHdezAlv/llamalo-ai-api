@@ -1791,7 +1791,7 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
       );
       return;
     }
-    
+
     // Log del voiceId que se está usando para TTS
     console.log(`🎙️ [${session.callSid}] Usando Voice ID para TTS: ${voiceId}`);
 
