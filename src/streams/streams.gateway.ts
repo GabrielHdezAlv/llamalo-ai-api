@@ -285,22 +285,29 @@ export class StreamsGateway {
     const customParameters = this.extractCustomParameters(
       start?.customParameters,
     );
-    
+
     // 🔍 Debug: Log de todos los customParameters recibidos
     if (customParameters && Object.keys(customParameters).length > 0) {
-      console.log(`🔍 [${callSid}] CustomParameters recibidos:`, Object.keys(customParameters).join(', '));
+      console.log(
+        `🔍 [${callSid}] CustomParameters recibidos:`,
+        Object.keys(customParameters).join(', '),
+      );
       if (customParameters.userId) {
-        console.log(`👤 [${callSid}] userId en customParameters: ${customParameters.userId}`);
+        console.log(
+          `👤 [${callSid}] userId en customParameters: ${customParameters.userId}`,
+        );
       }
       if (customParameters.shopDomain) {
-        console.log(`🛍️ [${callSid}] shopDomain en customParameters: ${customParameters.shopDomain}`);
+        console.log(
+          `🛍️ [${callSid}] shopDomain en customParameters: ${customParameters.shopDomain}`,
+        );
       } else {
         console.warn(`⚠️ [${callSid}] shopDomain NO está en customParameters`);
       }
     } else {
       console.warn(`⚠️ [${callSid}] No se recibieron customParameters`);
     }
-    
+
     if (customParameters?.instructions) {
       console.log(
         `📋 AgentInstruction recibido desde Twilio: "${customParameters.instructions.substring(0, 100)}..."`,
@@ -317,7 +324,7 @@ export class StreamsGateway {
     // Extraer userId y shopDomain de customParameters para integración Shopify
     const userId = customParameters?.userId?.trim();
     const shopDomain = customParameters?.shopDomain?.trim();
-    
+
     if (userId) {
       console.log(`👤 [${callSid}] userId extraído: ${userId}`);
     }
@@ -428,7 +435,7 @@ export class StreamsGateway {
 
       // Filtrar productos destacados (buscar campo featured o usar primeros 10)
       let featuredProducts = productsResponse.products;
-      
+
       // Intentar buscar productos con campo featured (aunque no esté en la interfaz normalizada)
       // Si no hay campo featured, usar primeros 10 productos
       if (featuredProducts.length > 10) {
@@ -450,7 +457,9 @@ export class StreamsGateway {
         } catch (contextError) {
           console.error(
             `❌ [${session.callSid}] Error actualizando contexto Shopify en sesión:`,
-            contextError instanceof Error ? contextError.message : String(contextError),
+            contextError instanceof Error
+              ? contextError.message
+              : String(contextError),
           );
         }
       }
@@ -495,12 +504,14 @@ export class StreamsGateway {
     try {
       // Heurística simple para detectar qué tipo de datos necesita el usuario
       const textLower = userText.toLowerCase();
-      const needsProducts = /\b(producto|productos|artículo|artículos|item|items|catálogo|catálogos|catalogo|catalogos)\b/.test(
-        textLower,
-      );
-      const needsStoreInfo = /\b(tienda|información|info|datos|nombre|email|contacto)\b/.test(
-        textLower,
-      );
+      const needsProducts =
+        /\b(producto|productos|artículo|artículos|item|items|catálogo|catálogos|catalogo|catalogos)\b/.test(
+          textLower,
+        );
+      const needsStoreInfo =
+        /\b(tienda|información|info|datos|nombre|email|contacto)\b/.test(
+          textLower,
+        );
 
       // Si no hay indicios claros, no hacer consulta (usar cache)
       if (!needsProducts && !needsStoreInfo) {
