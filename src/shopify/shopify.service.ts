@@ -748,6 +748,72 @@ export class ShopifyService {
   }
 
   /**
+   * Busca pedidos por email del cliente
+   * Retorna todos los pedidos asociados a ese email, ordenados por fecha (más reciente primero)
+   */
+  async searchOrdersByEmail(
+    userId: string,
+    shop: string,
+    email: string,
+  ): Promise<NormalizedOrdersResponse> {
+    try {
+      // Obtener todos los pedidos
+      const allOrders = await this.getOrders(userId, shop);
+
+      // Filtrar por email (case-insensitive)
+      const filteredOrders = allOrders.orders.filter(
+        (order) =>
+          order.customer?.email?.toLowerCase() === email.toLowerCase(),
+      );
+
+      // Ordenar por fecha de creación (más reciente primero)
+      filteredOrders.sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+
+      return {
+        orders: filteredOrders,
+      };
+    } catch (error) {
+      // Re-lanzar errores de getOrders
+      throw error;
+    }
+  }
+
+  /**
+   * Busca un pedido específico por su número (orderName, ej: "#1001")
+   * Retorna el pedido si existe, o un array vacío si no se encuentra
+   */
+  async searchOrderByNumber(
+    userId: string,
+    shop: string,
+    orderName: string,
+  ): Promise<NormalizedOrdersResponse> {
+    try {
+      // Normalizar el número de pedido (agregar # si no lo tiene)
+      const normalizedOrderName = orderName.startsWith('#')
+        ? orderName
+        : `#${orderName}`;
+
+      // Obtener todos los pedidos
+      const allOrders = await this.getOrders(userId, shop);
+
+      // Buscar el pedido específico
+      const foundOrder = allOrders.orders.find(
+        (order) => order.orderName === normalizedOrderName,
+      );
+
+      return {
+        orders: foundOrder ? [foundOrder] : [],
+      };
+    } catch (error) {
+      // Re-lanzar errores de getOrders
+      throw error;
+    }
+  }
+
+  /**
    * Revoca/desconecta una tienda Shopify
    */
   async revokeStore(userId: string, shop: string): Promise<void> {

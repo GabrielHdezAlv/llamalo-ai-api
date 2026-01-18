@@ -11,6 +11,7 @@ import ffmpegStaticPath from 'ffmpeg-static';
 import {
   NormalizedStore,
   NormalizedProduct,
+  NormalizedOrder,
   NormalizedStoreResponse,
   NormalizedProductsResponse,
   ShopifyService,
@@ -68,6 +69,7 @@ interface ShopifyContext {
   shopDomain?: string;
   store?: NormalizedStore;
   featuredProducts?: NormalizedProduct[];
+  orders?: NormalizedOrder[]; // Pedidos encontrados dinámicamente
   loadedAt?: number; // timestamp para cache
 }
 
@@ -1053,6 +1055,50 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
       };
     }
 
+    // Agregar definiciones de funciones si hay Shopify conectado
+    if (session.shopifyContext?.shopDomain) {
+      agent.tools = [
+        {
+          type: 'function',
+          function: {
+            name: 'searchOrdersByEmail',
+            description:
+              'Busca pedidos de Shopify por el email del cliente. Retorna todos los pedidos asociados a ese email, ordenados por fecha (más reciente primero). Usa esta función cuando el usuario proporcione su email para consultar pedidos.',
+            parameters: {
+              type: 'object',
+              properties: {
+                email: {
+                  type: 'string',
+                  description:
+                    'Email del cliente que realizó la compra (ej: marcos@example.com)',
+                },
+              },
+              required: ['email'],
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'searchOrderByNumber',
+            description:
+              'Busca un pedido específico de Shopify por su número. Retorna el pedido si existe. Usa esta función cuando el usuario proporcione un número de pedido específico (ej: #1001, 1001).',
+            parameters: {
+              type: 'object',
+              properties: {
+                orderNumber: {
+                  type: 'string',
+                  description:
+                    'Número del pedido a buscar (puede incluir o no el símbolo #, ej: "#1001" o "1001")',
+                },
+              },
+              required: ['orderNumber'],
+            },
+          },
+        },
+      ];
+    }
+
     const payload = {
       type: 'Settings',
       audio: {
@@ -1636,11 +1682,14 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
           );
           break;
         }
-        case 'FunctionCallRequest':
-          console.warn(
-            `⚠️ [${session.callSid}] FunctionCallRequest no soportado`,
+        case 'FunctionCallRequest': {
+          console.log(
+            `🔧 [${session.callSid}] FunctionCallRequest recibido:`,
+            JSON.stringify(message).substring(0, 500),
           );
+          void this.handleFunctionCall(session, message);
           break;
+        }
         case 'History':
           // Silenciar este evento
           break;
@@ -2175,6 +2224,204 @@ Cuando el usuario pregunte sobre productos, información de la tienda, o datos r
       const errorMessage =
         error instanceof Error ? error.message : 'Error desconocido';
       console.error(`❌ [${session.callSid}] Error al colgar: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Maneja las llamadas a funciones solicitadas por Deepgram/LLM
+   * Ejecuta la función apropiada y devuelve el resultado
+   */
+  private async handleFunctionCall(
+    session: CallSession,
+    message: DeepgramJsonEvent,
+  ): Promise<void> {
+    try {
+      // Extraer información de la llamada a función
+      const functionName =
+        typeof message.function_name === 'string' ? message.function_name : '';
+      const functionCallId =
+        typeof message.function_call_id === 'string'
+          ? message.function_call_id
+          : '';
+      const argumentsStr =
+        typeof message.arguments === 'string' ? message.arguments : '{}';
+
+      console.log(
+        `🔧 [${session.callSid}] Ejecutando función: ${functionName} con args: ${argumentsStr}`,
+      );
+
+      let result: unknown = null;
+      let error: string | null = null;
+
+      try {
+        const args = JSON.parse(argumentsStr) as Record<string, unknown>;
+
+        switch (functionName) {
+          case 'searchOrdersByEmail': {
+            const email = typeof args.email === 'string' ? args.email : '';
+            if (!email) {
+              error = 'Email no proporcionado';
+              break;
+            }
+
+            if (!session.userId || !session.shopifyContext?.shopDomain) {
+              error = 'Usuario o tienda Shopify no configurados';
+              break;
+            }
+
+            console.log(
+              `📧 [${session.callSid}] Buscando pedidos para email: ${email}`,
+            );
+
+            const ordersResponse =
+              await this.shopifyService.searchOrdersByEmail(
+                session.userId,
+                session.shopifyContext.shopDomain,
+                email,
+              );
+
+            if (ordersResponse.orders.length === 0) {
+              result = {
+                found: false,
+                message: `No se encontraron pedidos asociados al email ${email}`,
+                orders: [],
+              };
+            } else {
+              // Guardar los pedidos en el contexto de la sesión
+              if (session.shopifyContext) {
+                session.shopifyContext.orders = ordersResponse.orders;
+              }
+
+              result = {
+                found: true,
+                count: ordersResponse.orders.length,
+                message: `Se encontraron ${ordersResponse.orders.length} pedido(s) para el email ${email}`,
+                orders: ordersResponse.orders.map((order) => ({
+                  orderNumber: order.orderName,
+                  status: order.status,
+                  fulfillmentStatus: order.fulfillmentStatus,
+                  totalPrice: order.totalPrice,
+                  currency: order.currency,
+                  createdAt: order.createdAt,
+                  customerName: order.customer
+                    ? `${order.customer.firstName || ''} ${order.customer.lastName || ''}`.trim()
+                    : null,
+                  items: order.lineItems.map((item) => ({
+                    title: item.title,
+                    quantity: item.quantity,
+                    price: item.price,
+                  })),
+                })),
+              };
+
+              console.log(
+                `✅ [${session.callSid}] Encontrados ${ordersResponse.orders.length} pedidos para ${email}`,
+              );
+            }
+            break;
+          }
+
+          case 'searchOrderByNumber': {
+            const orderNumber =
+              typeof args.orderNumber === 'string' ? args.orderNumber : '';
+            if (!orderNumber) {
+              error = 'Número de pedido no proporcionado';
+              break;
+            }
+
+            if (!session.userId || !session.shopifyContext?.shopDomain) {
+              error = 'Usuario o tienda Shopify no configurados';
+              break;
+            }
+
+            console.log(
+              `📦 [${session.callSid}] Buscando pedido número: ${orderNumber}`,
+            );
+
+            const ordersResponse =
+              await this.shopifyService.searchOrderByNumber(
+                session.userId,
+                session.shopifyContext.shopDomain,
+                orderNumber,
+              );
+
+            if (ordersResponse.orders.length === 0) {
+              result = {
+                found: false,
+                message: `No se encontró el pedido ${orderNumber}`,
+                order: null,
+              };
+            } else {
+              const order = ordersResponse.orders[0];
+
+              // Guardar el pedido en el contexto de la sesión
+              if (session.shopifyContext) {
+                session.shopifyContext.orders = [order];
+              }
+
+              result = {
+                found: true,
+                message: `Pedido ${order.orderName} encontrado`,
+                order: {
+                  orderNumber: order.orderName,
+                  status: order.status,
+                  fulfillmentStatus: order.fulfillmentStatus,
+                  totalPrice: order.totalPrice,
+                  currency: order.currency,
+                  createdAt: order.createdAt,
+                  customerEmail: order.customer?.email || null,
+                  customerName: order.customer
+                    ? `${order.customer.firstName || ''} ${order.customer.lastName || ''}`.trim()
+                    : null,
+                  items: order.lineItems.map((item) => ({
+                    title: item.title,
+                    quantity: item.quantity,
+                    price: item.price,
+                  })),
+                },
+              };
+
+              console.log(
+                `✅ [${session.callSid}] Pedido ${order.orderName} encontrado`,
+              );
+            }
+            break;
+          }
+
+          default:
+            error = `Función desconocida: ${functionName}`;
+            console.warn(
+              `⚠️ [${session.callSid}] Función no reconocida: ${functionName}`,
+            );
+        }
+      } catch (funcError) {
+        error =
+          funcError instanceof Error
+            ? funcError.message
+            : 'Error desconocido ejecutando función';
+        console.error(
+          `❌ [${session.callSid}] Error ejecutando función ${functionName}:`,
+          funcError,
+        );
+      }
+
+      // Enviar respuesta de la función a Deepgram
+      const response = {
+        type: 'FunctionCallResponse',
+        function_call_id: functionCallId,
+        output: error ? JSON.stringify({ error }) : JSON.stringify(result),
+      };
+
+      console.log(
+        `📤 [${session.callSid}] Enviando respuesta de función: ${JSON.stringify(response).substring(0, 300)}`,
+      );
+
+      this.sendJsonToDeepgram(session, response);
+    } catch (err) {
+      console.error(
+        `❌ [${session.callSid}] Error general manejando FunctionCallRequest:`,
+        err,
+      );
     }
   }
 
