@@ -60,6 +60,15 @@ export class CallsController {
       const agentDoc = agentSnapshot.docs[0];
       const userId = agentDoc.id;
       const agent = agentDoc.data();
+      
+      // 🔍 Debug: Ver estructura del documento
+      console.log(`🔍 [Calls] Estructura del documento para usuario ${userId}:`, {
+        tieneAgent: !!agent.agent,
+        tieneTwilio: !!agent.twilio,
+        tieneIntegrations: !!agent.integrations,
+        camposAgent: agent.agent ? Object.keys(agent.agent) : 'no existe',
+      });
+      
       const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
       
       // Obtener shopDomain de integrations.shopify si existe
@@ -127,15 +136,21 @@ export class CallsController {
         });
       };
 
-      const agentProfile =
-        (agent?.agent as Record<string, unknown>) ||
-        ({} as Record<string, unknown>);
+      // Obtener datos del agente directamente desde el campo "agent" (users/{userId}/agent)
+      const agentData = (agent?.agent as Record<string, unknown>) || {};
       const agentName =
-        typeof agentProfile.name === 'string'
-          ? agentProfile.name
+        typeof agentData.name === 'string'
+          ? agentData.name
           : typeof agent?.name === 'string'
             ? agent.name
             : undefined;
+
+      // Log para debugging de configuración del agente
+      if (agentData.labsId) {
+        console.log(`✅ [Calls] LabsId encontrado para usuario ${userId}: ${agentData.labsId}`);
+      } else {
+        console.warn(`⚠️ [Calls] Usuario ${userId} no tiene labsId configurado en agent. Estructura agent:`, Object.keys(agentData));
+      }
 
       addStreamParameter('agentName', agentName);
       addStreamParameter(
@@ -158,15 +173,15 @@ export class CallsController {
       );
       addStreamParameter(
         'labsId',
-        typeof agentProfile.labsId === 'string'
-          ? agentProfile.labsId
+        typeof agentData.labsId === 'string'
+          ? agentData.labsId
           : undefined,
       );
       addStreamParameter(
         'language',
-        typeof (agentProfile.language as Record<string, unknown>)?.code ===
+        typeof (agentData.language as Record<string, unknown>)?.code ===
           'string'
-          ? ((agentProfile.language as Record<string, unknown>).code as string)
+          ? ((agentData.language as Record<string, unknown>).code as string)
           : undefined,
       );
 
