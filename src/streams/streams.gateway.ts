@@ -225,54 +225,56 @@ export class StreamsGateway {
     let mediaBeforeStartWarned = false;
 
     client.on('message', (raw: Buffer) => {
-      try {
-        const msg = JSON.parse(raw.toString()) as TwilioMsg;
+      void (async () => {
+        try {
+          const msg = JSON.parse(raw.toString()) as TwilioMsg;
 
-        if (msg.event === 'connected') {
-          return;
-        }
-
-        if (msg.event === 'start') {
-          currentCallSid = msg.start?.callSid || '';
-          console.log(`📞 [${currentCallSid}] Llamada iniciada`);
-          mediaBeforeStartWarned = false;
-
-          if (!currentCallSid) {
-            console.error('❌ No se pudo obtener callSid del evento start');
+          if (msg.event === 'connected') {
             return;
           }
 
-          this.createSession(currentCallSid, client, msg.start);
-          return;
-        }
+          if (msg.event === 'start') {
+            currentCallSid = msg.start?.callSid || '';
+            console.log(`📞 [${currentCallSid}] Llamada iniciada`);
+            mediaBeforeStartWarned = false;
 
-        if (msg.event === 'media') {
-          if (!currentCallSid) {
-            if (!mediaBeforeStartWarned) {
-              console.warn(
-                '⚠️ Recibiendo eventos media antes del start, esperando evento start... (este mensaje no se repetirá)',
-              );
-              mediaBeforeStartWarned = true;
+            if (!currentCallSid) {
+              console.error('❌ No se pudo obtener callSid del evento start');
+              return;
             }
+
+            await this.createSession(currentCallSid, client, msg.start);
             return;
           }
 
-          this.forwardInboundAudio(currentCallSid, msg);
-          return;
-        }
+          if (msg.event === 'media') {
+            if (!currentCallSid) {
+              if (!mediaBeforeStartWarned) {
+                console.warn(
+                  '⚠️ Recibiendo eventos media antes del start, esperando evento start... (este mensaje no se repetirá)',
+                );
+                mediaBeforeStartWarned = true;
+              }
+              return;
+            }
 
-        if (msg.event === 'stop') {
-          console.log(`🛑 Llamada terminada.`);
-          this.cleanupSession(currentCallSid);
-          client.close();
+            this.forwardInboundAudio(currentCallSid, msg);
+            return;
+          }
+
+          if (msg.event === 'stop') {
+            console.log(`🛑 Llamada terminada.`);
+            this.cleanupSession(currentCallSid);
+            client.close();
+          }
+        } catch (err) {
+          console.error('❌ Error procesando mensaje Twilio:', err);
         }
-      } catch (err) {
-        console.error('❌ Error procesando mensaje Twilio:', err);
-      }
+      })();
     });
   }
 
-  private createSession(
+  private async createSession(
     callSid: string,
     client: WebSocketClient,
     start?: TwilioStart['start'],
@@ -376,15 +378,16 @@ export class StreamsGateway {
       void this.connectToDeepgram(session);
     }
 
-    // Cargar contexto inicial de Shopify en background (no bloquea)
+    // Cargar contexto inicial de Shopify (espera para garantizar disponibilidad)
     if (userId && shopDomain && session.shopifyContext) {
-      void this.loadInitialShopifyContext(session);
+      await this.loadInitialShopifyContext(session);
     }
   }
 
   /**
    * Carga el contexto inicial de Shopify (tienda y productos destacados)
-   * Se ejecuta en background sin bloquear la inicialización de la sesión
+   * Se ejecuta de forma síncrona durante la inicialización para garantizar
+   * que el contexto esté disponible cuando el usuario haga su primera pregunta
    */
   private async loadInitialShopifyContext(session: CallSession): Promise<void> {
     if (!session.userId || !session.shopifyContext?.shopDomain) {
