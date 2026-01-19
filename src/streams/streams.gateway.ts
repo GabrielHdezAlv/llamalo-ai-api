@@ -1175,13 +1175,21 @@ ${shopifyContextJson}
       agent.context = { messages: contextMessages };
     }
 
-    const thinkConfig = this.buildThinkConfig();
-    if (thinkConfig) {
-      agent.think = {
-        ...thinkConfig,
-        prompt: session.instructions,
-      };
-    }
+    // DESHABILITADO: Deepgram Agent Think genera respuestas duplicadas/incorrectas
+    // El sistema ahora usa SOLO el LLM configurado (OpenAI) que tiene acceso al contexto Shopify enriquecido
+    // Deepgram solo transcribe, no genera respuestas propias
+    //
+    // const thinkConfig = this.buildThinkConfig();
+    // if (thinkConfig) {
+    //   agent.think = {
+    //     ...thinkConfig,
+    //     prompt: session.instructions,
+    //   };
+    // }
+
+    console.log(
+      `🔕 [${session.callSid}] Deepgram Agent Think DESHABILITADO - usando solo LLM del sistema con contexto enriquecido`,
+    );
 
     const payload = {
       type: 'Settings',
