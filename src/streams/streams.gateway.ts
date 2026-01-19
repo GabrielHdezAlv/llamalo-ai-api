@@ -1152,28 +1152,35 @@ ${shopifyContextJson}
           smart_format: true,
         },
       },
-      // Mantener speak configurado pero ignoraremos el audio TTS que Deepgram envía
-      speak: {
-        provider: {
-          type: this.deepgramSpeakProvider,
-          model: this.deepgramSpeakModel,
-        },
-      },
+      // DESHABILITADO: Deepgram Speak genera respuestas duplicadas sin contexto
+      // El sistema usa SOLO ElevenLabs para TTS y OpenAI LLM para respuestas
+      // Deepgram solo se usa para STT (transcripción de audio a texto)
+      //
+      // speak: {
+      //   provider: {
+      //     type: this.deepgramSpeakProvider,
+      //     model: this.deepgramSpeakModel,
+      //   },
+      // },
     };
 
-    const contextMessages =
-      session.instructions?.trim().length > 0
-        ? [
-            {
-              type: 'History',
-              role: 'assistant',
-              content: session.instructions,
-            },
-          ]
-        : [];
-    if (contextMessages.length) {
-      agent.context = { messages: contextMessages };
-    }
+    // DESHABILITADO: Deepgram Context activa respuestas automáticas sin contexto Shopify
+    // El contexto se envía SOLO al LLM de OpenAI a través de enrichInstructionsWithShopify()
+    // Deepgram solo transcribe, no genera respuestas propias
+    //
+    // const contextMessages =
+    //   session.instructions?.trim().length > 0
+    //     ? [
+    //         {
+    //           type: 'History',
+    //           role: 'assistant',
+    //           content: session.instructions,
+    //         },
+    //       ]
+    //     : [];
+    // if (contextMessages.length) {
+    //   agent.context = { messages: contextMessages };
+    // }
 
     // DESHABILITADO: Deepgram Agent Think genera respuestas duplicadas/incorrectas
     // El sistema ahora usa SOLO el LLM configurado (OpenAI) que tiene acceso al contexto Shopify enriquecido
@@ -1188,7 +1195,7 @@ ${shopifyContextJson}
     // }
 
     console.log(
-      `🔕 [${session.callSid}] Deepgram Agent Think DESHABILITADO - usando solo LLM del sistema con contexto enriquecido`,
+      `🔕 [${session.callSid}] Deepgram SOLO STT habilitado - speak/context/think DESHABILITADOS - usando LLM del sistema con contexto enriquecido`,
     );
 
     const payload = {
