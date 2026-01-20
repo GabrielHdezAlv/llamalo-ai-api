@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "firebase": {
+      "type": "firebase",
+      "name": "ProyectoLlamaloio",
+      "url": "https://mi-firebase-mcp-server.com",
+      "project_id": "llamaloio",
+      "project_number": "479966293935",
+      "include_services": ["firestore", "auth", "functions", "billing"],
+      "include_docs": true
+    }
+  }
+}
