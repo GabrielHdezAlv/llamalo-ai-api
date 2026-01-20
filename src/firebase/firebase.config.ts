@@ -19,7 +19,7 @@ export function getFirebaseApp(): admin.app.App {
       else {
         const localPath = join(
           process.cwd(),
-          'src/config/llamaloio-firebase-adminsdk-fbsvc-2884e73711.json',
+          'src/config/firebase-service-account.json',
         );
         console.log('💻 Usando credenciales Firebase locales');
         serviceAccount = JSON.parse(readFileSync(localPath, 'utf8'));
