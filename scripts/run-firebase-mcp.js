@@ -9,8 +9,9 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// Obtener el directorio del proyecto (donde está este script)
-const projectRoot = __dirname;
+// Obtener el directorio del proyecto (directorio de trabajo actual donde se ejecuta el script)
+// Cursor ejecuta el script desde la raíz del proyecto, así que process.cwd() es la raíz
+const projectRoot = process.cwd();
 const credentialsPath = path.join(projectRoot, 'src', 'config', 'firebase-service-account.json');
 
 // Verificar que el archivo de credenciales existe
