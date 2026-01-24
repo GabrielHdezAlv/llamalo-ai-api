@@ -340,7 +340,7 @@ export class StreamsGateway {
     const voiceId = this.resolveVoiceId(customParameters);
     if (!voiceId) {
       console.warn(
-        `⚠️ [${callSid}] No se recibió labsId/voiceId; se usará fallback de entorno: ${this.elevenLabsTtsVoiceId}`,
+        `⚠️ [${callSid}] No se recibió voiceId/labsId; se usará fallback de entorno: ${this.elevenLabsTtsVoiceId}`,
       );
     } else {
       console.log(`🎤 [${callSid}] Voice ID configurado: ${voiceId}`);
@@ -1241,8 +1241,8 @@ ${shopifyContextJson}
     customParameters?: Record<string, string>,
   ): string | undefined {
     const customVoice =
-      customParameters?.labsId ||
       customParameters?.voiceId ||
+      customParameters?.labsId || // Mantener compatibilidad con labsId
       customParameters?.voice_id ||
       customParameters?.agentVoiceId;
     const normalized = customVoice?.trim();
@@ -1959,7 +1959,7 @@ ${shopifyContextJson}
     const voiceId = session.voiceId || this.elevenLabsTtsVoiceId;
     if (!voiceId) {
       console.error(
-        `❌ [${session.callSid}] No se pudo resolver labsId/voiceId (customParameters ni entorno).`,
+        `❌ [${session.callSid}] No se pudo resolver voiceId/labsId (customParameters ni entorno).`,
       );
       return;
     }

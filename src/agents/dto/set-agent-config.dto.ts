@@ -10,7 +10,7 @@ export class SetAgentConfigDto {
   })
   @IsNotEmpty()
   @IsString()
-  labsId: string;
+  voiceId: string;
 
   @ApiProperty({
     example: 'Marta',
@@ -19,15 +19,6 @@ export class SetAgentConfigDto {
   @IsNotEmpty()
   @IsString()
   name: string;
-
-  @ApiProperty({
-    example:
-      'https://firebasestorage.googleapis.com/v0/b/llamaloio.firebasestorage.app/o/agent_04.png?alt=media&token=76741bb5-1035-4a36-970b-cae7af407099',
-    description: 'URL de la foto del agente',
-  })
-  @IsNotEmpty()
-  @IsString()
-  photoUrl: string;
 
   @ApiProperty({
     type: LanguageConfigDto,

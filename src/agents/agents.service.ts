@@ -10,26 +10,26 @@ import { getFirestore } from '../firebase/firebase.config';
 export class AgentsService {
   private firestore = getFirestore();
 
-  // ✅ Obtener todos los agentes
+  // ✅ Obtener todas las voces disponibles
   async getAllAgents() {
     try {
-      const colRef = this.firestore.collection('agents');
+      const colRef = this.firestore.collection('voices');
       const snapshot = await colRef.get();
 
       if (snapshot.empty) {
-        throw new NotFoundException('No se encontraron agentes.');
+        throw new NotFoundException('No se encontraron voces.');
       }
 
-      // Mapear los documentos a objetos Agent
-      const agents = snapshot.docs.map((doc) => doc.data());
+      // Mapear los documentos a objetos Voice
+      const voices = snapshot.docs.map((doc) => doc.data());
 
-      return agents;
+      return voices;
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
       throw new BadRequestException(
-        `Error al obtener los agentes: ${(error as Error).message}`,
+        `Error al obtener las voces: ${(error as Error).message}`,
       );
     }
   }
@@ -52,18 +52,13 @@ export class AgentsService {
       // Actualizar solo los campos que cambiaron
       let hasChanges = false;
 
-      if (userAgentConfig.labsId !== agentConfig.labsId) {
-        userAgentConfig.labsId = agentConfig.labsId;
+      if (userAgentConfig.voiceId !== agentConfig.voiceId) {
+        userAgentConfig.voiceId = agentConfig.voiceId;
         hasChanges = true;
       }
 
       if (userAgentConfig.name !== agentConfig.name) {
         userAgentConfig.name = agentConfig.name;
-        hasChanges = true;
-      }
-
-      if (userAgentConfig.photoUrl !== agentConfig.photoUrl) {
-        userAgentConfig.photoUrl = agentConfig.photoUrl;
         hasChanges = true;
       }
 

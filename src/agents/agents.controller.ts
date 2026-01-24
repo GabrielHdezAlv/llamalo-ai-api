@@ -20,7 +20,7 @@ export class AgentsController {
 
   @Get('allAgents')
   @UseGuards(FirebaseAuthGuard)
-  @ApiOperation({ summary: 'Obtener todos los agentes disponibles' })
+  @ApiOperation({ summary: 'Obtener todas las voces disponibles' })
   @ApiResponse({ status: 200, type: [AgentDto] })
   async getAllAgents() {
     return this.agentsService.getAllAgents();

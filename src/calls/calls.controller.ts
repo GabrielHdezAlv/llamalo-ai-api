@@ -146,10 +146,13 @@ export class CallsController {
             : undefined;
 
       // Log para debugging de configuración del agente
-      if (agentData.labsId) {
+      if (agentData.voiceId) {
+        console.log(`✅ [Calls] VoiceId encontrado para usuario ${userId}: ${agentData.voiceId}`);
+      } else if (agentData.labsId) {
+        // Mantener compatibilidad con labsId por si acaso
         console.log(`✅ [Calls] LabsId encontrado para usuario ${userId}: ${agentData.labsId}`);
       } else {
-        console.warn(`⚠️ [Calls] Usuario ${userId} no tiene labsId configurado en agent. Estructura agent:`, Object.keys(agentData));
+        console.warn(`⚠️ [Calls] Usuario ${userId} no tiene voiceId configurado en agent. Estructura agent:`, Object.keys(agentData));
       }
 
       addStreamParameter('agentName', agentName);
@@ -167,9 +170,11 @@ export class CallsController {
       );
       addStreamParameter(
         'labsId',
-        typeof agentData.labsId === 'string'
-          ? agentData.labsId
-          : undefined,
+        typeof agentData.voiceId === 'string'
+          ? agentData.voiceId
+          : typeof agentData.labsId === 'string'
+            ? agentData.labsId
+            : undefined,
       );
       addStreamParameter(
         'language',
