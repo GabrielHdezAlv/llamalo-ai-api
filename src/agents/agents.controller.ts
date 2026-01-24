@@ -14,11 +14,11 @@ import { GetUser } from '../auth/get-user.decorator';
 
 @ApiTags('agents')
 @ApiBearerAuth()
-@Controller('agents')
+@Controller()
 export class AgentsController {
   constructor(private readonly agentsService: AgentsService) {}
 
-  @Get('allAgents')
+  @Get('voices/allVoices')
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Obtener todas las voces disponibles' })
   @ApiResponse({ status: 200, type: [AgentDto] })
@@ -26,7 +26,7 @@ export class AgentsController {
     return this.agentsService.getAllAgents();
   }
 
-  @Post('setAgentConfig')
+  @Post('agents/setAgentConfig')
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Configurar agente del usuario autenticado' })
   @ApiResponse({ status: 200, type: AgentConfigResponseDto })
