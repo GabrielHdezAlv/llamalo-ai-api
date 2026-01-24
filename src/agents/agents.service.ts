@@ -46,44 +46,102 @@ export class AgentsService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const userAgentConfig =
-        (userData?.agent as Record<string, unknown>) || {};
+      const agentsArray = (userData?.agents as Array<Record<string, unknown>>) || [];
+      const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
 
-      // Actualizar solo los campos que cambiaron
+      // Determinar si usar nueva estructura (agents[]) o antigua (agent)
+      const useNewStructure = agentsArray.length > 0 || !legacyAgent || Object.keys(legacyAgent).length === 0;
+      
       let hasChanges = false;
+      const updates: Record<string, unknown> = {};
 
-      if (userAgentConfig.voiceId !== agentConfig.voiceId) {
-        userAgentConfig.voiceId = agentConfig.voiceId;
-        hasChanges = true;
-      }
+      if (useNewStructure) {
+        // Nueva estructura: trabajar con agents[]
+        let firstAgent = agentsArray.length > 0 ? { ...agentsArray[0] } : null;
+        
+        // Si no hay agentes, crear uno nuevo con valores por defecto
+        if (!firstAgent) {
+          firstAgent = {
+            name: agentConfig.name,
+            type: 'inbound', // Valor por defecto
+            language: agentConfig.language.code, // Convertir objeto language a string
+            voiceId: agentConfig.voiceId,
+            firstInteraction: '', // Valor por defecto
+            agentInstruction: '', // Valor por defecto
+            phoneNumbers: { phoneId: 0, countryCode: '', number: '' }, // Valor por defecto
+            label: '', // Valor por defecto
+          };
+          hasChanges = true;
+        } else {
+          // Actualizar campos existentes
+          if (firstAgent.voiceId !== agentConfig.voiceId) {
+            firstAgent.voiceId = agentConfig.voiceId;
+            hasChanges = true;
+          }
+          if (firstAgent.name !== agentConfig.name) {
+            firstAgent.name = agentConfig.name;
+            hasChanges = true;
+          }
+          // Convertir language de objeto a string si es necesario
+          const currentLanguage = typeof firstAgent.language === 'string' 
+            ? firstAgent.language 
+            : (firstAgent.language as Record<string, string>)?.code || '';
+          if (currentLanguage !== agentConfig.language.code) {
+            firstAgent.language = agentConfig.language.code;
+            hasChanges = true;
+          }
+        }
 
-      if (userAgentConfig.name !== agentConfig.name) {
-        userAgentConfig.name = agentConfig.name;
-        hasChanges = true;
-      }
+        if (hasChanges) {
+          // Actualizar o crear el array de agents
+          if (agentsArray.length === 0) {
+            updates.agents = [firstAgent];
+          } else {
+            agentsArray[0] = firstAgent;
+            updates.agents = agentsArray;
+          }
+        }
+      } else {
+        // Estructura antigua: mantener compatibilidad
+        const userAgentConfig = { ...legacyAgent };
 
-      // Comparar objeto language
-      const currentLanguage = userAgentConfig.language as
-        | Record<string, string>
-        | undefined;
-      const newLanguage = agentConfig.language;
+        if (userAgentConfig.voiceId !== agentConfig.voiceId) {
+          userAgentConfig.voiceId = agentConfig.voiceId;
+          hasChanges = true;
+        }
 
-      if (
-        !currentLanguage ||
-        currentLanguage.code !== newLanguage.code ||
-        currentLanguage.name !== newLanguage.name ||
-        currentLanguage.flag !== newLanguage.flag
-      ) {
-        userAgentConfig.language = {
-          flag: newLanguage.flag,
-          name: newLanguage.name,
-          code: newLanguage.code,
-        };
-        hasChanges = true;
+        if (userAgentConfig.name !== agentConfig.name) {
+          userAgentConfig.name = agentConfig.name;
+          hasChanges = true;
+        }
+
+        // Comparar objeto language
+        const currentLanguage = userAgentConfig.language as
+          | Record<string, string>
+          | undefined;
+        const newLanguage = agentConfig.language;
+
+        if (
+          !currentLanguage ||
+          currentLanguage.code !== newLanguage.code ||
+          currentLanguage.name !== newLanguage.name ||
+          currentLanguage.flag !== newLanguage.flag
+        ) {
+          userAgentConfig.language = {
+            flag: newLanguage.flag,
+            name: newLanguage.name,
+            code: newLanguage.code,
+          };
+          hasChanges = true;
+        }
+
+        if (hasChanges) {
+          updates.agent = userAgentConfig;
+        }
       }
 
       if (hasChanges) {
-        await userDocRef.set({ agent: userAgentConfig }, { merge: true });
+        await userDocRef.set(updates, { merge: true });
       }
 
       return {

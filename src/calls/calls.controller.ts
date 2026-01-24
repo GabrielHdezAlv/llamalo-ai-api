@@ -37,13 +37,41 @@ export class CallsController {
       const rawNumber = body.To?.replace('+34', '').replace(/\D/g, '');
       const agentNumber = parseInt(rawNumber || '0', 10);
 
-      console.log('🔍 Buscando agente con twilio.phoneNumber:', agentNumber);
+      console.log('🔍 Buscando agente con número:', agentNumber);
 
-      const agentSnapshot = await firestore
+      // Primero intentar búsqueda con estructura antigua (compatibilidad)
+      let agentSnapshot = await firestore
         .collection('users')
         .where('twilio.phoneNumber', '==', agentNumber)
         .limit(1)
         .get();
+
+      // Si no se encuentra, buscar en la nueva estructura phoneNumbers[]
+      if (agentSnapshot.empty) {
+        console.log('🔍 Buscando en nueva estructura phoneNumbers[]...');
+        const allUsers = await firestore.collection('users').get();
+        
+        for (const userDoc of allUsers.docs) {
+          const userData = userDoc.data();
+          const phoneNumbers = (userData.phoneNumbers as Array<{ phoneId?: number; countryCode?: string; number?: string }>) || [];
+          
+          // Buscar en el array de números
+          const found = phoneNumbers.some((phone) => {
+            const phoneNumStr = phone.number?.replace(/\D/g, '') || '';
+            const phoneNum = parseInt(phoneNumStr, 10);
+            return phoneNum === agentNumber;
+          });
+          
+          if (found) {
+            agentSnapshot = {
+              empty: false,
+              docs: [userDoc],
+              size: 1,
+            } as FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+            break;
+          }
+        }
+      }
 
       if (agentSnapshot.empty) {
         console.log('⚠️ No se encontró ningún agente con ese número.');
@@ -63,10 +91,11 @@ export class CallsController {
       
       // 🔍 Debug: Ver estructura del documento
       console.log(`🔍 [Calls] Estructura del documento para usuario ${userId}:`, {
-        tieneAgent: !!agent.agent,
+        tieneAgent: !!(agent.agent || (agent.agents && Array.isArray(agent.agents) && agent.agents.length > 0)),
         tieneTwilio: !!agent.twilio,
         tieneIntegrations: !!agent.integrations,
-        camposAgent: agent.agent ? Object.keys(agent.agent) : 'no existe',
+        tienePhoneNumbers: !!(agent.phoneNumbers && Array.isArray(agent.phoneNumbers)),
+        camposAgent: agent.agent ? Object.keys(agent.agent) : (agent.agents?.[0] ? Object.keys(agent.agents[0]) : 'no existe'),
       });
       
       const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
@@ -136,8 +165,13 @@ export class CallsController {
         });
       };
 
-      // Obtener datos del agente directamente desde el campo "agent" (users/{userId}/agent)
-      const agentData = (agent?.agent as Record<string, unknown>) || {};
+      // Obtener datos del agente: primero intentar nueva estructura (agents[]), luego antigua (agent)
+      const agentsArray = (agent?.agents as Array<Record<string, unknown>>) || [];
+      const legacyAgent = (agent?.agent as Record<string, unknown>) || {};
+      
+      // Usar primer agente del array si existe, sino usar estructura antigua
+      const agentData = agentsArray.length > 0 ? agentsArray[0] : legacyAgent;
+      
       const agentName =
         typeof agentData.name === 'string'
           ? agentData.name
@@ -156,18 +190,25 @@ export class CallsController {
       }
 
       addStreamParameter('agentName', agentName);
-      addStreamParameter(
-        'greeting',
-        typeof twilioConfig.firstInteraction === 'string'
-          ? twilioConfig.firstInteraction
-          : undefined,
-      );
-      addStreamParameter(
-        'instructions',
-        typeof twilioConfig.agentInstruction === 'string'
-          ? twilioConfig.agentInstruction
-          : undefined,
-      );
+      
+      // Obtener firstInteraction: primero de agentData, luego de twilioConfig (compatibilidad)
+      const firstInteraction = 
+        typeof agentData.firstInteraction === 'string'
+          ? agentData.firstInteraction
+          : typeof twilioConfig.firstInteraction === 'string'
+            ? twilioConfig.firstInteraction
+            : undefined;
+      addStreamParameter('greeting', firstInteraction);
+      
+      // Obtener agentInstruction: primero de agentData, luego de twilioConfig (compatibilidad)
+      const agentInstruction =
+        typeof agentData.agentInstruction === 'string'
+          ? agentData.agentInstruction
+          : typeof twilioConfig.agentInstruction === 'string'
+            ? twilioConfig.agentInstruction
+            : undefined;
+      addStreamParameter('instructions', agentInstruction);
+      
       addStreamParameter(
         'labsId',
         typeof agentData.voiceId === 'string'
@@ -176,13 +217,15 @@ export class CallsController {
             ? agentData.labsId
             : undefined,
       );
-      addStreamParameter(
-        'language',
-        typeof (agentData.language as Record<string, unknown>)?.code ===
-          'string'
-          ? ((agentData.language as Record<string, unknown>).code as string)
-          : undefined,
-      );
+      
+      // Obtener language: puede ser string (nueva estructura) u objeto (antigua)
+      const languageCode =
+        typeof agentData.language === 'string'
+          ? agentData.language
+          : typeof (agentData.language as Record<string, unknown>)?.code === 'string'
+            ? ((agentData.language as Record<string, unknown>).code as string)
+            : undefined;
+      addStreamParameter('language', languageCode);
       addStreamParameter(
         'twilioSid',
         typeof twilioConfig.twilioSid === 'string'

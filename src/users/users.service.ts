@@ -7,16 +7,47 @@ import * as admin from 'firebase-admin';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { getFirestore } from '../firebase/firebase.config';
 
+interface PhoneNumber {
+  phoneId: number;
+  countryCode: string;
+  number: string;
+}
+
+interface Agent {
+  name: string;
+  type: 'outbound' | 'inbound';
+  language: string;
+  voiceId: string;
+  firstInteraction: string;
+  agentInstruction: string;
+  phoneNumbers: PhoneNumber;
+  label: string;
+}
+
 interface UserData {
+  userId?: string;
+  profileImage?: string;
   name?: string;
   lastname?: string;
-  profileImage?: string;
-  enterprise?: string;
-  enterpriseWeb?: string;
+  enterprise?: {
+    name: string;
+    url: string;
+  };
   email?: string;
-  createdAt?: string;
-  twilio?: Record<string, unknown>;
-  agent?: Record<string, unknown>;
+  password?: string;
+  createdAt?: admin.firestore.Timestamp | string;
+  integrations?: {
+    shopify?: {
+      connected: boolean;
+      shopDomain: string;
+    };
+  };
+  twilio?: {
+    twilioSid: string;
+    twilioToken: string;
+  };
+  phoneNumbers?: PhoneNumber[];
+  agents?: Agent[];
 }
 
 export interface UploadFile {
@@ -66,17 +97,25 @@ export class UsersService {
         }
       }
 
+      // Formatear enterprise para compatibilidad con DTO antiguo
+      const enterpriseName = userData?.enterprise?.name || '';
+      const enterpriseUrl = userData?.enterprise?.url || '';
+
       return {
         userId,
         name: userData?.name,
         lastname: userData?.lastname,
         profileImage: userData?.profileImage,
-        enterprise: userData?.enterprise,
-        enterpriseWeb: userData?.enterpriseWeb,
+        enterprise: enterpriseName, // Compatibilidad con DTO antiguo
+        enterpriseWeb: enterpriseUrl, // Compatibilidad con DTO antiguo
         email: userData?.email,
         createdAt: createdAtStr,
         twilio: userData?.twilio,
-        agent: userData?.agent,
+        agent: userData?.agents?.[0] || {}, // Compatibilidad: devolver primer agente como agent
+        // Nuevos campos
+        integrations: userData?.integrations,
+        phoneNumbers: userData?.phoneNumbers || [],
+        agents: userData?.agents || [],
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -99,14 +138,21 @@ export class UsersService {
       }
 
       // 📦 Solo actualizar los campos que se reciban
-      const updates: Record<string, string> = {};
+      const updates: Record<string, unknown> = {};
 
       if (updateDto.name) updates.name = updateDto.name;
       if (updateDto.lastname) updates.lastname = updateDto.lastname;
       if (updateDto.profileImage) updates.profileImage = updateDto.profileImage;
-      if (updateDto.enterprise) updates.enterprise = updateDto.enterprise;
-      if (updateDto.enterpriseWeb)
-        updates.enterpriseWeb = updateDto.enterpriseWeb;
+      
+      // Actualizar enterprise como objeto
+      if (updateDto.enterprise || updateDto.enterpriseWeb) {
+        const currentData = snapshot.data() as UserData;
+        const currentEnterprise = currentData?.enterprise || { name: '', url: '' };
+        updates.enterprise = {
+          name: updateDto.enterprise || currentEnterprise.name,
+          url: updateDto.enterpriseWeb || currentEnterprise.url,
+        };
+      }
 
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
@@ -119,13 +165,17 @@ export class UsersService {
       const updatedSnapshot = await docRef.get();
       const updatedData = updatedSnapshot.data() as UserData;
 
+      // Formatear enterprise para compatibilidad con DTO antiguo
+      const enterpriseName = updatedData?.enterprise?.name || '';
+      const enterpriseUrl = updatedData?.enterprise?.url || '';
+
       return {
         message: 'Perfil actualizado correctamente',
         name: updatedData?.name,
         lastname: updatedData?.lastname,
         profileImage: updatedData?.profileImage,
-        enterprise: updatedData?.enterprise,
-        enterpriseWeb: updatedData?.enterpriseWeb,
+        enterprise: enterpriseName, // Compatibilidad con DTO antiguo
+        enterpriseWeb: enterpriseUrl, // Compatibilidad con DTO antiguo
         email: updatedData?.email,
         createdAt: updatedData?.createdAt,
       };

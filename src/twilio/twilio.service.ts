@@ -26,48 +26,33 @@ export class TwilioService {
 
       let hasChanges = false;
 
-      // Si no existe, crear nueva configuración
+      // Nueva estructura: twilio solo contiene twilioSid y twilioToken
+      // Los otros campos (countryCode, phoneNumber, firstInteraction, agentInstruction)
+      // deberían ir en phoneNumbers[] y agents[] respectivamente
+      const newTwilioConfig: { twilioSid: string; twilioToken: string } = {
+        twilioSid: config.twilioSid,
+        twilioToken: config.twilioToken,
+      };
+
+      // Si no existe o hay cambios en SID/Token, actualizar
       if (!twilioConfig) {
-        twilioConfig = {
-          countryCode: config.countryCode,
-          phoneNumber: config.phoneNumber,
-          twilioSid: config.twilioSid,
-          twilioToken: config.twilioToken,
-          firstInteraction: config.firstInteraction,
-          agentInstruction: config.agentInstruction,
-        };
         hasChanges = true;
       } else {
-        // Verificar cambios
-        if (twilioConfig.countryCode !== config.countryCode) {
-          twilioConfig.countryCode = config.countryCode;
-          hasChanges = true;
-        }
-        if (twilioConfig.phoneNumber !== config.phoneNumber) {
-          twilioConfig.phoneNumber = config.phoneNumber;
-          hasChanges = true;
-        }
-        if (twilioConfig.twilioSid !== config.twilioSid) {
-          twilioConfig.twilioSid = config.twilioSid;
-          hasChanges = true;
-        }
-        if (twilioConfig.twilioToken !== config.twilioToken) {
-          twilioConfig.twilioToken = config.twilioToken;
-          hasChanges = true;
-        }
-        if (twilioConfig.firstInteraction !== config.firstInteraction) {
-          twilioConfig.firstInteraction = config.firstInteraction;
-          hasChanges = true;
-        }
-        if (twilioConfig.agentInstruction !== config.agentInstruction) {
-          twilioConfig.agentInstruction = config.agentInstruction;
+        if (
+          (twilioConfig.twilioSid as string) !== config.twilioSid ||
+          (twilioConfig.twilioToken as string) !== config.twilioToken
+        ) {
           hasChanges = true;
         }
       }
 
-      // Si hay cambios, actualizar
+      // Si hay cambios en twilio, actualizar
       if (hasChanges) {
-        await userDocRef.set({ twilio: twilioConfig }, { merge: true });
+        await userDocRef.set({ twilio: newTwilioConfig }, { merge: true });
+        
+        // TODO: Migrar countryCode y phoneNumber a phoneNumbers[]
+        // TODO: Migrar firstInteraction y agentInstruction a agents[]
+        // Por ahora mantenemos compatibilidad pero estos campos ya no se guardan en twilio
         return {
           message: 'Configuración de Twilio actualizada correctamente.',
         };

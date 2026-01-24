@@ -18,13 +18,13 @@ export class UserProfileResponseDto {
 
   @ApiProperty({
     example: 'Mi Empresa S.A.',
-    description: 'Nombre de la empresa',
+    description: 'Nombre de la empresa (compatibilidad: viene de enterprise.name)',
   })
   enterprise?: string;
 
   @ApiProperty({
     example: 'https://miempresa.com',
-    description: 'Sitio web de la empresa',
+    description: 'Sitio web de la empresa (compatibilidad: viene de enterprise.url)',
   })
   enterpriseWeb?: string;
 
@@ -43,6 +43,37 @@ export class UserProfileResponseDto {
   @ApiProperty({ description: 'Configuración de Twilio' })
   twilio?: Record<string, unknown>;
 
-  @ApiProperty({ description: 'Configuración del agente' })
+  @ApiProperty({ description: 'Configuración del agente (compatibilidad: primer agente del array)' })
   agent?: Record<string, unknown>;
+
+  @ApiProperty({ description: 'Integraciones del usuario' })
+  integrations?: {
+    shopify?: {
+      connected: boolean;
+      shopDomain: string;
+    };
+  };
+
+  @ApiProperty({ description: 'Números de teléfono del usuario' })
+  phoneNumbers?: Array<{
+    phoneId: number;
+    countryCode: string;
+    number: string;
+  }>;
+
+  @ApiProperty({ description: 'Agentes configurados del usuario' })
+  agents?: Array<{
+    name: string;
+    type: 'outbound' | 'inbound';
+    language: string;
+    voiceId: string;
+    firstInteraction: string;
+    agentInstruction: string;
+    phoneNumbers: {
+      phoneId: number;
+      countryCode: string;
+      number: string;
+    };
+    label: string;
+  }>;
 }

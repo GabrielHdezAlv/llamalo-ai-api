@@ -31,7 +31,7 @@ export class UpdateProfileDto {
 
   @ApiProperty({
     example: 'Mi Empresa S.A.',
-    description: 'Nombre de la empresa',
+    description: 'Nombre de la empresa (se actualizará en enterprise.name)',
     required: false,
   })
   @IsOptional()
@@ -40,7 +40,7 @@ export class UpdateProfileDto {
 
   @ApiProperty({
     example: 'https://miempresa.com',
-    description: 'Sitio web de la empresa',
+    description: 'Sitio web de la empresa (se actualizará en enterprise.url)',
     required: false,
   })
   @IsOptional()

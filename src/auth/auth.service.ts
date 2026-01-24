@@ -73,22 +73,35 @@ export class AuthService {
     // 2️⃣ Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3️⃣ Guardar usuario en Firestore
+    // 3️⃣ Guardar usuario en Firestore con nueva estructura
     try {
       const userRef = this.firestore
         .collection('users')
         .doc(firebaseResponse.localId);
       await userRef.set({
+        userId: firebaseResponse.localId,
+        profileImage: '',
         name,
         lastname,
+        enterprise: {
+          name: '',
+          url: '',
+        },
         email,
         password: hashedPassword,
         createdAt: admin.firestore.Timestamp.now(),
-        profileImage: '',
-        enterprise: '',
-        enterpriseWeb: '',
-        twilio: {},
-        agent: {},
+        integrations: {
+          shopify: {
+            connected: false,
+            shopDomain: '',
+          },
+        },
+        twilio: {
+          twilioSid: '',
+          twilioToken: '',
+        },
+        phoneNumbers: [],
+        agents: [],
       });
       console.log(`✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`);
     } catch (error: any) {
