@@ -43,14 +43,6 @@ export class TwilioConfigDto {
   firstInteraction: string;
 
   @ApiProperty({
-    example: 'your_url_to_the_audio',
-    description: 'URL del audio de primera interacción',
-  })
-  @IsNotEmpty()
-  @IsString()
-  firstInteractionUrl: string;
-
-  @ApiProperty({
     example: 'Eres un asistente virtual amigable y profesional.',
     description: 'Instrucciones para el agente',
   })

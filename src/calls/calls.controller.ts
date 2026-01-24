@@ -160,12 +160,6 @@ export class CallsController {
           : undefined,
       );
       addStreamParameter(
-        'greetingUrl',
-        typeof twilioConfig.firstInteractionUrl === 'string'
-          ? twilioConfig.firstInteractionUrl
-          : undefined,
-      );
-      addStreamParameter(
         'instructions',
         typeof twilioConfig.agentInstruction === 'string'
           ? twilioConfig.agentInstruction

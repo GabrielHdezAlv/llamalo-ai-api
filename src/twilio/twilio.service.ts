@@ -34,7 +34,6 @@ export class TwilioService {
           twilioSid: config.twilioSid,
           twilioToken: config.twilioToken,
           firstInteraction: config.firstInteraction,
-          firstInteractionUrl: config.firstInteractionUrl,
           agentInstruction: config.agentInstruction,
         };
         hasChanges = true;
@@ -58,10 +57,6 @@ export class TwilioService {
         }
         if (twilioConfig.firstInteraction !== config.firstInteraction) {
           twilioConfig.firstInteraction = config.firstInteraction;
-          hasChanges = true;
-        }
-        if (twilioConfig.firstInteractionUrl !== config.firstInteractionUrl) {
-          twilioConfig.firstInteractionUrl = config.firstInteractionUrl;
           hasChanges = true;
         }
         if (twilioConfig.agentInstruction !== config.agentInstruction) {
