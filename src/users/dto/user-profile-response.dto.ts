@@ -17,16 +17,13 @@ export class UserProfileResponseDto {
   profileImage?: string;
 
   @ApiProperty({
-    example: 'Mi Empresa S.A.',
-    description: 'Nombre de la empresa (compatibilidad: viene de enterprise.name)',
+    example: { name: 'Mi Empresa S.A.', url: 'https://miempresa.com' },
+    description: 'Información de la empresa',
   })
-  enterprise?: string;
-
-  @ApiProperty({
-    example: 'https://miempresa.com',
-    description: 'Sitio web de la empresa (compatibilidad: viene de enterprise.url)',
-  })
-  enterpriseWeb?: string;
+  enterprise?: {
+    name: string;
+    url: string;
+  };
 
   @ApiProperty({
     example: 'juan.perez@gmail.com',

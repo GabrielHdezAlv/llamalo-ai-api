@@ -30,20 +30,13 @@ export class UpdateProfileDto {
   profileImage?: string;
 
   @ApiProperty({
-    example: 'Mi Empresa S.A.',
-    description: 'Nombre de la empresa (se actualizará en enterprise.name)',
+    example: { name: 'Mi Empresa S.A.', url: 'https://miempresa.com' },
+    description: 'Información de la empresa',
     required: false,
   })
   @IsOptional()
-  @IsString()
-  enterprise?: string;
-
-  @ApiProperty({
-    example: 'https://miempresa.com',
-    description: 'Sitio web de la empresa (se actualizará en enterprise.url)',
-    required: false,
-  })
-  @IsOptional()
-  @IsUrl()
-  enterpriseWeb?: string;
+  enterprise?: {
+    name: string;
+    url: string;
+  };
 }

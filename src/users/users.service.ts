@@ -66,8 +66,10 @@ export type UserProfileResponse = {
   name?: string;
   lastname?: string;
   profileImage?: string;
-  enterprise?: string;
-  enterpriseWeb?: string;
+  enterprise?: {
+    name: string;
+    url: string;
+  };
   email?: string;
   createdAt?: string | null;
   twilio?: {
@@ -174,17 +176,12 @@ export class UsersService {
         }
       }
 
-      // Formatear enterprise para compatibilidad con DTO antiguo
-      const enterpriseName = userData?.enterprise?.name || '';
-      const enterpriseUrl = userData?.enterprise?.url || '';
-
       return {
         userId,
         name: userData?.name,
         lastname: userData?.lastname,
         profileImage: userData?.profileImage,
-        enterprise: enterpriseName, // Compatibilidad con DTO antiguo
-        enterpriseWeb: enterpriseUrl, // Compatibilidad con DTO antiguo
+        enterprise: userData?.enterprise || { name: '', url: '' },
         email: userData?.email,
         createdAt: createdAtStr,
         twilio: userData?.twilio,
@@ -226,13 +223,8 @@ export class UsersService {
       if (updateDto.profileImage) updates.profileImage = updateDto.profileImage;
       
       // Actualizar enterprise como objeto
-      if (updateDto.enterprise || updateDto.enterpriseWeb) {
-        const currentData = snapshot.data() as UserData;
-        const currentEnterprise = currentData?.enterprise || { name: '', url: '' };
-        updates.enterprise = {
-          name: updateDto.enterprise || currentEnterprise.name,
-          url: updateDto.enterpriseWeb || currentEnterprise.url,
-        };
+      if (updateDto.enterprise) {
+        updates.enterprise = updateDto.enterprise;
       }
 
       if (Object.keys(updates).length === 0) {
@@ -246,17 +238,12 @@ export class UsersService {
       const updatedSnapshot = await docRef.get();
       const updatedData = updatedSnapshot.data() as UserData;
 
-      // Formatear enterprise para compatibilidad con DTO antiguo
-      const enterpriseName = updatedData?.enterprise?.name || '';
-      const enterpriseUrl = updatedData?.enterprise?.url || '';
-
       return {
         message: 'Perfil actualizado correctamente',
         name: updatedData?.name,
         lastname: updatedData?.lastname,
         profileImage: updatedData?.profileImage,
-        enterprise: enterpriseName, // Compatibilidad con DTO antiguo
-        enterpriseWeb: enterpriseUrl, // Compatibilidad con DTO antiguo
+        enterprise: updatedData?.enterprise || { name: '', url: '' },
         email: updatedData?.email,
         createdAt: updatedData?.createdAt,
       };
