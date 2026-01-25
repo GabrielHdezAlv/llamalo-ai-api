@@ -152,8 +152,10 @@ export class TwilioService {
         };
       }
 
+      // Devolver solo los campos que el frontend espera
       return {
-        ...twilioConfig,
+        twilioSid: twilioConfig.twilioSid as string,
+        twilioToken: twilioConfig.twilioToken as string,
         inboundMinutes,
       };
     } catch (error) {
