@@ -1,5 +1,22 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+export class AgentParametersDto {
+  @ApiProperty({ example: 0.5, description: 'Estabilidad de la voz' })
+  stability: number;
+
+  @ApiProperty({ example: 0.75, description: 'Similitud de la voz' })
+  similarity: number;
+
+  @ApiProperty({ example: 0.0, description: 'Estilo de la voz' })
+  style: number;
+
+  @ApiProperty({ example: false, description: 'Boost de la voz' })
+  boost: boolean;
+
+  @ApiProperty({ example: 1.0, description: 'Velocidad de la voz' })
+  speed: number;
+}
+
 export class AgentDto {
   @ApiProperty({ example: 'Marta', description: 'Nombre del agente' })
   name: string;
@@ -46,6 +63,25 @@ export class AgentDto {
     description: 'Etiqueta del agente',
   })
   label: string;
+
+  @ApiProperty({
+    example: 'Activo',
+    description: 'Estado del agente',
+    enum: ['Activo', 'Inactivo'],
+  })
+  state: 'Activo' | 'Inactivo';
+
+  @ApiProperty({
+    type: AgentParametersDto,
+    description: 'Parámetros de configuración de la voz',
+  })
+  parameters: AgentParametersDto;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Total de minutos consumidos por el agente',
+  })
+  totalMinutes: number;
 }
 
 export class CreateAgentResponseDto {

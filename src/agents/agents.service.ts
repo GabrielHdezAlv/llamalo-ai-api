@@ -112,6 +112,9 @@ export class AgentsService {
         agentInstruction: agentConfig.agentInstruction,
         phoneNumbers: phoneNumbersWithId,
         label: agentConfig.label,
+        state: agentConfig.state || 'Activo',
+        parameters: agentConfig.parameters,
+        totalMinutes: agentConfig.totalMinutes || 0,
       };
 
       // Si hay estructura antigua, migrar primero
@@ -151,6 +154,15 @@ export class AgentsService {
             agentInstruction: (legacyAgent.agentInstruction as string) || '',
             phoneNumbers: legacyPhoneNumbers,
             label: '',
+            state: 'Activo',
+            parameters: {
+              stability: 0.5,
+              similarity: 0.75,
+              style: 0.0,
+              boost: false,
+              speed: 1.0,
+            },
+            totalMinutes: 0,
           };
 
           agentsArray.push(migratedAgent);
@@ -236,6 +248,15 @@ export class AgentsService {
           agentInstruction: (legacyAgent.agentInstruction as string) || '',
           phoneNumbers: legacyPhoneNumbers,
           label: '',
+          state: 'Activo',
+          parameters: {
+            stability: 0.5,
+            similarity: 0.75,
+            style: 0.0,
+            boost: false,
+            speed: 1.0,
+          },
+          totalMinutes: 0,
         };
 
         return {
@@ -372,6 +393,11 @@ export class AgentsService {
         agentInstruction: agentConfig.agentInstruction,
         phoneNumbers: phoneNumbersWithId,
         label: agentConfig.label,
+        state: agentConfig.state || 'Activo',
+        parameters: agentConfig.parameters,
+        totalMinutes: agentConfig.totalMinutes !== undefined 
+          ? agentConfig.totalMinutes 
+          : (existingAgent.totalMinutes as number) || 0,
       };
 
       // Actualizar en el array
@@ -503,6 +529,9 @@ export class AgentsService {
             agentInstruction: agentConfig.agentInstruction,
             phoneNumbers: phoneNumbersWithId,
             label: agentConfig.label,
+            state: agentConfig.state || 'Activo',
+            parameters: agentConfig.parameters,
+            totalMinutes: agentConfig.totalMinutes || 0,
           };
           hasChanges = true;
         } else {
@@ -533,6 +562,18 @@ export class AgentsService {
           }
           if (firstAgent.label !== agentConfig.label) {
             firstAgent.label = agentConfig.label;
+            hasChanges = true;
+          }
+          if ((firstAgent.state as string) !== agentConfig.state) {
+            firstAgent.state = agentConfig.state || 'Activo';
+            hasChanges = true;
+          }
+          if (JSON.stringify(firstAgent.parameters) !== JSON.stringify(agentConfig.parameters)) {
+            firstAgent.parameters = agentConfig.parameters;
+            hasChanges = true;
+          }
+          if (agentConfig.totalMinutes !== undefined && (firstAgent.totalMinutes as number) !== agentConfig.totalMinutes) {
+            firstAgent.totalMinutes = agentConfig.totalMinutes;
             hasChanges = true;
           }
 
@@ -587,6 +628,9 @@ export class AgentsService {
           agentInstruction: agentConfig.agentInstruction,
           phoneNumbers: phoneNumbersWithId,
           label: agentConfig.label,
+          state: agentConfig.state || 'Activo',
+          parameters: agentConfig.parameters,
+          totalMinutes: agentConfig.totalMinutes || 0,
         };
 
         // Migrar a nueva estructura

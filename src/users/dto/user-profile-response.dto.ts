@@ -75,5 +75,14 @@ export class UserProfileResponseDto {
       number: string;
     };
     label: string;
+    state: 'Activo' | 'Inactivo';
+    parameters: {
+      stability: number;
+      similarity: number;
+      style: number;
+      boost: boolean;
+      speed: number;
+    };
+    totalMinutes: number;
   }>;
 }

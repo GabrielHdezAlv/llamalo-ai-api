@@ -22,6 +22,15 @@ interface Agent {
   agentInstruction: string;
   phoneNumbers: PhoneNumber;
   label: string;
+  state: 'Activo' | 'Inactivo';
+  parameters: {
+    stability: number;
+    similarity: number;
+    style: number;
+    boost: boolean;
+    speed: number;
+  };
+  totalMinutes: number;
 }
 
 interface UserData {
@@ -88,6 +97,15 @@ export type UserProfileResponse = {
       number: string;
     };
     label: string;
+    state: 'Activo' | 'Inactivo';
+    parameters: {
+      stability: number;
+      similarity: number;
+      style: number;
+      boost: boolean;
+      speed: number;
+    };
+    totalMinutes: number;
   }>;
 };
 

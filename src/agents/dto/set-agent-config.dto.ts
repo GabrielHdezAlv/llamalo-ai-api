@@ -6,6 +6,11 @@ import {
   IsObject,
   ValidateNested,
   IsInt,
+  IsNumber,
+  IsBoolean,
+  IsOptional,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -25,6 +30,56 @@ export class PhoneNumberDto {
   @IsNotEmpty()
   @IsInt()
   number: number;
+}
+
+export class AgentParametersDto {
+  @ApiProperty({
+    example: 0.5,
+    description: 'Estabilidad de la voz (0.0 - 1.0)',
+  })
+  @IsNotEmpty()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  stability: number;
+
+  @ApiProperty({
+    example: 0.75,
+    description: 'Similitud de la voz (0.0 - 1.0)',
+  })
+  @IsNotEmpty()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  similarity: number;
+
+  @ApiProperty({
+    example: 0.0,
+    description: 'Estilo de la voz (0.0 - 1.0)',
+  })
+  @IsNotEmpty()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  style: number;
+
+  @ApiProperty({
+    example: false,
+    description: 'Boost de la voz',
+  })
+  @IsNotEmpty()
+  @IsBoolean()
+  boost: boolean;
+
+  @ApiProperty({
+    example: 1.0,
+    description: 'Velocidad de la voz (0.25 - 4.0)',
+  })
+  @IsNotEmpty()
+  @IsNumber()
+  @Min(0.25)
+  @Max(4.0)
+  speed: number;
 }
 
 export class SetAgentConfigDto {
@@ -94,4 +149,33 @@ export class SetAgentConfigDto {
   @IsNotEmpty()
   @IsString()
   label: string;
+
+  @ApiProperty({
+    example: 'Activo',
+    description: 'Estado del agente',
+    enum: ['Activo', 'Inactivo'],
+  })
+  @IsNotEmpty()
+  @IsEnum(['Activo', 'Inactivo'])
+  state: 'Activo' | 'Inactivo';
+
+  @ApiProperty({
+    type: AgentParametersDto,
+    description: 'Parámetros de configuración de la voz',
+  })
+  @IsNotEmpty()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => AgentParametersDto)
+  parameters: AgentParametersDto;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Total de minutos consumidos por el agente',
+    default: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  totalMinutes?: number;
 }
