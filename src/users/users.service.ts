@@ -152,7 +152,7 @@ export class UsersService {
         email: userData?.email,
         createdAt: createdAtStr,
         twilio: userData?.twilio,
-        agent: userData?.agents?.[0] || {}, // Compatibilidad: devolver primer agente como agent
+        agent: (userData?.agents?.[0] || {}) as Record<string, unknown>, // Compatibilidad: devolver primer agente como agent
         // Nuevos campos
         integrations: userData?.integrations,
         phoneNumbers: userData?.phoneNumbers || [],
