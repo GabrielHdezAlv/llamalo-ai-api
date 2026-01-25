@@ -11,6 +11,36 @@ import { getFirestore } from '../firebase/firebase.config';
 export class TwilioService {
   private firestore = getFirestore();
 
+  // 🔒 Verificar si twilioSid o twilioToken están en uso por otro usuario
+  private async checkTwilioCredentialsInUse(
+    userId: string,
+    twilioSid: string,
+    twilioToken: string,
+  ): Promise<void> {
+    // Obtener todos los usuarios
+    const allUsersSnapshot = await this.firestore.collection('users').get();
+
+    for (const userDoc of allUsersSnapshot.docs) {
+      // Ignorar el usuario actual
+      if (userDoc.id === userId) {
+        continue;
+      }
+
+      const userData = userDoc.data() as Record<string, unknown>;
+      const userTwilioConfig = (userData?.twilio as Record<string, unknown>) || {};
+
+      const existingSid = userTwilioConfig.twilioSid as string | undefined;
+      const existingToken = userTwilioConfig.twilioToken as string | undefined;
+
+      // Verificar si alguno de los dos parámetros está en uso
+      if (existingSid === twilioSid || existingToken === twilioToken) {
+        throw new BadRequestException(
+          'Error: No se han podido asignar estos datos de configuración de Twilio, para más información contacte con nuestro equipo de soporte',
+        );
+      }
+    }
+  }
+
   // ✅ Configurar Twilio
   async setTwilioConfig(userId: string, config: TwilioConfigDto) {
     try {
@@ -23,6 +53,13 @@ export class TwilioService {
 
       const userData = userSnapshot.data() as Record<string, unknown>;
       let twilioConfig = (userData?.twilio as Record<string, unknown>) || null;
+
+      // Validar que los parámetros no estén en uso por otro usuario
+      await this.checkTwilioCredentialsInUse(
+        userId,
+        config.twilioSid,
+        config.twilioToken,
+      );
 
       let hasChanges = false;
 
