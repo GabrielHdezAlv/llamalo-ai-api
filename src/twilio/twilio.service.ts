@@ -229,4 +229,88 @@ export class TwilioService {
       return false;
     }
   }
+
+  // ✅ Verificar si un número de teléfono está en la cuenta de Twilio del usuario
+  async validatePhoneNumber(userId: string, phoneNumber: string) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const twilioConfig = userData?.twilio as Record<string, unknown>;
+
+      if (!twilioConfig) {
+        throw new NotFoundException(
+          'Configuración de Twilio no encontrada para el usuario.',
+        );
+      }
+
+      const sid = twilioConfig.twilioSid as string;
+      const token = twilioConfig.twilioToken as string;
+
+      if (!sid || !token) {
+        throw new BadRequestException(
+          'Credenciales de Twilio no configuradas correctamente.',
+        );
+      }
+
+      // Normalizar el número de teléfono (eliminar espacios, guiones, etc.)
+      const normalizedPhone = phoneNumber.replace(/\s|-|\(|\)/g, '');
+
+      // Obtener todos los números de teléfono de la cuenta de Twilio
+      const auth = Buffer.from(`${sid}:${token}`).toString('base64');
+      let allPhoneNumbers: string[] = [];
+      let nextPageUri: string | null = null;
+
+      do {
+        const url = nextPageUri
+          ? `https://api.twilio.com${nextPageUri}`
+          : `https://api.twilio.com/2010-04-01/Accounts/${sid}/IncomingPhoneNumbers.json`;
+
+        const response = await axios.get<{
+          incoming_phone_numbers: Array<{
+            phone_number: string;
+          }>;
+          next_page_uri: string | null;
+        }>(url, {
+          headers: {
+            Authorization: `Basic ${auth}`,
+          },
+        });
+
+        const phoneNumbers = response.data.incoming_phone_numbers.map(
+          (phone) => phone.phone_number.replace(/\s|-|\(|\)/g, ''),
+        );
+        allPhoneNumbers = allPhoneNumbers.concat(phoneNumbers);
+        nextPageUri = response.data.next_page_uri;
+      } while (nextPageUri);
+
+      // Verificar si el número está en la lista
+      const isNumberFound = allPhoneNumbers.some(
+        (twilioPhone) => twilioPhone === normalizedPhone,
+      );
+
+      if (!isNumberFound) {
+        throw new BadRequestException('Número no disponible');
+      }
+
+      return {
+        message: 'Número verificado correctamente',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al validar el número de teléfono: ${(error as Error).message}`,
+      );
+    }
+  }
 }
