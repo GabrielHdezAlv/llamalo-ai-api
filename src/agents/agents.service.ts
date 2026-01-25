@@ -48,15 +48,58 @@ export class AgentsService {
       const agentsArray =
         (userData?.agents as Array<Record<string, unknown>>) || [];
       const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
+      const phoneNumbersArray =
+        (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
 
-      // Generar phoneId
-      const phoneId = Date.now();
+      // Preparar número para validación
+      const newCountryCode = agentConfig.phoneNumbers.countryCode;
+      const newNumber = agentConfig.phoneNumbers.number.toString();
+
+      // Validar que el número no esté en uso por otro agente
+      const numberInUse = agentsArray.some((agent) => {
+        const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
+        if (!agentPhone) return false;
+        return (
+          (agentPhone.countryCode as string) === newCountryCode &&
+          (agentPhone.number as string) === newNumber
+        );
+      });
+
+      if (numberInUse) {
+        throw new BadRequestException(
+          `El número de teléfono ${newCountryCode} ${newNumber} ya está en uso por otro agente.`,
+        );
+      }
+
+      // Verificar si el número ya existe en phoneNumbers[]
+      const existingPhoneIndex = phoneNumbersArray.findIndex(
+        (phone) =>
+          (phone.countryCode as string) === newCountryCode &&
+          (phone.number as string) === newNumber,
+      );
+
+      let phoneId: number;
+      if (existingPhoneIndex !== -1) {
+        // Si el número existe en phoneNumbers[] pero no está en uso, reutilizar phoneId
+        const existingPhone = phoneNumbersArray[existingPhoneIndex] as {
+          phoneId: number;
+        };
+        phoneId = existingPhone.phoneId;
+      } else {
+        // Generar nuevo phoneId y agregar a phoneNumbers[]
+        phoneId = Date.now();
+        phoneNumbersArray.push({
+          phoneId: phoneId,
+          countryCode: newCountryCode,
+          number: newNumber,
+        });
+      }
 
       // Preparar phoneNumbers con phoneId
       const phoneNumbersWithId = {
         phoneId: phoneId,
-        countryCode: agentConfig.phoneNumbers.countryCode,
-        number: agentConfig.phoneNumbers.number.toString(),
+        countryCode: newCountryCode,
+        number: newNumber,
       };
 
       // Crear nuevo agente
@@ -74,37 +117,68 @@ export class AgentsService {
       // Si hay estructura antigua, migrar primero
       if (legacyAgent && Object.keys(legacyAgent).length > 0) {
         const legacyPhoneId = Date.now() - 1; // Un timestamp anterior
-        const legacyPhoneNumbers = {
-          phoneId: legacyPhoneId,
-          countryCode: (legacyAgent.countryCode as string) || '',
-          number: (legacyAgent.phoneNumber as number)?.toString() || '',
-        };
+        const legacyCountryCode = (legacyAgent.countryCode as string) || '';
+        const legacyNumber = (legacyAgent.phoneNumber as number)?.toString() || '';
 
-        const migratedAgent = {
-          name: (legacyAgent.name as string) || '',
-          type: 'inbound', // Valor por defecto
-          language:
-            typeof legacyAgent.language === 'string'
-              ? legacyAgent.language
-              : (legacyAgent.language as Record<string, string>)?.code || 'es',
-          voiceId: (legacyAgent.voiceId as string) ||
-            (legacyAgent.labsId as string) ||
-            '',
-          firstInteraction: (legacyAgent.firstInteraction as string) || '',
-          agentInstruction: (legacyAgent.agentInstruction as string) || '',
-          phoneNumbers: legacyPhoneNumbers,
-          label: '',
-        };
+        // Validar que el número legacy no esté en uso
+        const legacyNumberInUse = agentsArray.some((agent) => {
+          const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
+          if (!agentPhone) return false;
+          return (
+            (agentPhone.countryCode as string) === legacyCountryCode &&
+            (agentPhone.number as string) === legacyNumber
+          );
+        });
 
-        agentsArray.push(migratedAgent);
+        if (!legacyNumberInUse && legacyNumber) {
+          const legacyPhoneNumbers = {
+            phoneId: legacyPhoneId,
+            countryCode: legacyCountryCode,
+            number: legacyNumber,
+          };
+
+          const migratedAgent = {
+            name: (legacyAgent.name as string) || '',
+            type: 'inbound', // Valor por defecto
+            language:
+              typeof legacyAgent.language === 'string'
+                ? legacyAgent.language
+                : (legacyAgent.language as Record<string, string>)?.code || 'es',
+            voiceId: (legacyAgent.voiceId as string) ||
+              (legacyAgent.labsId as string) ||
+              '',
+            firstInteraction: (legacyAgent.firstInteraction as string) || '',
+            agentInstruction: (legacyAgent.agentInstruction as string) || '',
+            phoneNumbers: legacyPhoneNumbers,
+            label: '',
+          };
+
+          agentsArray.push(migratedAgent);
+
+          // Agregar número legacy a phoneNumbers[] si no existe
+          const legacyExists = phoneNumbersArray.some(
+            (phone) =>
+              (phone.countryCode as string) === legacyCountryCode &&
+              (phone.number as string) === legacyNumber,
+          );
+          if (!legacyExists) {
+            phoneNumbersArray.push(legacyPhoneNumbers);
+          }
+        }
       }
 
       // Agregar el nuevo agente al array
       agentsArray.push(newAgent);
       const newIndex = agentsArray.length - 1;
 
-      // Guardar en Firestore
-      await userDocRef.set({ agents: agentsArray }, { merge: true });
+      // Guardar ambos arrays en Firestore
+      await userDocRef.set(
+        {
+          agents: agentsArray,
+          phoneNumbers: phoneNumbersArray,
+        },
+        { merge: true },
+      );
 
       return {
         message: 'Agente creado correctamente.',
@@ -202,6 +276,8 @@ export class AgentsService {
       const userData = userSnapshot.data() as Record<string, unknown>;
       const agentsArray =
         (userData?.agents as Array<Record<string, unknown>>) || [];
+      const phoneNumbersArray =
+        (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
 
       // Validar que el índice existe
       if (index < 0 || index >= agentsArray.length) {
@@ -212,25 +288,78 @@ export class AgentsService {
 
       // Obtener agente existente
       const existingAgent = { ...agentsArray[index] };
+      const existingPhone = existingAgent.phoneNumbers as Record<
+        string,
+        unknown
+      > | undefined;
+      const existingCountryCode = existingPhone?.countryCode as string;
+      const existingNumber = existingPhone?.number as string;
 
-      // Mantener phoneId existente o generar uno nuevo si no existe
-      let phoneId = 0;
-      if (existingAgent.phoneNumbers) {
-        const existingPhone = existingAgent.phoneNumbers as Record<
-          string,
-          unknown
-        >;
-        phoneId = (existingPhone.phoneId as number) || 0;
+      // Preparar nuevo número
+      const newCountryCode = agentConfig.phoneNumbers.countryCode;
+      const newNumber = agentConfig.phoneNumbers.number.toString();
+
+      // Verificar si el número está cambiando
+      const numberChanged =
+        existingCountryCode !== newCountryCode ||
+        existingNumber !== newNumber;
+
+      if (numberChanged) {
+        // Validar que el nuevo número no esté en uso por otro agente
+        const numberInUse = agentsArray.some((agent, idx) => {
+          // Ignorar el agente que se está editando
+          if (idx === index) return false;
+
+          const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
+          if (!agentPhone) return false;
+          return (
+            (agentPhone.countryCode as string) === newCountryCode &&
+            (agentPhone.number as string) === newNumber
+          );
+        });
+
+        if (numberInUse) {
+          throw new BadRequestException(
+            `El número de teléfono ${newCountryCode} ${newNumber} ya está en uso por otro agente.`,
+          );
+        }
       }
-      if (phoneId === 0) {
-        phoneId = Date.now();
+
+      // Determinar phoneId
+      let phoneId: number;
+      if (numberChanged) {
+        // Si cambió el número, verificar si existe en phoneNumbers[]
+        const existingPhoneIndex = phoneNumbersArray.findIndex(
+          (phone) =>
+            (phone.countryCode as string) === newCountryCode &&
+            (phone.number as string) === newNumber,
+        );
+
+        if (existingPhoneIndex !== -1) {
+          // Reutilizar phoneId existente
+          const existingPhoneInArray = phoneNumbersArray[
+            existingPhoneIndex
+          ] as { phoneId: number };
+          phoneId = existingPhoneInArray.phoneId;
+        } else {
+          // Generar nuevo phoneId y agregar a phoneNumbers[]
+          phoneId = Date.now();
+          phoneNumbersArray.push({
+            phoneId: phoneId,
+            countryCode: newCountryCode,
+            number: newNumber,
+          });
+        }
+      } else {
+        // Si no cambió el número, mantener el phoneId existente
+        phoneId = (existingPhone?.phoneId as number) || Date.now();
       }
 
       // Preparar phoneNumbers con phoneId
       const phoneNumbersWithId = {
         phoneId: phoneId,
-        countryCode: agentConfig.phoneNumbers.countryCode,
-        number: agentConfig.phoneNumbers.number.toString(),
+        countryCode: newCountryCode,
+        number: newNumber,
       };
 
       // Actualizar agente
@@ -248,8 +377,14 @@ export class AgentsService {
       // Actualizar en el array
       agentsArray[index] = updatedAgent;
 
-      // Guardar en Firestore
-      await userDocRef.set({ agents: agentsArray }, { merge: true });
+      // Guardar ambos arrays en Firestore
+      await userDocRef.set(
+        {
+          agents: agentsArray,
+          phoneNumbers: phoneNumbersArray,
+        },
+        { merge: true },
+      );
 
       return {
         message: 'Agente actualizado correctamente.',
