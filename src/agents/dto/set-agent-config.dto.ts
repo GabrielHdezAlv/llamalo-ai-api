@@ -168,14 +168,4 @@ export class SetAgentConfigDto {
   @ValidateNested()
   @Type(() => AgentParametersDto)
   parameters: AgentParametersDto;
-
-  @ApiProperty({
-    example: 0,
-    description: 'Total de minutos consumidos por el agente',
-    default: 0,
-  })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  totalMinutes?: number;
 }

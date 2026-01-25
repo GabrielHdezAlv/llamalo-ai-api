@@ -114,7 +114,7 @@ export class AgentsService {
         label: agentConfig.label,
         state: agentConfig.state || 'Activo',
         parameters: agentConfig.parameters,
-        totalMinutes: agentConfig.totalMinutes || 0,
+        totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
       };
 
       // Si hay estructura antigua, migrar primero
@@ -395,9 +395,7 @@ export class AgentsService {
         label: agentConfig.label,
         state: agentConfig.state || 'Activo',
         parameters: agentConfig.parameters,
-        totalMinutes: agentConfig.totalMinutes !== undefined 
-          ? agentConfig.totalMinutes 
-          : (existingAgent.totalMinutes as number) || 0,
+        totalMinutes: (existingAgent.totalMinutes as number) || 0, // Mantener valor existente, no se acepta del request
       };
 
       // Actualizar en el array
@@ -531,7 +529,7 @@ export class AgentsService {
             label: agentConfig.label,
             state: agentConfig.state || 'Activo',
             parameters: agentConfig.parameters,
-            totalMinutes: agentConfig.totalMinutes || 0,
+            totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
           };
           hasChanges = true;
         } else {
@@ -572,10 +570,7 @@ export class AgentsService {
             firstAgent.parameters = agentConfig.parameters;
             hasChanges = true;
           }
-          if (agentConfig.totalMinutes !== undefined && (firstAgent.totalMinutes as number) !== agentConfig.totalMinutes) {
-            firstAgent.totalMinutes = agentConfig.totalMinutes;
-            hasChanges = true;
-          }
+          // totalMinutes no se actualiza desde el request, se mantiene el valor existente
 
           // Actualizar phoneNumbers (mantener phoneId existente si es el mismo número)
           const existingPhone = firstAgent.phoneNumbers as Record<string, unknown>;
@@ -630,7 +625,7 @@ export class AgentsService {
           label: agentConfig.label,
           state: agentConfig.state || 'Activo',
           parameters: agentConfig.parameters,
-          totalMinutes: agentConfig.totalMinutes || 0,
+          totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
         };
 
         // Migrar a nueva estructura
