@@ -1,17 +1,33 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, ValidateNested } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsEnum,
+  IsObject,
+  ValidateNested,
+  IsInt,
+} from 'class-validator';
 import { Type } from 'class-transformer';
-import { LanguageConfigDto } from './language-config.dto';
 
-export class SetAgentConfigDto {
+export class PhoneNumberDto {
   @ApiProperty({
-    example: 'gD1IexrzCvsXPHUuT0s3',
-    description: 'ID del modelo de voz en ElevenLabs',
+    example: '+34',
+    description: 'Código de país',
   })
   @IsNotEmpty()
   @IsString()
-  voiceId: string;
+  countryCode: string;
 
+  @ApiProperty({
+    example: 654316415,
+    description: 'Número de teléfono',
+  })
+  @IsNotEmpty()
+  @IsInt()
+  number: number;
+}
+
+export class SetAgentConfigDto {
   @ApiProperty({
     example: 'Marta',
     description: 'Nombre del agente',
@@ -21,10 +37,61 @@ export class SetAgentConfigDto {
   name: string;
 
   @ApiProperty({
-    type: LanguageConfigDto,
-    description: 'Configuración del idioma del agente',
+    example: 'es',
+    description: 'Código del idioma (solo siglas, ej: "es", "en", "fr")',
   })
+  @IsNotEmpty()
+  @IsString()
+  language: string;
+
+  @ApiProperty({
+    example: 'inbound',
+    description: 'Tipo de agente',
+    enum: ['outbound', 'inbound'],
+  })
+  @IsNotEmpty()
+  @IsEnum(['outbound', 'inbound'])
+  type: 'outbound' | 'inbound';
+
+  @ApiProperty({
+    example: 'gD1IexrzCvsXPHUuT0s3',
+    description: 'ID del modelo de voz en ElevenLabs',
+  })
+  @IsNotEmpty()
+  @IsString()
+  voiceId: string;
+
+  @ApiProperty({
+    example: 'Hola, bienvenido a LlamaloIA. ¿En qué puedo ayudarte?',
+    description: 'Texto de la primera interacción',
+  })
+  @IsNotEmpty()
+  @IsString()
+  firstInteraction: string;
+
+  @ApiProperty({
+    example: 'Eres un asistente virtual amigable y profesional.',
+    description: 'Instrucciones para el agente',
+  })
+  @IsNotEmpty()
+  @IsString()
+  agentInstruction: string;
+
+  @ApiProperty({
+    type: PhoneNumberDto,
+    description: 'Número de teléfono asociado al agente',
+  })
+  @IsNotEmpty()
+  @IsObject()
   @ValidateNested()
-  @Type(() => LanguageConfigDto)
-  language: LanguageConfigDto;
+  @Type(() => PhoneNumberDto)
+  phoneNumbers: PhoneNumberDto;
+
+  @ApiProperty({
+    example: 'Agente principal de atención al cliente',
+    description: 'Etiqueta o descripción del agente',
+  })
+  @IsNotEmpty()
+  @IsString()
+  label: string;
 }

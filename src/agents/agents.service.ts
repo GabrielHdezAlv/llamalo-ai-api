@@ -50,44 +50,97 @@ export class AgentsService {
       const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
 
       // Determinar si usar nueva estructura (agents[]) o antigua (agent)
-      const useNewStructure = agentsArray.length > 0 || !legacyAgent || Object.keys(legacyAgent).length === 0;
-      
+      const useNewStructure =
+        agentsArray.length > 0 ||
+        !legacyAgent ||
+        Object.keys(legacyAgent).length === 0;
+
       let hasChanges = false;
       const updates: Record<string, unknown> = {};
 
       if (useNewStructure) {
         // Nueva estructura: trabajar con agents[]
         let firstAgent = agentsArray.length > 0 ? { ...agentsArray[0] } : null;
-        
-        // Si no hay agentes, crear uno nuevo con valores por defecto
+
+        // Generar phoneId si no existe
+        let phoneId = 0;
+        if (firstAgent?.phoneNumbers) {
+          const existingPhone = firstAgent.phoneNumbers as Record<string, unknown>;
+          phoneId = (existingPhone.phoneId as number) || 0;
+        }
+        // Si no hay phoneId, generar uno nuevo basado en timestamp
+        if (phoneId === 0) {
+          phoneId = Date.now();
+        }
+
+        // Preparar phoneNumbers con phoneId
+        const phoneNumbersWithId = {
+          phoneId: phoneId,
+          countryCode: agentConfig.phoneNumbers.countryCode,
+          number: agentConfig.phoneNumbers.number.toString(), // Convertir a string para Firestore
+        };
+
+        // Si no hay agentes, crear uno nuevo
         if (!firstAgent) {
           firstAgent = {
             name: agentConfig.name,
-            type: 'inbound', // Valor por defecto
-            language: agentConfig.language.code, // Convertir objeto language a string
+            type: agentConfig.type,
+            language: agentConfig.language,
             voiceId: agentConfig.voiceId,
-            firstInteraction: '', // Valor por defecto
-            agentInstruction: '', // Valor por defecto
-            phoneNumbers: { phoneId: 0, countryCode: '', number: '' }, // Valor por defecto
-            label: '', // Valor por defecto
+            firstInteraction: agentConfig.firstInteraction,
+            agentInstruction: agentConfig.agentInstruction,
+            phoneNumbers: phoneNumbersWithId,
+            label: agentConfig.label,
           };
           hasChanges = true;
         } else {
           // Actualizar campos existentes
-          if (firstAgent.voiceId !== agentConfig.voiceId) {
-            firstAgent.voiceId = agentConfig.voiceId;
-            hasChanges = true;
-          }
           if (firstAgent.name !== agentConfig.name) {
             firstAgent.name = agentConfig.name;
             hasChanges = true;
           }
-          // Convertir language de objeto a string si es necesario
-          const currentLanguage = typeof firstAgent.language === 'string' 
-            ? firstAgent.language 
-            : (firstAgent.language as Record<string, string>)?.code || '';
-          if (currentLanguage !== agentConfig.language.code) {
-            firstAgent.language = agentConfig.language.code;
+          if (firstAgent.type !== agentConfig.type) {
+            firstAgent.type = agentConfig.type;
+            hasChanges = true;
+          }
+          if (firstAgent.language !== agentConfig.language) {
+            firstAgent.language = agentConfig.language;
+            hasChanges = true;
+          }
+          if (firstAgent.voiceId !== agentConfig.voiceId) {
+            firstAgent.voiceId = agentConfig.voiceId;
+            hasChanges = true;
+          }
+          if (firstAgent.firstInteraction !== agentConfig.firstInteraction) {
+            firstAgent.firstInteraction = agentConfig.firstInteraction;
+            hasChanges = true;
+          }
+          if (firstAgent.agentInstruction !== agentConfig.agentInstruction) {
+            firstAgent.agentInstruction = agentConfig.agentInstruction;
+            hasChanges = true;
+          }
+          if (firstAgent.label !== agentConfig.label) {
+            firstAgent.label = agentConfig.label;
+            hasChanges = true;
+          }
+
+          // Actualizar phoneNumbers (mantener phoneId existente si es el mismo número)
+          const existingPhone = firstAgent.phoneNumbers as Record<string, unknown>;
+          const existingCountryCode = existingPhone?.countryCode as string;
+          const existingNumber = existingPhone?.number as string;
+          const newCountryCode = agentConfig.phoneNumbers.countryCode;
+          const newNumber = agentConfig.phoneNumbers.number.toString();
+
+          if (
+            existingCountryCode !== newCountryCode ||
+            existingNumber !== newNumber
+          ) {
+            // Si cambia el número, mantener el phoneId existente o generar uno nuevo
+            firstAgent.phoneNumbers = {
+              phoneId: phoneId,
+              countryCode: newCountryCode,
+              number: newNumber,
+            };
             hasChanges = true;
           }
         }
@@ -102,42 +155,31 @@ export class AgentsService {
           }
         }
       } else {
-        // Estructura antigua: mantener compatibilidad
-        const userAgentConfig = { ...legacyAgent };
+        // Estructura antigua: mantener compatibilidad pero migrar a nueva estructura
+        // Generar phoneId
+        const phoneId = Date.now();
 
-        if (userAgentConfig.voiceId !== agentConfig.voiceId) {
-          userAgentConfig.voiceId = agentConfig.voiceId;
-          hasChanges = true;
-        }
+        const phoneNumbersWithId = {
+          phoneId: phoneId,
+          countryCode: agentConfig.phoneNumbers.countryCode,
+          number: agentConfig.phoneNumbers.number.toString(),
+        };
 
-        if (userAgentConfig.name !== agentConfig.name) {
-          userAgentConfig.name = agentConfig.name;
-          hasChanges = true;
-        }
+        // Crear nuevo agente con estructura completa
+        const newAgent = {
+          name: agentConfig.name,
+          type: agentConfig.type,
+          language: agentConfig.language,
+          voiceId: agentConfig.voiceId,
+          firstInteraction: agentConfig.firstInteraction,
+          agentInstruction: agentConfig.agentInstruction,
+          phoneNumbers: phoneNumbersWithId,
+          label: agentConfig.label,
+        };
 
-        // Comparar objeto language
-        const currentLanguage = userAgentConfig.language as
-          | Record<string, string>
-          | undefined;
-        const newLanguage = agentConfig.language;
-
-        if (
-          !currentLanguage ||
-          currentLanguage.code !== newLanguage.code ||
-          currentLanguage.name !== newLanguage.name ||
-          currentLanguage.flag !== newLanguage.flag
-        ) {
-          userAgentConfig.language = {
-            flag: newLanguage.flag,
-            name: newLanguage.name,
-            code: newLanguage.code,
-          };
-          hasChanges = true;
-        }
-
-        if (hasChanges) {
-          updates.agent = userAgentConfig;
-        }
+        // Migrar a nueva estructura
+        updates.agents = [newAgent];
+        hasChanges = true;
       }
 
       if (hasChanges) {
