@@ -59,6 +59,8 @@ export class UserProfileResponseDto {
     phoneId: number;
     countryCode: string;
     number: string;
+    state: 'Activo' | 'Inactivo';
+    importedBy: string;
   }>;
 
   @ApiProperty({ description: 'Agentes configurados del usuario' })

@@ -10,6 +10,38 @@ import { getFirestore } from '../firebase/firebase.config';
 export class AgentsService {
   private firestore = getFirestore();
 
+  // Helper para calcular el estado de un phoneNumber basado en si algún agente lo usa
+  private calculatePhoneNumberState(
+    phoneId: number,
+    agents: Array<Record<string, unknown>>,
+  ): 'Activo' | 'Inactivo' {
+    if (!agents || agents.length === 0) {
+      return 'Inactivo';
+    }
+    const isUsed = agents.some((agent) => {
+      const agentPhone = agent.phoneNumbers as
+        | Record<string, unknown>
+        | undefined;
+      return agentPhone && (agentPhone.phoneId as number) === phoneId;
+    });
+    return isUsed ? 'Activo' : 'Inactivo';
+  }
+
+  // Helper para actualizar el estado de todos los phoneNumbers
+  private updatePhoneNumbersState(
+    phoneNumbersArray: Array<Record<string, unknown>>,
+    agentsArray: Array<Record<string, unknown>>,
+  ): Array<Record<string, unknown>> {
+    return phoneNumbersArray.map((phone) => ({
+      ...phone,
+      state: this.calculatePhoneNumberState(
+        phone.phoneId as number,
+        agentsArray,
+      ),
+      importedBy: phone.importedBy || 'Twilio',
+    }));
+  }
+
   // ✅ Obtener todas las voces disponibles
   async getAllAgents() {
     try {
@@ -92,6 +124,8 @@ export class AgentsService {
           phoneId: phoneId,
           countryCode: newCountryCode,
           number: newNumber,
+          state: 'Activo', // Será activo porque se está usando en el nuevo agente
+          importedBy: 'Twilio',
         });
       }
 
@@ -138,6 +172,8 @@ export class AgentsService {
             phoneId: legacyPhoneId,
             countryCode: legacyCountryCode,
             number: legacyNumber,
+            state: 'Activo', // Será activo porque se está usando en el agente migrado
+            importedBy: 'Twilio',
           };
 
           const migratedAgent = {
@@ -183,11 +219,17 @@ export class AgentsService {
       agentsArray.push(newAgent);
       const newIndex = agentsArray.length - 1;
 
+      // Actualizar el estado de todos los phoneNumbers basado en los agentes
+      const updatedPhoneNumbers = this.updatePhoneNumbersState(
+        phoneNumbersArray,
+        agentsArray,
+      );
+
       // Guardar ambos arrays en Firestore
       await userDocRef.set(
         {
           agents: agentsArray,
-          phoneNumbers: phoneNumbersArray,
+          phoneNumbers: updatedPhoneNumbers,
         },
         { merge: true },
       );
@@ -232,6 +274,8 @@ export class AgentsService {
           phoneId: legacyPhoneId,
           countryCode: (legacyAgent.countryCode as string) || '',
           number: (legacyAgent.phoneNumber as number)?.toString() || '',
+          state: 'Activo' as const, // Será activo porque se está usando en el agente legacy
+          importedBy: 'Twilio',
         };
 
         const migratedAgent = {
@@ -369,6 +413,8 @@ export class AgentsService {
             phoneId: phoneId,
             countryCode: newCountryCode,
             number: newNumber,
+            state: 'Activo', // Será activo porque se está usando en el agente actualizado
+            importedBy: 'Twilio',
           });
         }
       } else {
@@ -401,11 +447,17 @@ export class AgentsService {
       // Actualizar en el array
       agentsArray[index] = updatedAgent;
 
+      // Actualizar el estado de todos los phoneNumbers basado en los agentes
+      const updatedPhoneNumbers = this.updatePhoneNumbersState(
+        phoneNumbersArray,
+        agentsArray,
+      );
+
       // Guardar ambos arrays en Firestore
       await userDocRef.set(
         {
           agents: agentsArray,
-          phoneNumbers: phoneNumbersArray,
+          phoneNumbers: updatedPhoneNumbers,
         },
         { merge: true },
       );
@@ -451,8 +503,24 @@ export class AgentsService {
       // Eliminar agente del array
       agentsArray.splice(index, 1);
 
+      // Obtener phoneNumbers para actualizar su estado
+      const phoneNumbersArray =
+        (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
+
+      // Actualizar el estado de todos los phoneNumbers basado en los agentes restantes
+      const updatedPhoneNumbers = this.updatePhoneNumbersState(
+        phoneNumbersArray,
+        agentsArray,
+      );
+
       // Guardar en Firestore
-      await userDocRef.set({ agents: agentsArray }, { merge: true });
+      await userDocRef.set(
+        {
+          agents: agentsArray,
+          phoneNumbers: updatedPhoneNumbers,
+        },
+        { merge: true },
+      );
 
       return {
         message: 'Agente eliminado correctamente.',
@@ -601,6 +669,17 @@ export class AgentsService {
             agentsArray[0] = firstAgent;
             updates.agents = agentsArray;
           }
+
+          // Actualizar el estado de todos los phoneNumbers basado en los agentes
+          const phoneNumbersArray =
+            (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
+          const finalAgentsArray =
+            agentsArray.length === 0 ? [firstAgent] : agentsArray;
+          const updatedPhoneNumbers = this.updatePhoneNumbersState(
+            phoneNumbersArray,
+            finalAgentsArray,
+          );
+          updates.phoneNumbers = updatedPhoneNumbers;
         }
       } else {
         // Estructura antigua: mantener compatibilidad pero migrar a nueva estructura
@@ -634,6 +713,32 @@ export class AgentsService {
       }
 
       if (hasChanges) {
+        // Si se está usando estructura antigua, también actualizar phoneNumbers
+        if (!useNewStructure && updates.agents) {
+          const phoneNumbersArray =
+            (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
+          const newAgentsArray = updates.agents as Array<Record<string, unknown>>;
+          
+          // Asegurar que el phoneNumber tenga los campos necesarios
+          const phoneId = (updates.agents[0] as Record<string, unknown>).phoneNumbers as Record<string, unknown>;
+          const phoneIdValue = (phoneId.phoneId as number);
+          if (phoneIdValue && !phoneNumbersArray.some(p => (p.phoneId as number) === phoneIdValue)) {
+            phoneNumbersArray.push({
+              phoneId: phoneIdValue,
+              countryCode: phoneId.countryCode as string,
+              number: phoneId.number as string,
+              state: 'Activo' as const,
+              importedBy: 'Twilio',
+            });
+          }
+          
+          const updatedPhoneNumbers = this.updatePhoneNumbersState(
+            phoneNumbersArray,
+            newAgentsArray,
+          );
+          updates.phoneNumbers = updatedPhoneNumbers;
+        }
+        
         await userDocRef.set(updates, { merge: true });
       }
 

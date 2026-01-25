@@ -11,6 +11,8 @@ interface PhoneNumber {
   phoneId: number;
   countryCode: string;
   number: string;
+  state: 'Activo' | 'Inactivo';
+  importedBy: string;
 }
 
 interface Agent {
@@ -83,6 +85,8 @@ export type UserProfileResponse = {
     phoneId: number;
     countryCode: string;
     number: string;
+    state: 'Activo' | 'Inactivo';
+    importedBy: string;
   }>;
   agents?: Array<{
     name: string;
@@ -120,6 +124,20 @@ export interface UploadFile {
 export class UsersService {
   private firestore = getFirestore();
   private storage = admin.storage();
+
+  // Helper para calcular el estado de un phoneNumber basado en si algún agente lo usa
+  private calculatePhoneNumberState(
+    phoneId: number,
+    agents: Agent[] | undefined,
+  ): 'Activo' | 'Inactivo' {
+    if (!agents || agents.length === 0) {
+      return 'Inactivo';
+    }
+    const isUsed = agents.some(
+      (agent) => agent.phoneNumbers?.phoneId === phoneId,
+    );
+    return isUsed ? 'Activo' : 'Inactivo';
+  }
 
   // ✅ Obtener perfil del usuario
   async getUserProfile(userId: string): Promise<UserProfileResponse> {
@@ -173,7 +191,11 @@ export class UsersService {
         agent: (userData?.agents?.[0] || {}) as Record<string, unknown>, // Compatibilidad: devolver primer agente como agent
         // Nuevos campos
         integrations: userData?.integrations,
-        phoneNumbers: userData?.phoneNumbers || [],
+        phoneNumbers: (userData?.phoneNumbers || []).map((phone) => ({
+          ...phone,
+          state: this.calculatePhoneNumberState(phone.phoneId, userData?.agents),
+          importedBy: phone.importedBy || 'Twilio',
+        })),
         agents: userData?.agents || [],
       };
     } catch (error) {
