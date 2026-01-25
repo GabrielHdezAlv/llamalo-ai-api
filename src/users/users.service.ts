@@ -50,6 +50,47 @@ interface UserData {
   agents?: Agent[];
 }
 
+export type UserProfileResponse = {
+  userId: string;
+  name?: string;
+  lastname?: string;
+  profileImage?: string;
+  enterprise?: string;
+  enterpriseWeb?: string;
+  email?: string;
+  createdAt?: string | null;
+  twilio?: {
+    twilioSid: string;
+    twilioToken: string;
+  };
+  agent?: Record<string, unknown>;
+  integrations?: {
+    shopify?: {
+      connected: boolean;
+      shopDomain: string;
+    };
+  };
+  phoneNumbers?: Array<{
+    phoneId: number;
+    countryCode: string;
+    number: string;
+  }>;
+  agents?: Array<{
+    name: string;
+    type: 'outbound' | 'inbound';
+    language: string;
+    voiceId: string;
+    firstInteraction: string;
+    agentInstruction: string;
+    phoneNumbers: {
+      phoneId: number;
+      countryCode: string;
+      number: string;
+    };
+    label: string;
+  }>;
+};
+
 export interface UploadFile {
   buffer: Buffer;
   mimetype: string;
@@ -63,7 +104,7 @@ export class UsersService {
   private storage = admin.storage();
 
   // ✅ Obtener perfil del usuario
-  async getUserProfile(userId: string) {
+  async getUserProfile(userId: string): Promise<UserProfileResponse> {
     try {
       const docRef = this.firestore.collection('users').doc(userId);
       const snapshot = await docRef.get();

@@ -18,7 +18,7 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
-import type { UploadFile } from './users.service';
+import type { UploadFile, UserProfileResponse } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UserProfileResponseDto } from './dto/user-profile-response.dto';
 import { UpdateProfileResponseDto } from './dto/update-profile-response.dto';
@@ -36,7 +36,7 @@ export class UsersController {
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Obtener perfil del usuario autenticado' })
   @ApiResponse({ status: 200, type: UserProfileResponseDto })
-  async getProfile(@GetUser('uid') userId: string) {
+  async getProfile(@GetUser('uid') userId: string): Promise<UserProfileResponse> {
     return this.usersService.getUserProfile(userId);
   }
 
