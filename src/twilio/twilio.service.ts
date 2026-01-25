@@ -298,6 +298,48 @@ export class TwilioService {
         throw new BadRequestException('Número no disponible');
       }
 
+      // Extraer código de país y número del formato E.164 (+34...)
+      const phoneMatch = normalizedPhone.match(/^\+(\d{1,3})(.+)$/);
+      if (!phoneMatch) {
+        throw new BadRequestException(
+          'Formato de número de teléfono inválido. Use formato E.164 (ej: +34654316415)',
+        );
+      }
+
+      const countryCode = `+${phoneMatch[1]}`;
+      const numberWithoutCountryCode = phoneMatch[2];
+
+      // Obtener phoneNumbers actuales del usuario
+      const phoneNumbersArray =
+        (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
+
+      // Verificar si el número ya existe en phoneNumbers
+      const numberExists = phoneNumbersArray.some((phone) => {
+        const existingNumber = (phone.number as string)?.replace(/\D/g, '') || '';
+        const existingCountryCode = phone.countryCode as string;
+        return (
+          existingNumber === numberWithoutCountryCode &&
+          existingCountryCode === countryCode
+        );
+      });
+
+      // Si no existe, añadirlo
+      if (!numberExists) {
+        const phoneId = Date.now();
+        phoneNumbersArray.push({
+          phoneId: phoneId,
+          countryCode: countryCode,
+          number: numberWithoutCountryCode,
+          state: 'Inactivo', // Inactivo porque no está siendo usado por ningún agente aún
+          importedBy: 'Twilio',
+        });
+
+        // Actualizar phoneNumbers en Firestore
+        await userDocRef.update({
+          phoneNumbers: phoneNumbersArray,
+        });
+      }
+
       return {
         message: 'Número verificado correctamente',
       };
