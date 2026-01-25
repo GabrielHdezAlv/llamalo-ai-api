@@ -34,7 +34,284 @@ export class AgentsService {
     }
   }
 
-  // ✅ Configurar agente del usuario
+  // ✅ Crear nuevo agente
+  async createAgent(userId: string, agentConfig: SetAgentConfigDto) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+      const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
+
+      // Generar phoneId
+      const phoneId = Date.now();
+
+      // Preparar phoneNumbers con phoneId
+      const phoneNumbersWithId = {
+        phoneId: phoneId,
+        countryCode: agentConfig.phoneNumbers.countryCode,
+        number: agentConfig.phoneNumbers.number.toString(),
+      };
+
+      // Crear nuevo agente
+      const newAgent = {
+        name: agentConfig.name,
+        type: agentConfig.type,
+        language: agentConfig.language,
+        voiceId: agentConfig.voiceId,
+        firstInteraction: agentConfig.firstInteraction,
+        agentInstruction: agentConfig.agentInstruction,
+        phoneNumbers: phoneNumbersWithId,
+        label: agentConfig.label,
+      };
+
+      // Si hay estructura antigua, migrar primero
+      if (legacyAgent && Object.keys(legacyAgent).length > 0) {
+        const legacyPhoneId = Date.now() - 1; // Un timestamp anterior
+        const legacyPhoneNumbers = {
+          phoneId: legacyPhoneId,
+          countryCode: (legacyAgent.countryCode as string) || '',
+          number: (legacyAgent.phoneNumber as number)?.toString() || '',
+        };
+
+        const migratedAgent = {
+          name: (legacyAgent.name as string) || '',
+          type: 'inbound', // Valor por defecto
+          language:
+            typeof legacyAgent.language === 'string'
+              ? legacyAgent.language
+              : (legacyAgent.language as Record<string, string>)?.code || 'es',
+          voiceId: (legacyAgent.voiceId as string) ||
+            (legacyAgent.labsId as string) ||
+            '',
+          firstInteraction: (legacyAgent.firstInteraction as string) || '',
+          agentInstruction: (legacyAgent.agentInstruction as string) || '',
+          phoneNumbers: legacyPhoneNumbers,
+          label: '',
+        };
+
+        agentsArray.push(migratedAgent);
+      }
+
+      // Agregar el nuevo agente al array
+      agentsArray.push(newAgent);
+      const newIndex = agentsArray.length - 1;
+
+      // Guardar en Firestore
+      await userDocRef.set({ agents: agentsArray }, { merge: true });
+
+      return {
+        message: 'Agente creado correctamente.',
+        agent: newAgent,
+        index: newIndex,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al crear el agente: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Listar todos los agentes del usuario
+  async getUserAgents(userId: string) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+      const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
+
+      // Si hay estructura antigua, incluirla en la respuesta
+      if (legacyAgent && Object.keys(legacyAgent).length > 0) {
+        const legacyPhoneId = Date.now() - 1;
+        const legacyPhoneNumbers = {
+          phoneId: legacyPhoneId,
+          countryCode: (legacyAgent.countryCode as string) || '',
+          number: (legacyAgent.phoneNumber as number)?.toString() || '',
+        };
+
+        const migratedAgent = {
+          name: (legacyAgent.name as string) || '',
+          type: 'inbound',
+          language:
+            typeof legacyAgent.language === 'string'
+              ? legacyAgent.language
+              : (legacyAgent.language as Record<string, string>)?.code || 'es',
+          voiceId: (legacyAgent.voiceId as string) ||
+            (legacyAgent.labsId as string) ||
+            '',
+          firstInteraction: (legacyAgent.firstInteraction as string) || '',
+          agentInstruction: (legacyAgent.agentInstruction as string) || '',
+          phoneNumbers: legacyPhoneNumbers,
+          label: '',
+        };
+
+        return {
+          agents: [migratedAgent, ...agentsArray],
+        };
+      }
+
+      return {
+        agents: agentsArray,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al obtener los agentes: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Actualizar agente específico por índice
+  async updateAgent(
+    userId: string,
+    index: number,
+    agentConfig: SetAgentConfigDto,
+  ) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+
+      // Validar que el índice existe
+      if (index < 0 || index >= agentsArray.length) {
+        throw new BadRequestException(
+          `Índice de agente inválido. El usuario tiene ${agentsArray.length} agente(s).`,
+        );
+      }
+
+      // Obtener agente existente
+      const existingAgent = { ...agentsArray[index] };
+
+      // Mantener phoneId existente o generar uno nuevo si no existe
+      let phoneId = 0;
+      if (existingAgent.phoneNumbers) {
+        const existingPhone = existingAgent.phoneNumbers as Record<
+          string,
+          unknown
+        >;
+        phoneId = (existingPhone.phoneId as number) || 0;
+      }
+      if (phoneId === 0) {
+        phoneId = Date.now();
+      }
+
+      // Preparar phoneNumbers con phoneId
+      const phoneNumbersWithId = {
+        phoneId: phoneId,
+        countryCode: agentConfig.phoneNumbers.countryCode,
+        number: agentConfig.phoneNumbers.number.toString(),
+      };
+
+      // Actualizar agente
+      const updatedAgent = {
+        name: agentConfig.name,
+        type: agentConfig.type,
+        language: agentConfig.language,
+        voiceId: agentConfig.voiceId,
+        firstInteraction: agentConfig.firstInteraction,
+        agentInstruction: agentConfig.agentInstruction,
+        phoneNumbers: phoneNumbersWithId,
+        label: agentConfig.label,
+      };
+
+      // Actualizar en el array
+      agentsArray[index] = updatedAgent;
+
+      // Guardar en Firestore
+      await userDocRef.set({ agents: agentsArray }, { merge: true });
+
+      return {
+        message: 'Agente actualizado correctamente.',
+        agent: updatedAgent,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al actualizar el agente: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Eliminar agente por índice
+  async deleteAgent(userId: string, index: number) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+
+      // Validar que el índice existe
+      if (index < 0 || index >= agentsArray.length) {
+        throw new BadRequestException(
+          `Índice de agente inválido. El usuario tiene ${agentsArray.length} agente(s).`,
+        );
+      }
+
+      // Eliminar agente del array
+      agentsArray.splice(index, 1);
+
+      // Guardar en Firestore
+      await userDocRef.set({ agents: agentsArray }, { merge: true });
+
+      return {
+        message: 'Agente eliminado correctamente.',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al eliminar el agente: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ⚠️ DEPRECATED: Mantener por compatibilidad temporal
   async setAgentConfig(userId: string, agentConfig: SetAgentConfigDto) {
     try {
       // Obtener la referencia al documento del usuario
