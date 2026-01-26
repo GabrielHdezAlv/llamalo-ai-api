@@ -83,8 +83,19 @@ export class TwilioService {
         }
       }
 
-      // Si hay cambios en twilio, actualizar
+      // Si hay cambios en twilio, validar credenciales antes de actualizar
       if (hasChanges) {
+        // Validar credenciales antes de guardar (especialmente importante la primera vez)
+        const isValid = await this.validateTwilioCredentials(
+          config.twilioSid,
+          config.twilioToken,
+        );
+        if (!isValid) {
+          throw new BadRequestException(
+            'Las credenciales de Twilio son inválidas.',
+          );
+        }
+
         await userDocRef.set({ twilio: newTwilioConfig }, { merge: true });
         
         // TODO: Migrar countryCode y phoneNumber a phoneNumbers[]
