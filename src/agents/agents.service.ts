@@ -83,25 +83,9 @@ export class AgentsService {
       const phoneNumbersArray =
         (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
 
-      // Preparar número para validación
+      // Preparar número
       const newCountryCode = agentConfig.phoneNumbers.countryCode;
       const newNumber = agentConfig.phoneNumbers.number.toString();
-
-      // Validar que el número no esté en uso por otro agente
-      const numberInUse = agentsArray.some((agent) => {
-        const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
-        if (!agentPhone) return false;
-        return (
-          (agentPhone.countryCode as string) === newCountryCode &&
-          (agentPhone.number as string) === newNumber
-        );
-      });
-
-      if (numberInUse) {
-        throw new BadRequestException(
-          `El número de teléfono ${newCountryCode} ${newNumber} ya está en uso por otro agente.`,
-        );
-      }
 
       // Verificar si el número ya existe en phoneNumbers[]
       const existingPhoneIndex = phoneNumbersArray.findIndex(
@@ -368,27 +352,6 @@ export class AgentsService {
       const numberChanged =
         existingCountryCode !== newCountryCode ||
         existingNumber !== newNumber;
-
-      if (numberChanged) {
-        // Validar que el nuevo número no esté en uso por otro agente
-        const numberInUse = agentsArray.some((agent, idx) => {
-          // Ignorar el agente que se está editando
-          if (idx === index) return false;
-
-          const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
-          if (!agentPhone) return false;
-          return (
-            (agentPhone.countryCode as string) === newCountryCode &&
-            (agentPhone.number as string) === newNumber
-          );
-        });
-
-        if (numberInUse) {
-          throw new BadRequestException(
-            `El número de teléfono ${newCountryCode} ${newNumber} ya está en uso por otro agente.`,
-          );
-        }
-      }
 
       // Determinar phoneId
       let phoneId: number;

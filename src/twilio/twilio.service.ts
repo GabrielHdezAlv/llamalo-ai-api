@@ -320,6 +320,24 @@ export class TwilioService {
       const countryCode = `+${phoneMatch[1]}`;
       const numberWithoutCountryCode = phoneMatch[2];
 
+      // Validar que el número no esté en uso por otro agente
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+      const numberInUse = agentsArray.some((agent) => {
+        const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
+        if (!agentPhone) return false;
+        return (
+          (agentPhone.countryCode as string) === countryCode &&
+          (agentPhone.number as string) === numberWithoutCountryCode
+        );
+      });
+
+      if (numberInUse) {
+        throw new BadRequestException(
+          `El número de teléfono ${countryCode} ${numberWithoutCountryCode} ya está en uso por otro agente.`,
+        );
+      }
+
       // Obtener phoneNumbers actuales del usuario
       const phoneNumbersArray =
         (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
