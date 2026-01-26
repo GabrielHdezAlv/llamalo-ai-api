@@ -326,9 +326,15 @@ export class TwilioService {
       const numberInUse = agentsArray.some((agent) => {
         const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
         if (!agentPhone) return false;
+        
+        // Normalizar números para comparación (eliminar caracteres no numéricos)
+        const agentCountryCode = (agentPhone.countryCode as string) || '';
+        const agentNumber = String(agentPhone.number || '').replace(/\D/g, '');
+        const normalizedNewNumber = numberWithoutCountryCode.replace(/\D/g, '');
+        
         return (
-          (agentPhone.countryCode as string) === countryCode &&
-          (agentPhone.number as string) === numberWithoutCountryCode
+          agentCountryCode === countryCode &&
+          agentNumber === normalizedNewNumber
         );
       });
 
