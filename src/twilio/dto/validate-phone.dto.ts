@@ -3,11 +3,19 @@ import { IsNotEmpty, IsString } from 'class-validator';
 
 export class ValidatePhoneDto {
   @ApiProperty({
-    example: '+34654316415',
-    description: 'Número de teléfono a validar (formato E.164)',
+    example: '+34',
+    description: 'Prefijo del país (formato E.164, ej: +34, +1, +44)',
   })
   @IsNotEmpty()
   @IsString()
-  phoneNumber: string;
+  countryCode: string;
+
+  @ApiProperty({
+    example: '654316415',
+    description: 'Número de teléfono sin el prefijo del país',
+  })
+  @IsNotEmpty()
+  @IsString()
+  number: string;
 }
 

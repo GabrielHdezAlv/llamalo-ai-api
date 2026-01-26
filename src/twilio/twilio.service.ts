@@ -27,7 +27,8 @@ export class TwilioService {
       }
 
       const userData = userDoc.data() as Record<string, unknown>;
-      const userTwilioConfig = (userData?.twilio as Record<string, unknown>) || {};
+      const userTwilioConfig =
+        (userData?.twilio as Record<string, unknown>) || {};
 
       const existingSid = userTwilioConfig.twilioSid as string | undefined;
       const existingToken = userTwilioConfig.twilioToken as string | undefined;
@@ -52,7 +53,8 @@ export class TwilioService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      let twilioConfig = (userData?.twilio as Record<string, unknown>) || null;
+      const twilioConfig =
+        (userData?.twilio as Record<string, unknown>) || null;
 
       // Validar que los parámetros no estén en uso por otro usuario
       await this.checkTwilioCredentialsInUse(
@@ -97,7 +99,7 @@ export class TwilioService {
         }
 
         await userDocRef.set({ twilio: newTwilioConfig }, { merge: true });
-        
+
         // TODO: Migrar countryCode y phoneNumber a phoneNumbers[]
         // TODO: Migrar firstInteraction y agentInstruction a agents[]
         // Por ahora mantenemos compatibilidad pero estos campos ya no se guardan en twilio
@@ -242,7 +244,11 @@ export class TwilioService {
   }
 
   // ✅ Verificar si un número de teléfono está en la cuenta de Twilio del usuario
-  async validatePhoneNumber(userId: string, phoneNumber: string) {
+  async validatePhoneNumber(
+    userId: string,
+    countryCode: string,
+    number: string,
+  ) {
     try {
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
@@ -269,8 +275,16 @@ export class TwilioService {
         );
       }
 
-      // Normalizar el número de teléfono (eliminar espacios, guiones, etc.)
-      const normalizedPhone = phoneNumber.replace(/\s|-|\(|\)/g, '');
+      // Normalizar el prefijo del país (asegurar que empiece con +)
+      const normalizedCountryCode = countryCode.startsWith('+')
+        ? countryCode
+        : `+${countryCode}`;
+
+      // Normalizar el número (eliminar espacios, guiones, etc.)
+      const normalizedNumber = number.replace(/\s|-|\(|\)/g, '');
+
+      // Construir el número completo en formato E.164
+      const normalizedPhone = `${normalizedCountryCode}${normalizedNumber}`;
 
       // Obtener todos los números de teléfono de la cuenta de Twilio
       const auth = Buffer.from(`${sid}:${token}`).toString('base64');
@@ -278,7 +292,7 @@ export class TwilioService {
       let nextPageUri: string | null = null;
 
       do {
-        const url = nextPageUri
+        const url: string = nextPageUri
           ? `https://api.twilio.com${nextPageUri}`
           : `https://api.twilio.com/2010-04-01/Accounts/${sid}/IncomingPhoneNumbers.json`;
 
@@ -293,10 +307,10 @@ export class TwilioService {
           },
         });
 
-        const phoneNumbers = response.data.incoming_phone_numbers.map(
-          (phone) => phone.phone_number.replace(/\s|-|\(|\)/g, ''),
+        const phoneNumbers = response.data.incoming_phone_numbers.map((phone) =>
+          phone.phone_number.replace(/\s|-|\(|\)/g, ''),
         );
-        allPhoneNumbers = allPhoneNumbers.concat(phoneNumbers);
+        allPhoneNumbers = [...allPhoneNumbers, ...phoneNumbers];
         nextPageUri = response.data.next_page_uri;
       } while (nextPageUri);
 
@@ -309,38 +323,38 @@ export class TwilioService {
         throw new BadRequestException('Número no disponible');
       }
 
-      // Extraer código de país y número del formato E.164 (+34...)
-      const phoneMatch = normalizedPhone.match(/^\+(\d{1,3})(.+)$/);
-      if (!phoneMatch) {
-        throw new BadRequestException(
-          'Formato de número de teléfono inválido. Use formato E.164 (ej: +34654316415)',
-        );
-      }
-
-      const countryCode = `+${phoneMatch[1]}`;
-      const numberWithoutCountryCode = phoneMatch[2];
+      // Usar los valores ya normalizados que recibimos como parámetros
+      const finalCountryCode = normalizedCountryCode;
+      const numberWithoutCountryCode = normalizedNumber;
 
       // Validar que el número no esté en uso por otro agente
       const agentsArray =
         (userData?.agents as Array<Record<string, unknown>>) || [];
       const numberInUse = agentsArray.some((agent) => {
-        const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
+        const agentPhone =
+          (agent.phoneNumbers as Record<string, unknown> | undefined) ||
+          undefined;
         if (!agentPhone) return false;
-        
+
         // Normalizar números para comparación (eliminar caracteres no numéricos)
         const agentCountryCode = (agentPhone.countryCode as string) || '';
-        const agentNumber = String(agentPhone.number || '').replace(/\D/g, '');
+        const agentNumberValue = agentPhone.number;
+        const agentNumber =
+          typeof agentNumberValue === 'string' ||
+          typeof agentNumberValue === 'number'
+            ? String(agentNumberValue).replace(/\D/g, '')
+            : '';
         const normalizedNewNumber = numberWithoutCountryCode.replace(/\D/g, '');
-        
+
         return (
-          agentCountryCode === countryCode &&
+          agentCountryCode === finalCountryCode &&
           agentNumber === normalizedNewNumber
         );
       });
 
       if (numberInUse) {
         throw new BadRequestException(
-          `El número de teléfono ${countryCode} ${numberWithoutCountryCode} ya está en uso por otro agente.`,
+          `El número de teléfono ${finalCountryCode} ${numberWithoutCountryCode} ya está en uso por otro agente.`,
         );
       }
 
@@ -350,11 +364,12 @@ export class TwilioService {
 
       // Verificar si el número ya existe en phoneNumbers
       const numberExists = phoneNumbersArray.some((phone) => {
-        const existingNumber = (phone.number as string)?.replace(/\D/g, '') || '';
+        const existingNumber =
+          (phone.number as string)?.replace(/\D/g, '') || '';
         const existingCountryCode = phone.countryCode as string;
         return (
           existingNumber === numberWithoutCountryCode &&
-          existingCountryCode === countryCode
+          existingCountryCode === finalCountryCode
         );
       });
 
@@ -363,7 +378,7 @@ export class TwilioService {
         const phoneId = Date.now();
         phoneNumbersArray.push({
           phoneId: phoneId,
-          countryCode: countryCode,
+          countryCode: finalCountryCode,
           number: numberWithoutCountryCode,
           state: 'Inactivo', // Inactivo porque no está siendo usado por ningún agente aún
           importedBy: 'Twilio',

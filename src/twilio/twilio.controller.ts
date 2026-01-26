@@ -55,7 +55,8 @@ export class TwilioController {
   ) {
     return this.twilioService.validatePhoneNumber(
       userId,
-      validatePhoneDto.phoneNumber,
+      validatePhoneDto.countryCode,
+      validatePhoneDto.number,
     );
   }
 }
