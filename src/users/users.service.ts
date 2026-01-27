@@ -200,7 +200,10 @@ export class UsersService {
         integrations: userData?.integrations,
         phoneNumbers: (userData?.phoneNumbers || []).map((phone) => ({
           ...phone,
-          state: this.calculatePhoneNumberState(phone.phoneId, userData?.agents),
+          state: this.calculatePhoneNumberState(
+            phone.phoneId,
+            userData?.agents,
+          ),
           importedBy: phone.importedBy || 'Twilio',
         })),
         agents: userData?.agents || [],
@@ -231,15 +234,17 @@ export class UsersService {
       if (updateDto.name) updates.name = updateDto.name;
       if (updateDto.lastname) updates.lastname = updateDto.lastname;
       if (updateDto.profileImage) updates.profileImage = updateDto.profileImage;
-      
+
       // Actualizar enterprise como objeto
       if (updateDto.enterprise) {
         updates.enterprise = updateDto.enterprise;
       }
 
       if (updateDto.country) updates.country = updateDto.country;
-      if (updateDto.marketingConsent !== undefined) updates.marketingConsent = updateDto.marketingConsent;
-      if (updateDto.accountStatus !== undefined) updates.accountStatus = updateDto.accountStatus;
+      if (updateDto.marketingConsent !== undefined)
+        updates.marketingConsent = updateDto.marketingConsent;
+      if (updateDto.accountStatus !== undefined)
+        updates.accountStatus = updateDto.accountStatus;
 
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
@@ -352,7 +357,8 @@ export class UsersService {
       // Calcular fecha de eliminación (10 días desde ahora)
       const deletionDate = new Date();
       deletionDate.setDate(deletionDate.getDate() + 10);
-      const scheduledDeletionTimestamp = admin.firestore.Timestamp.fromDate(deletionDate);
+      const scheduledDeletionTimestamp =
+        admin.firestore.Timestamp.fromDate(deletionDate);
 
       // Guardar la fecha de eliminación programada
       await docRef.update({
@@ -377,7 +383,7 @@ export class UsersService {
   async processScheduledDeletions() {
     try {
       const now = admin.firestore.Timestamp.now();
-      
+
       // Buscar usuarios con scheduledDeletionDate <= ahora
       const usersRef = this.firestore.collection('users');
       const snapshot = await usersRef
@@ -392,7 +398,7 @@ export class UsersService {
 
       snapshot.forEach((doc) => {
         const userData = doc.data() as UserData;
-        
+
         // Solo procesar si accountStatus no es "Eliminado" (2)
         if (userData.accountStatus !== 2) {
           currentBatch.update(doc.ref, {
@@ -421,7 +427,9 @@ export class UsersService {
       }
 
       if (deletedCount > 0) {
-        console.log(`✅ [Users] ${deletedCount} cuenta(s) marcada(s) como eliminada(s)`);
+        console.log(
+          `✅ [Users] ${deletedCount} cuenta(s) marcada(s) como eliminada(s)`,
+        );
       }
 
       return {
@@ -429,7 +437,10 @@ export class UsersService {
         deletedCount,
       };
     } catch (error) {
-      console.error('❌ [Users] Error al procesar eliminaciones programadas:', error);
+      console.error(
+        '❌ [Users] Error al procesar eliminaciones programadas:',
+        error,
+      );
       throw new BadRequestException(
         `Error al procesar eliminaciones programadas: ${(error as Error).message}`,
       );
