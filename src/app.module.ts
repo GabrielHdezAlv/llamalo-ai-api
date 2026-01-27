@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { LanguagesModule } from './languages/languages.module';
@@ -16,6 +17,7 @@ import { ShopifyModule } from './shopify/shopify.module';
       envFilePath: `.env.${process.env.NODE_ENV || 'development'}`,
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     CallsModule,
     AuthModule,
     UsersModule,

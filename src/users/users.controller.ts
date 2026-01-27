@@ -3,6 +3,7 @@ import {
   Get,
   Put,
   Post,
+  Delete,
   Body,
   UseGuards,
   UseInterceptors,
@@ -74,5 +75,33 @@ export class UsersController {
     @UploadedFile() file: UploadFile,
   ) {
     return this.usersService.uploadProfileImage(userId, file);
+  }
+
+  @Delete('account')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({ 
+    summary: 'Eliminar cuenta del usuario',
+    description: 'Programa la eliminación de la cuenta para dentro de 10 días. Durante este período, el usuario puede recuperar sus datos. Después de 10 días, la cuenta será marcada como "Eliminado".'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Cuenta programada para eliminación',
+    schema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          example: 'Cuenta programada para eliminación en 10 días',
+        },
+        scheduledDeletionDate: {
+          type: 'string',
+          format: 'date-time',
+          example: '2026-02-06T10:30:00.000Z',
+        },
+      },
+    },
+  })
+  async deleteAccount(@GetUser('uid') userId: string) {
+    return this.usersService.scheduleAccountDeletion(userId);
   }
 }

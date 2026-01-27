@@ -50,6 +50,7 @@ interface UserData {
   marketingConsent?: boolean;
   accountStatus?: number;
   createdAt?: admin.firestore.Timestamp | string;
+  scheduledDeletionDate?: admin.firestore.Timestamp;
   integrations?: {
     shopify?: {
       connected: boolean;
@@ -334,6 +335,103 @@ export class UsersService {
       }
       throw new BadRequestException(
         `Error al subir la imagen: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Programar eliminación de cuenta (10 días después)
+  async scheduleAccountDeletion(userId: string) {
+    try {
+      const docRef = this.firestore.collection('users').doc(userId);
+      const snapshot = await docRef.get();
+
+      if (!snapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado en Firestore');
+      }
+
+      // Calcular fecha de eliminación (10 días desde ahora)
+      const deletionDate = new Date();
+      deletionDate.setDate(deletionDate.getDate() + 10);
+      const scheduledDeletionTimestamp = admin.firestore.Timestamp.fromDate(deletionDate);
+
+      // Guardar la fecha de eliminación programada
+      await docRef.update({
+        scheduledDeletionDate: scheduledDeletionTimestamp,
+      });
+
+      return {
+        message: 'Cuenta programada para eliminación en 10 días',
+        scheduledDeletionDate: deletionDate.toISOString(),
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al programar la eliminación de la cuenta: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Procesar eliminaciones programadas (marcar como "Eliminado" después de 10 días)
+  async processScheduledDeletions() {
+    try {
+      const now = admin.firestore.Timestamp.now();
+      
+      // Buscar usuarios con scheduledDeletionDate <= ahora
+      const usersRef = this.firestore.collection('users');
+      const snapshot = await usersRef
+        .where('scheduledDeletionDate', '<=', now)
+        .get();
+
+      let deletedCount = 0;
+      const batches: admin.firestore.WriteBatch[] = [];
+      let currentBatch = this.firestore.batch();
+      let currentBatchSize = 0;
+      const batchSize = 500; // Firestore limita a 500 operaciones por batch
+
+      snapshot.forEach((doc) => {
+        const userData = doc.data() as UserData;
+        
+        // Solo procesar si accountStatus no es "Eliminado" (2)
+        if (userData.accountStatus !== 2) {
+          currentBatch.update(doc.ref, {
+            accountStatus: 2, // 2 = "Eliminado"
+          });
+          deletedCount++;
+          currentBatchSize++;
+
+          // Si llegamos al límite del batch, guardarlo y crear uno nuevo
+          if (currentBatchSize >= batchSize) {
+            batches.push(currentBatch);
+            currentBatch = this.firestore.batch();
+            currentBatchSize = 0;
+          }
+        }
+      });
+
+      // Agregar el batch final si tiene operaciones
+      if (currentBatchSize > 0) {
+        batches.push(currentBatch);
+      }
+
+      // Ejecutar todos los batches
+      for (const batch of batches) {
+        await batch.commit();
+      }
+
+      if (deletedCount > 0) {
+        console.log(`✅ [Users] ${deletedCount} cuenta(s) marcada(s) como eliminada(s)`);
+      }
+
+      return {
+        message: `Procesadas ${deletedCount} eliminaciones`,
+        deletedCount,
+      };
+    } catch (error) {
+      console.error('❌ [Users] Error al procesar eliminaciones programadas:', error);
+      throw new BadRequestException(
+        `Error al procesar eliminaciones programadas: ${(error as Error).message}`,
       );
     }
   }
