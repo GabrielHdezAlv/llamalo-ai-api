@@ -121,7 +121,9 @@ export class AgentsService {
       };
 
       // Crear nuevo agente
+      const agentId = Date.now();
       const newAgent = {
+        agentId: agentId,
         name: agentConfig.name,
         type: agentConfig.type,
         language: agentConfig.language,
@@ -161,6 +163,7 @@ export class AgentsService {
           };
 
           const migratedAgent = {
+            agentId: Date.now() - 2, // Un timestamp anterior al legacyPhoneId
             name: (legacyAgent.name as string) || '',
             type: 'inbound', // Valor por defecto
             language:
@@ -221,7 +224,7 @@ export class AgentsService {
       return {
         message: 'Agente creado correctamente.',
         agent: newAgent,
-        index: newIndex,
+        agentId: agentId,
       };
     } catch (error) {
       if (
@@ -263,6 +266,7 @@ export class AgentsService {
         };
 
         const migratedAgent = {
+          agentId: Date.now() - 2, // Un timestamp anterior al legacyPhoneId
           name: (legacyAgent.name as string) || '',
           type: 'inbound',
           language:
@@ -308,10 +312,10 @@ export class AgentsService {
     }
   }
 
-  // ✅ Actualizar agente específico por índice
+  // ✅ Actualizar agente específico por agentId
   async updateAgent(
     userId: string,
-    index: number,
+    agentId: number,
     agentConfig: SetAgentConfigDto,
   ) {
     try {
@@ -328,15 +332,19 @@ export class AgentsService {
       const phoneNumbersArray =
         (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
 
-      // Validar que el índice existe
-      if (index < 0 || index >= agentsArray.length) {
+      // Buscar agente por agentId
+      const agentIndex = agentsArray.findIndex(
+        (agent) => (agent.agentId as number) === agentId,
+      );
+
+      if (agentIndex === -1) {
         throw new BadRequestException(
-          `Índice de agente inválido. El usuario tiene ${agentsArray.length} agente(s).`,
+          `Agente con agentId ${agentId} no encontrado.`,
         );
       }
 
       // Obtener agente existente
-      const existingAgent = { ...agentsArray[index] };
+      const existingAgent = { ...agentsArray[agentIndex] };
       const existingPhone = existingAgent.phoneNumbers as Record<
         string,
         unknown
@@ -394,6 +402,7 @@ export class AgentsService {
 
       // Actualizar agente
       const updatedAgent = {
+        agentId: agentId,
         name: agentConfig.name,
         type: agentConfig.type,
         language: agentConfig.language,
@@ -408,7 +417,7 @@ export class AgentsService {
       };
 
       // Actualizar en el array
-      agentsArray[index] = updatedAgent;
+      agentsArray[agentIndex] = updatedAgent;
 
       // Actualizar el estado de todos los phoneNumbers basado en los agentes
       const updatedPhoneNumbers = this.updatePhoneNumbersState(
@@ -442,8 +451,8 @@ export class AgentsService {
     }
   }
 
-  // ✅ Eliminar agente por índice
-  async deleteAgent(userId: string, index: number) {
+  // ✅ Eliminar agente por agentId
+  async deleteAgent(userId: string, agentId: number) {
     try {
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
@@ -456,15 +465,19 @@ export class AgentsService {
       const agentsArray =
         (userData?.agents as Array<Record<string, unknown>>) || [];
 
-      // Validar que el índice existe
-      if (index < 0 || index >= agentsArray.length) {
+      // Buscar agente por agentId
+      const agentIndex = agentsArray.findIndex(
+        (agent) => (agent.agentId as number) === agentId,
+      );
+
+      if (agentIndex === -1) {
         throw new BadRequestException(
-          `Índice de agente inválido. El usuario tiene ${agentsArray.length} agente(s).`,
+          `Agente con agentId ${agentId} no encontrado.`,
         );
       }
 
       // Eliminar agente del array
-      agentsArray.splice(index, 1);
+      agentsArray.splice(agentIndex, 1);
 
       // Obtener phoneNumbers para actualizar su estado
       const phoneNumbersArray =

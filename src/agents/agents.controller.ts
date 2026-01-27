@@ -59,38 +59,38 @@ export class AgentsController {
     return this.agentsService.getUserAgents(userId);
   }
 
-  @Put('agents/:index')
+  @Put('agents/:agentId')
   @UseGuards(FirebaseAuthGuard)
-  @ApiOperation({ summary: 'Actualizar un agente específico por índice' })
+  @ApiOperation({ summary: 'Actualizar un agente específico por agentId' })
   @ApiParam({
-    name: 'index',
+    name: 'agentId',
     type: Number,
-    description: 'Índice del agente en el array (empezando desde 0)',
-    example: 0,
+    description: 'ID único del agente',
+    example: 1738000000000,
   })
   @ApiResponse({ status: 200, type: UpdateAgentResponseDto })
   async updateAgent(
     @GetUser('uid') userId: string,
-    @Param('index', ParseIntPipe) index: number,
+    @Param('agentId', ParseIntPipe) agentId: number,
     @Body() agentConfig: SetAgentConfigDto,
   ) {
-    return this.agentsService.updateAgent(userId, index, agentConfig);
+    return this.agentsService.updateAgent(userId, agentId, agentConfig);
   }
 
-  @Delete('agents/:index')
+  @Delete('agents/:agentId')
   @UseGuards(FirebaseAuthGuard)
-  @ApiOperation({ summary: 'Eliminar un agente específico por índice' })
+  @ApiOperation({ summary: 'Eliminar un agente específico por agentId' })
   @ApiParam({
-    name: 'index',
+    name: 'agentId',
     type: Number,
-    description: 'Índice del agente en el array (empezando desde 0)',
-    example: 0,
+    description: 'ID único del agente',
+    example: 1738000000000,
   })
   @ApiResponse({ status: 200, type: DeleteAgentResponseDto })
   async deleteAgent(
     @GetUser('uid') userId: string,
-    @Param('index', ParseIntPipe) index: number,
+    @Param('agentId', ParseIntPipe) agentId: number,
   ) {
-    return this.agentsService.deleteAgent(userId, index);
+    return this.agentsService.deleteAgent(userId, agentId);
   }
 }
