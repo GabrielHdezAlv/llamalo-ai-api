@@ -44,6 +44,12 @@ export class UserProfileResponseDto {
   marketingConsent?: boolean;
 
   @ApiProperty({
+    example: 1,
+    description: 'Estado de la cuenta: 0 = Inactivo, 1 = Activo, 2 = Eliminado',
+  })
+  accountStatus?: number;
+
+  @ApiProperty({
     example: '12 de octubre de 2025, 10:30:45',
     description: 'Fecha de creación formateada en español',
   })

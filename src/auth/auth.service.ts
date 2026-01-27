@@ -42,7 +42,7 @@ export class AuthService {
 
   // ✅ Registro de usuario
   async registerUser(createUserDto: CreateUserDto) {
-    const { name, lastname, email, password, country, marketingConsent } = createUserDto;
+    const { name, lastname, email, password, country, marketingConsent, accountStatus } = createUserDto;
 
     if (!email || !password)
       throw new BadRequestException(
@@ -92,6 +92,7 @@ export class AuthService {
         password: hashedPassword,
         country,
         marketingConsent,
+        accountStatus,
         createdAt: admin.firestore.Timestamp.now(),
         integrations: {
           shopify: {

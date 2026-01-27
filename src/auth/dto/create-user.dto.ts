@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, MinLength, IsBoolean } from 'class-validator';
+import { IsEmail, IsNotEmpty, MinLength, IsBoolean, IsIn } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateUserDto {
@@ -44,4 +44,12 @@ export class CreateUserDto {
   })
   @IsBoolean()
   marketingConsent: boolean;
+
+  @ApiProperty({
+    example: 1,
+    description: 'Estado de la cuenta: 0 = Inactivo, 1 = Activo, 2 = Eliminado',
+  })
+  @IsNotEmpty()
+  @IsIn([0, 1, 2])
+  accountStatus: number;
 }
