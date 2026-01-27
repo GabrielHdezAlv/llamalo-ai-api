@@ -32,6 +32,18 @@ export class UserProfileResponseDto {
   email?: string;
 
   @ApiProperty({
+    example: 'ES',
+    description: 'Código de país del usuario',
+  })
+  country?: string;
+
+  @ApiProperty({
+    example: true,
+    description: 'Consentimiento de marketing',
+  })
+  marketingConsent?: boolean;
+
+  @ApiProperty({
     example: '12 de octubre de 2025, 10:30:45',
     description: 'Fecha de creación formateada en español',
   })

@@ -46,6 +46,8 @@ interface UserData {
   };
   email?: string;
   password?: string;
+  country?: string;
+  marketingConsent?: boolean;
   createdAt?: admin.firestore.Timestamp | string;
   integrations?: {
     shopify?: {
@@ -71,6 +73,8 @@ export type UserProfileResponse = {
     url: string;
   };
   email?: string;
+  country?: string;
+  marketingConsent?: boolean;
   createdAt?: string | null;
   twilio?: {
     twilioSid: string;
@@ -183,6 +187,8 @@ export class UsersService {
         profileImage: userData?.profileImage,
         enterprise: userData?.enterprise || { name: '', url: '' },
         email: userData?.email,
+        country: userData?.country,
+        marketingConsent: userData?.marketingConsent,
         createdAt: createdAtStr,
         twilio: userData?.twilio,
         agent: (userData?.agents?.[0] || {}) as Record<string, unknown>, // Compatibilidad: devolver primer agente como agent
@@ -227,6 +233,9 @@ export class UsersService {
         updates.enterprise = updateDto.enterprise;
       }
 
+      if (updateDto.country) updates.country = updateDto.country;
+      if (updateDto.marketingConsent !== undefined) updates.marketingConsent = updateDto.marketingConsent;
+
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
       }
@@ -245,6 +254,8 @@ export class UsersService {
         profileImage: updatedData?.profileImage,
         enterprise: updatedData?.enterprise || { name: '', url: '' },
         email: updatedData?.email,
+        country: updatedData?.country,
+        marketingConsent: updatedData?.marketingConsent,
         createdAt: updatedData?.createdAt,
       };
     } catch (error) {

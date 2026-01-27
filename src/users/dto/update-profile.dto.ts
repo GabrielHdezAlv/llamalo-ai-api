@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUrl } from 'class-validator';
+import { IsOptional, IsString, IsUrl, IsBoolean } from 'class-validator';
 
 export class UpdateProfileDto {
   @ApiProperty({
@@ -39,4 +39,22 @@ export class UpdateProfileDto {
     name: string;
     url: string;
   };
+
+  @ApiProperty({
+    example: 'ES',
+    description: 'Código de país del usuario',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiProperty({
+    example: true,
+    description: 'Consentimiento de marketing',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  marketingConsent?: boolean;
 }
