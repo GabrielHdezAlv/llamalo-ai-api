@@ -6,6 +6,7 @@ import {
 import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { RecoverDto } from './dto/recover.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import axios from 'axios';
 import * as bcrypt from 'bcryptjs';
 import * as admin from 'firebase-admin';
@@ -203,6 +204,60 @@ export class AuthService {
         `❌ [Auth] Error al enviar email de recuperación a ${email}: ${errorCode} - ${message}`,
       );
       throw new BadRequestException(`No se pudo enviar el correo: ${message}`);
+    }
+  }
+
+  // ✅ Cambiar contraseña (usuario autenticado)
+  async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
+    const { newPassword, confirmPassword } = changePasswordDto;
+
+    // Validar que las contraseñas coincidan
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException('Las contraseñas no coinciden');
+    }
+
+    // Validar longitud mínima
+    if (newPassword.length < 8) {
+      throw new BadRequestException(
+        'La contraseña debe tener al menos 8 caracteres',
+      );
+    }
+
+    console.log(`🔐 [Auth] Cambio de contraseña solicitado para userId: ${userId}`);
+
+    try {
+      // 1️⃣ Actualizar contraseña en Firebase Auth
+      await admin.auth().updateUser(userId, {
+        password: newPassword,
+      });
+      console.log(`✅ [Auth] Contraseña actualizada en Firebase Auth para userId: ${userId}`);
+
+      // 2️⃣ Hashear la nueva contraseña
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      // 3️⃣ Actualizar contraseña hasheada en Firestore
+      const userRef = this.firestore.collection('users').doc(userId);
+      await userRef.update({
+        password: hashedPassword,
+      });
+      console.log(`✅ [Auth] Contraseña actualizada en Firestore para userId: ${userId}`);
+
+      return {
+        message: 'Contraseña actualizada correctamente',
+      };
+    } catch (error: any) {
+      const errorMessage = error.message || 'Error desconocido';
+      console.error(
+        `❌ [Auth] Error al cambiar contraseña para userId ${userId}: ${errorMessage}`,
+      );
+      
+      if (error.code === 'auth/user-not-found') {
+        throw new BadRequestException('Usuario no encontrado');
+      }
+      
+      throw new BadRequestException(
+        `No se pudo actualizar la contraseña: ${errorMessage}`,
+      );
     }
   }
 }
