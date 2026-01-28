@@ -61,7 +61,15 @@ export class UsersController {
   async getPhoneNumbers(
     @GetUser('uid') userId: string,
     @Query('q') query?: string,
-  ) {
+  ): Promise<{
+    phoneNumbers: Array<{
+      phoneId: number;
+      countryCode: string;
+      number: string;
+      state: 'Activo' | 'Inactivo';
+      importedBy: string;
+    }>;
+  }> {
     return this.usersService.getUserPhoneNumbers(userId, query);
   }
 
