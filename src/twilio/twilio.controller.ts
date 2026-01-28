@@ -22,6 +22,8 @@ import { ValidatePhoneDto } from './dto/validate-phone.dto';
 import { ValidatePhoneResponseDto } from './dto/validate-phone-response.dto';
 import { DeletePhoneDto } from './dto/delete-phone.dto';
 import { DeletePhoneResponseDto } from './dto/delete-phone-response.dto';
+import { CreatePhoneDto } from './dto/create-phone.dto';
+import { CreatePhoneResponseDto } from './dto/create-phone-response.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 
@@ -69,6 +71,29 @@ export class TwilioController {
       userId,
       validatePhoneDto.countryCode,
       validatePhoneDto.number,
+    );
+  }
+
+  @Post('phone-number')
+  @UseGuards(FirebaseAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Crear un número de teléfono',
+    description:
+      'Valida las credenciales de Twilio, verifica que el número existe en la cuenta de Twilio y lo agrega a los números del usuario si no existe ya.',
+  })
+  @ApiResponse({ status: 201, type: CreatePhoneResponseDto })
+  @ApiResponse({ status: 400, description: 'Credenciales inválidas o número ya existe' })
+  async createPhoneNumber(
+    @GetUser('uid') userId: string,
+    @Body() createPhoneDto: CreatePhoneDto,
+  ) {
+    return this.twilioService.createPhoneNumber(
+      userId,
+      createPhoneDto.countryCode,
+      createPhoneDto.number,
+      createPhoneDto.twilioSid,
+      createPhoneDto.twilioToken,
     );
   }
 

@@ -519,4 +519,140 @@ export class TwilioService {
       );
     }
   }
+
+  // ✅ Crear número de teléfono con validación de credenciales
+  async createPhoneNumber(
+    userId: string,
+    countryCode: string,
+    number: string,
+    twilioSid: string,
+    twilioToken: string,
+  ) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      // 1. Validar que el SID y Token son correctos
+      const isValidCredentials = await this.validateTwilioCredentials(
+        twilioSid,
+        twilioToken,
+      );
+      if (!isValidCredentials) {
+        throw new BadRequestException(
+          'Las credenciales de Twilio (SID y Token) son inválidas.',
+        );
+      }
+
+      // 2. Validar que el número de teléfono existe en esa cuenta de Twilio
+      const normalizedCountryCode = countryCode.startsWith('+')
+        ? countryCode
+        : `+${countryCode}`;
+
+      const normalizedNumber = number.replace(/\s|-|\(|\)/g, '');
+      const normalizedPhone = `${normalizedCountryCode}${normalizedNumber}`;
+
+      const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
+      let allPhoneNumbers: string[] = [];
+      let nextPageUri: string | null = null;
+
+      do {
+        const url: string = nextPageUri
+          ? `https://api.twilio.com${nextPageUri}`
+          : `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/IncomingPhoneNumbers.json`;
+
+        const response = await axios.get<{
+          incoming_phone_numbers: Array<{
+            phone_number: string;
+          }>;
+          next_page_uri: string | null;
+        }>(url, {
+          headers: {
+            Authorization: `Basic ${auth}`,
+          },
+        });
+
+        const phoneNumbers = response.data.incoming_phone_numbers.map((phone) =>
+          phone.phone_number.replace(/\s|-|\(|\)/g, ''),
+        );
+        allPhoneNumbers = [...allPhoneNumbers, ...phoneNumbers];
+        nextPageUri = response.data.next_page_uri;
+      } while (nextPageUri);
+
+      const isNumberFound = allPhoneNumbers.some(
+        (twilioPhone) => twilioPhone === normalizedPhone,
+      );
+
+      if (!isNumberFound) {
+        throw new BadRequestException(
+          'El número de teléfono no existe en la cuenta de Twilio proporcionada.',
+        );
+      }
+
+      // 3. Verificar que ese número de teléfono no esté ya en los números del usuario
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const phoneNumbersArray =
+        (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
+
+      const numberExists = phoneNumbersArray.some((phone) => {
+        const existingNumber =
+          (phone.number as string)?.replace(/\D/g, '') || '';
+        const existingCountryCode = phone.countryCode as string;
+        return (
+          existingNumber === normalizedNumber &&
+          existingCountryCode === normalizedCountryCode
+        );
+      });
+
+      if (numberExists) {
+        throw new BadRequestException(
+          'Este número de teléfono ya está registrado en tu cuenta.',
+        );
+      }
+
+      // 4. Agregar el número de teléfono a los números del usuario
+      const phoneId = Date.now();
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+
+      phoneNumbersArray.push({
+        phoneId: phoneId,
+        countryCode: normalizedCountryCode,
+        number: normalizedNumber,
+        state: 'Inactivo', // Inactivo porque no está siendo usado por ningún agente aún
+        importedBy: 'Twilio',
+      });
+
+      // Actualizar el estado de todos los phoneNumbers basado en los agentes
+      const updatedPhoneNumbers = this.updatePhoneNumbersState(
+        phoneNumbersArray,
+        agentsArray,
+      );
+
+      // Guardar en Firestore
+      await userDocRef.set(
+        {
+          phoneNumbers: updatedPhoneNumbers,
+        },
+        { merge: true },
+      );
+
+      return {
+        message: 'Número de teléfono añadido correctamente',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al crear el número de teléfono: ${(error as Error).message}`,
+      );
+    }
+  }
 }
