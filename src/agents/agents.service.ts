@@ -141,11 +141,14 @@ export class AgentsService {
       if (legacyAgent && Object.keys(legacyAgent).length > 0) {
         const legacyPhoneId = Date.now() - 1; // Un timestamp anterior
         const legacyCountryCode = (legacyAgent.countryCode as string) || '';
-        const legacyNumber = (legacyAgent.phoneNumber as number)?.toString() || '';
+        const legacyNumber =
+          (legacyAgent.phoneNumber as number)?.toString() || '';
 
         // Validar que el número legacy no esté en uso
         const legacyNumberInUse = agentsArray.some((agent) => {
-          const agentPhone = agent.phoneNumbers as Record<string, unknown> | undefined;
+          const agentPhone = agent.phoneNumbers as
+            | Record<string, unknown>
+            | undefined;
           if (!agentPhone) return false;
           return (
             (agentPhone.countryCode as string) === legacyCountryCode &&
@@ -169,8 +172,10 @@ export class AgentsService {
             language:
               typeof legacyAgent.language === 'string'
                 ? legacyAgent.language
-                : (legacyAgent.language as Record<string, string>)?.code || 'es',
-            voiceId: (legacyAgent.voiceId as string) ||
+                : (legacyAgent.language as Record<string, string>)?.code ||
+                  'es',
+            voiceId:
+              (legacyAgent.voiceId as string) ||
               (legacyAgent.labsId as string) ||
               '',
             firstInteraction: (legacyAgent.firstInteraction as string) || '',
@@ -204,7 +209,6 @@ export class AgentsService {
 
       // Agregar el nuevo agente al array
       agentsArray.push(newAgent);
-      const newIndex = agentsArray.length - 1;
 
       // Actualizar el estado de todos los phoneNumbers basado en los agentes
       const updatedPhoneNumbers = this.updatePhoneNumbersState(
@@ -273,7 +277,8 @@ export class AgentsService {
             typeof legacyAgent.language === 'string'
               ? legacyAgent.language
               : (legacyAgent.language as Record<string, string>)?.code || 'es',
-          voiceId: (legacyAgent.voiceId as string) ||
+          voiceId:
+            (legacyAgent.voiceId as string) ||
             (legacyAgent.labsId as string) ||
             '',
           firstInteraction: (legacyAgent.firstInteraction as string) || '',
@@ -345,10 +350,9 @@ export class AgentsService {
 
       // Obtener agente existente
       const existingAgent = { ...agentsArray[agentIndex] };
-      const existingPhone = existingAgent.phoneNumbers as Record<
-        string,
-        unknown
-      > | undefined;
+      const existingPhone = existingAgent.phoneNumbers as
+        | Record<string, unknown>
+        | undefined;
       const existingCountryCode = existingPhone?.countryCode as string;
       const existingNumber = existingPhone?.number as string;
 
@@ -358,8 +362,7 @@ export class AgentsService {
 
       // Verificar si el número está cambiando
       const numberChanged =
-        existingCountryCode !== newCountryCode ||
-        existingNumber !== newNumber;
+        existingCountryCode !== newCountryCode || existingNumber !== newNumber;
 
       // Determinar phoneId
       let phoneId: number;
@@ -526,7 +529,8 @@ export class AgentsService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const agentsArray = (userData?.agents as Array<Record<string, unknown>>) || [];
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
       const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
 
       // Determinar si usar nueva estructura (agents[]) o antigua (agent)
@@ -545,7 +549,10 @@ export class AgentsService {
         // Generar phoneId si no existe
         let phoneId = 0;
         if (firstAgent?.phoneNumbers) {
-          const existingPhone = firstAgent.phoneNumbers as Record<string, unknown>;
+          const existingPhone = firstAgent.phoneNumbers as Record<
+            string,
+            unknown
+          >;
           phoneId = (existingPhone.phoneId as number) || 0;
         }
         // Si no hay phoneId, generar uno nuevo basado en timestamp
@@ -562,7 +569,9 @@ export class AgentsService {
 
         // Si no hay agentes, crear uno nuevo
         if (!firstAgent) {
+          const newAgentId = Date.now();
           firstAgent = {
+            agentId: newAgentId,
             name: agentConfig.name,
             type: agentConfig.type,
             language: agentConfig.language,
@@ -577,6 +586,11 @@ export class AgentsService {
           };
           hasChanges = true;
         } else {
+          // Asegurar que el agente existente tenga agentId
+          if (!firstAgent.agentId) {
+            firstAgent.agentId = Date.now();
+            hasChanges = true;
+          }
           // Actualizar campos existentes
           if (firstAgent.name !== agentConfig.name) {
             firstAgent.name = agentConfig.name;
@@ -610,14 +624,20 @@ export class AgentsService {
             firstAgent.state = agentConfig.state || 'Activo';
             hasChanges = true;
           }
-          if (JSON.stringify(firstAgent.parameters) !== JSON.stringify(agentConfig.parameters)) {
+          if (
+            JSON.stringify(firstAgent.parameters) !==
+            JSON.stringify(agentConfig.parameters)
+          ) {
             firstAgent.parameters = agentConfig.parameters;
             hasChanges = true;
           }
           // totalMinutes no se actualiza desde el request, se mantiene el valor existente
 
           // Actualizar phoneNumbers (mantener phoneId existente si es el mismo número)
-          const existingPhone = firstAgent.phoneNumbers as Record<string, unknown>;
+          const existingPhone = firstAgent.phoneNumbers as Record<
+            string,
+            unknown
+          >;
           const existingCountryCode = existingPhone?.countryCode as string;
           const existingNumber = existingPhone?.number as string;
           const newCountryCode = agentConfig.phoneNumbers.countryCode;
@@ -669,7 +689,9 @@ export class AgentsService {
         };
 
         // Crear nuevo agente con estructura completa
+        const newAgentId = Date.now();
         const newAgent = {
+          agentId: newAgentId,
           name: agentConfig.name,
           type: agentConfig.type,
           language: agentConfig.language,
@@ -693,12 +715,20 @@ export class AgentsService {
         if (!useNewStructure && updates.agents) {
           const phoneNumbersArray =
             (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
-          const newAgentsArray = updates.agents as Array<Record<string, unknown>>;
-          
+          const newAgentsArray = updates.agents as Array<
+            Record<string, unknown>
+          >;
+
           // Asegurar que el phoneNumber tenga los campos necesarios
-          const phoneId = (updates.agents[0] as Record<string, unknown>).phoneNumbers as Record<string, unknown>;
-          const phoneIdValue = (phoneId.phoneId as number);
-          if (phoneIdValue && !phoneNumbersArray.some(p => (p.phoneId as number) === phoneIdValue)) {
+          const phoneId = (updates.agents[0] as Record<string, unknown>)
+            .phoneNumbers as Record<string, unknown>;
+          const phoneIdValue = phoneId.phoneId as number;
+          if (
+            phoneIdValue &&
+            !phoneNumbersArray.some(
+              (p) => (p.phoneId as number) === phoneIdValue,
+            )
+          ) {
             phoneNumbersArray.push({
               phoneId: phoneIdValue,
               countryCode: phoneId.countryCode as string,
@@ -707,14 +737,14 @@ export class AgentsService {
               importedBy: 'Twilio',
             });
           }
-          
+
           const updatedPhoneNumbers = this.updatePhoneNumbersState(
             phoneNumbersArray,
             newAgentsArray,
           );
           updates.phoneNumbers = updatedPhoneNumbers;
         }
-        
+
         await userDocRef.set(updates, { merge: true });
       }
 

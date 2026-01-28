@@ -27,7 +27,9 @@ export class AuthService {
         'FIREBASE_API_KEY no está configurada en las variables de entorno',
       );
     }
-    console.log('✅ [Auth] Servicio de autenticación inicializado correctamente');
+    console.log(
+      '✅ [Auth] Servicio de autenticación inicializado correctamente',
+    );
   }
 
   // 🔧 Helper para extraer mensaje de error de Firebase
@@ -42,7 +44,15 @@ export class AuthService {
 
   // ✅ Registro de usuario
   async registerUser(createUserDto: CreateUserDto) {
-    const { name, lastname, email, password, country, marketingConsent, accountStatus } = createUserDto;
+    const {
+      name,
+      lastname,
+      email,
+      password,
+      country,
+      marketingConsent,
+      accountStatus,
+    } = createUserDto;
 
     if (!email || !password)
       throw new BadRequestException(
@@ -59,12 +69,15 @@ export class AuthService {
         { email, password, returnSecureToken: true },
       );
       firebaseResponse = data;
-      console.log(`✅ [Auth] Usuario creado en Firebase Auth: ${firebaseResponse.localId}`);
+      console.log(
+        `✅ [Auth] Usuario creado en Firebase Auth: ${firebaseResponse.localId}`,
+      );
     } catch (error: any) {
       const message = this.getFirebaseErrorMessage(error);
-      const errorCode = axios.isAxiosError(error) && error.response?.data?.error
-        ? error.response.data.error.message
-        : 'UNKNOWN';
+      const errorCode =
+        axios.isAxiosError(error) && error.response?.data?.error
+          ? error.response.data.error.message
+          : 'UNKNOWN';
       console.error(
         `❌ [Auth] Error al registrar usuario ${email}: ${errorCode} - ${message}`,
       );
@@ -107,7 +120,9 @@ export class AuthService {
         phoneNumbers: [],
         agents: [],
       });
-      console.log(`✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`);
+      console.log(
+        `✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`,
+      );
     } catch (error: any) {
       console.error(
         `❌ [Auth] Error al guardar usuario en Firestore: ${error.message}`,
@@ -137,21 +152,21 @@ export class AuthService {
         `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${this.firebaseApiKey}`,
         { email, password, returnSecureToken: true },
       );
-      console.log(`✅ [Auth] Login exitoso para: ${email} (userId: ${data.localId})`);
+      console.log(
+        `✅ [Auth] Login exitoso para: ${email} (userId: ${data.localId})`,
+      );
       return { token: data.idToken, userId: data.localId };
     } catch (error: any) {
       const message = this.getFirebaseErrorMessage(error);
-      
+
       // Firebase Auth devuelve códigos específicos para diferentes errores
       // INVALID_PASSWORD, EMAIL_NOT_FOUND, etc.
       if (axios.isAxiosError(error) && error.response?.data?.error) {
         const errorCode = error.response.data.error.message;
-        
+
         // Log del error específico
-        console.warn(
-          `⚠️ [Auth] Error en login para ${email}: ${errorCode}`,
-        );
-        
+        console.warn(`⚠️ [Auth] Error en login para ${email}: ${errorCode}`);
+
         // Mensajes más descriptivos según el código de error
         if (errorCode === 'EMAIL_NOT_FOUND') {
           throw new UnauthorizedException('El email no está registrado.');
@@ -170,7 +185,7 @@ export class AuthService {
           );
         }
       }
-      
+
       // Error genérico
       console.error(
         `❌ [Auth] Error desconocido en login para ${email}: ${message}`,
@@ -184,7 +199,9 @@ export class AuthService {
     const { email } = recoverDto;
     if (!email) throw new BadRequestException('El email es obligatorio.');
 
-    console.log(`🔑 [Auth] Solicitud de recuperación de contraseña para: ${email}`);
+    console.log(
+      `🔑 [Auth] Solicitud de recuperación de contraseña para: ${email}`,
+    );
 
     try {
       await axios.post(
@@ -198,9 +215,10 @@ export class AuthService {
       };
     } catch (error: any) {
       const message = this.getFirebaseErrorMessage(error);
-      const errorCode = axios.isAxiosError(error) && error.response?.data?.error
-        ? error.response.data.error.message
-        : 'UNKNOWN';
+      const errorCode =
+        axios.isAxiosError(error) && error.response?.data?.error
+          ? error.response.data.error.message
+          : 'UNKNOWN';
       console.error(
         `❌ [Auth] Error al enviar email de recuperación a ${email}: ${errorCode} - ${message}`,
       );
@@ -224,14 +242,18 @@ export class AuthService {
       );
     }
 
-    console.log(`🔐 [Auth] Cambio de contraseña solicitado para userId: ${userId}`);
+    console.log(
+      `🔐 [Auth] Cambio de contraseña solicitado para userId: ${userId}`,
+    );
 
     try {
       // 1️⃣ Actualizar contraseña en Firebase Auth
       await admin.auth().updateUser(userId, {
         password: newPassword,
       });
-      console.log(`✅ [Auth] Contraseña actualizada en Firebase Auth para userId: ${userId}`);
+      console.log(
+        `✅ [Auth] Contraseña actualizada en Firebase Auth para userId: ${userId}`,
+      );
 
       // 2️⃣ Hashear la nueva contraseña
       const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -241,7 +263,9 @@ export class AuthService {
       await userRef.update({
         password: hashedPassword,
       });
-      console.log(`✅ [Auth] Contraseña actualizada en Firestore para userId: ${userId}`);
+      console.log(
+        `✅ [Auth] Contraseña actualizada en Firestore para userId: ${userId}`,
+      );
 
       return {
         message: 'Contraseña actualizada correctamente',
@@ -251,11 +275,11 @@ export class AuthService {
       console.error(
         `❌ [Auth] Error al cambiar contraseña para userId ${userId}: ${errorMessage}`,
       );
-      
+
       if (error.code === 'auth/user-not-found') {
         throw new BadRequestException('Usuario no encontrado');
       }
-      
+
       throw new BadRequestException(
         `No se pudo actualizar la contraseña: ${errorMessage}`,
       );

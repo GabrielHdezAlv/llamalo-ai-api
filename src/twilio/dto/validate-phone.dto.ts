@@ -18,4 +18,3 @@ export class ValidatePhoneDto {
   @IsString()
   number: string;
 }
-

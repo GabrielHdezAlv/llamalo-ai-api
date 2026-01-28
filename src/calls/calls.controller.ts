@@ -30,7 +30,10 @@ export class CallsController {
     console.log('📞 Llamada entrante detectada');
     // 🔒 Enmascarar números de teléfono para proteger privacidad
     console.log('➡️ Número marcado (To):', this.maskPhoneNumber(body.To));
-    console.log('➡️ Número del cliente (From):', this.maskPhoneNumber(body.From));
+    console.log(
+      '➡️ Número del cliente (From):',
+      this.maskPhoneNumber(body.From),
+    );
 
     try {
       // 🔹 Buscar agente por su número Twilio (body.To)
@@ -50,18 +53,23 @@ export class CallsController {
       if (agentSnapshot.empty) {
         console.log('🔍 Buscando en nueva estructura phoneNumbers[]...');
         const allUsers = await firestore.collection('users').get();
-        
+
         for (const userDoc of allUsers.docs) {
           const userData = userDoc.data();
-          const phoneNumbers = (userData.phoneNumbers as Array<{ phoneId?: number; countryCode?: string; number?: string }>) || [];
-          
+          const phoneNumbers =
+            (userData.phoneNumbers as Array<{
+              phoneId?: number;
+              countryCode?: string;
+              number?: string;
+            }>) || [];
+
           // Buscar en el array de números
           const found = phoneNumbers.some((phone) => {
             const phoneNumStr = phone.number?.replace(/\D/g, '') || '';
             const phoneNum = parseInt(phoneNumStr, 10);
             return phoneNum === agentNumber;
           });
-          
+
           if (found) {
             agentSnapshot = {
               empty: false,
@@ -88,21 +96,37 @@ export class CallsController {
       const agentDoc = agentSnapshot.docs[0];
       const userId = agentDoc.id;
       const agent = agentDoc.data();
-      
+
       // 🔍 Debug: Ver estructura del documento
-      console.log(`🔍 [Calls] Estructura del documento para usuario ${userId}:`, {
-        tieneAgent: !!(agent.agent || (agent.agents && Array.isArray(agent.agents) && agent.agents.length > 0)),
-        tieneTwilio: !!agent.twilio,
-        tieneIntegrations: !!agent.integrations,
-        tienePhoneNumbers: !!(agent.phoneNumbers && Array.isArray(agent.phoneNumbers)),
-        camposAgent: agent.agent ? Object.keys(agent.agent) : (agent.agents?.[0] ? Object.keys(agent.agents[0]) : 'no existe'),
-      });
-      
+      console.log(
+        `🔍 [Calls] Estructura del documento para usuario ${userId}:`,
+        {
+          tieneAgent: !!(
+            agent.agent ||
+            (agent.agents &&
+              Array.isArray(agent.agents) &&
+              agent.agents.length > 0)
+          ),
+          tieneTwilio: !!agent.twilio,
+          tieneIntegrations: !!agent.integrations,
+          tienePhoneNumbers: !!(
+            agent.phoneNumbers && Array.isArray(agent.phoneNumbers)
+          ),
+          camposAgent: agent.agent
+            ? Object.keys(agent.agent)
+            : agent.agents?.[0]
+              ? Object.keys(agent.agents[0])
+              : 'no existe',
+        },
+      );
+
       const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
-      
+
       // Obtener shopDomain de integrations.shopify si existe
-      const integrations = (agent.integrations as Record<string, unknown>) || {};
-      const shopifyIntegration = (integrations.shopify as Record<string, unknown>) || {};
+      const integrations =
+        (agent.integrations as Record<string, unknown>) || {};
+      const shopifyIntegration =
+        (integrations.shopify as Record<string, unknown>) || {};
       const shopDomain =
         typeof shopifyIntegration.shopDomain === 'string'
           ? shopifyIntegration.shopDomain
@@ -110,16 +134,28 @@ export class CallsController {
 
       // 🔍 Logging para debugging de Shopify
       if (!integrations || Object.keys(integrations).length === 0) {
-        console.log(`⚠️ [Calls] Usuario ${userId} no tiene integraciones configuradas`);
-      } else if (!shopifyIntegration || Object.keys(shopifyIntegration).length === 0) {
-        console.log(`⚠️ [Calls] Usuario ${userId} no tiene integración Shopify configurada`);
+        console.log(
+          `⚠️ [Calls] Usuario ${userId} no tiene integraciones configuradas`,
+        );
+      } else if (
+        !shopifyIntegration ||
+        Object.keys(shopifyIntegration).length === 0
+      ) {
+        console.log(
+          `⚠️ [Calls] Usuario ${userId} no tiene integración Shopify configurada`,
+        );
       } else if (!shopDomain) {
-        console.log(`⚠️ [Calls] Usuario ${userId} tiene integración Shopify pero no shopDomain. Datos:`, {
-          connected: shopifyIntegration.connected,
-          shopDomain: shopifyIntegration.shopDomain,
-        });
+        console.log(
+          `⚠️ [Calls] Usuario ${userId} tiene integración Shopify pero no shopDomain. Datos:`,
+          {
+            connected: shopifyIntegration.connected,
+            shopDomain: shopifyIntegration.shopDomain,
+          },
+        );
       } else {
-        console.log(`✅ [Calls] ShopDomain encontrado para usuario ${userId}: ${shopDomain}`);
+        console.log(
+          `✅ [Calls] ShopDomain encontrado para usuario ${userId}: ${shopDomain}`,
+        );
       }
 
       // // 🔹 Verificar antigüedad de la cuenta (deshabilitado temporalmente)
@@ -166,12 +202,13 @@ export class CallsController {
       };
 
       // Obtener datos del agente: primero intentar nueva estructura (agents[]), luego antigua (agent)
-      const agentsArray = (agent?.agents as Array<Record<string, unknown>>) || [];
+      const agentsArray =
+        (agent?.agents as Array<Record<string, unknown>>) || [];
       const legacyAgent = (agent?.agent as Record<string, unknown>) || {};
-      
+
       // Usar primer agente del array si existe, sino usar estructura antigua
       const agentData = agentsArray.length > 0 ? agentsArray[0] : legacyAgent;
-      
+
       const agentName =
         typeof agentData.name === 'string'
           ? agentData.name
@@ -181,25 +218,32 @@ export class CallsController {
 
       // Log para debugging de configuración del agente
       if (agentData.voiceId) {
-        console.log(`✅ [Calls] VoiceId encontrado para usuario ${userId}: ${agentData.voiceId}`);
+        console.log(
+          `✅ [Calls] VoiceId encontrado para usuario ${userId}: ${agentData.voiceId}`,
+        );
       } else if (agentData.labsId) {
         // Mantener compatibilidad con labsId por si acaso
-        console.log(`✅ [Calls] LabsId encontrado para usuario ${userId}: ${agentData.labsId}`);
+        console.log(
+          `✅ [Calls] LabsId encontrado para usuario ${userId}: ${agentData.labsId}`,
+        );
       } else {
-        console.warn(`⚠️ [Calls] Usuario ${userId} no tiene voiceId configurado en agent. Estructura agent:`, Object.keys(agentData));
+        console.warn(
+          `⚠️ [Calls] Usuario ${userId} no tiene voiceId configurado en agent. Estructura agent:`,
+          Object.keys(agentData),
+        );
       }
 
       addStreamParameter('agentName', agentName);
-      
+
       // Obtener firstInteraction: primero de agentData, luego de twilioConfig (compatibilidad)
-      const firstInteraction = 
+      const firstInteraction =
         typeof agentData.firstInteraction === 'string'
           ? agentData.firstInteraction
           : typeof twilioConfig.firstInteraction === 'string'
             ? twilioConfig.firstInteraction
             : undefined;
       addStreamParameter('greeting', firstInteraction);
-      
+
       // Obtener agentInstruction: primero de agentData, luego de twilioConfig (compatibilidad)
       const agentInstruction =
         typeof agentData.agentInstruction === 'string'
@@ -208,7 +252,7 @@ export class CallsController {
             ? twilioConfig.agentInstruction
             : undefined;
       addStreamParameter('instructions', agentInstruction);
-      
+
       addStreamParameter(
         'labsId',
         typeof agentData.voiceId === 'string'
@@ -217,12 +261,13 @@ export class CallsController {
             ? agentData.labsId
             : undefined,
       );
-      
+
       // Obtener language: puede ser string (nueva estructura) u objeto (antigua)
       const languageCode =
         typeof agentData.language === 'string'
           ? agentData.language
-          : typeof (agentData.language as Record<string, unknown>)?.code === 'string'
+          : typeof (agentData.language as Record<string, unknown>)?.code ===
+              'string'
             ? ((agentData.language as Record<string, unknown>).code as string)
             : undefined;
       addStreamParameter('language', languageCode);
@@ -243,18 +288,27 @@ export class CallsController {
       addStreamParameter('userId', userId);
       if (shopDomain) {
         addStreamParameter('shopDomain', shopDomain);
-        console.log(`✅ [Calls] ShopDomain agregado a parámetros de stream: ${shopDomain}`);
+        console.log(
+          `✅ [Calls] ShopDomain agregado a parámetros de stream: ${shopDomain}`,
+        );
       } else {
-        console.warn(`⚠️ [Calls] ShopDomain no agregado (no está configurado para usuario ${userId})`);
+        console.warn(
+          `⚠️ [Calls] ShopDomain no agregado (no está configurado para usuario ${userId})`,
+        );
       }
 
       // ✅ TwiML generado correctamente (sin loggear el contenido completo)
       const twimlString = r.toString();
-      console.log('✅ TwiML generado correctamente (longitud:', twimlString.length, 'caracteres)');
+      console.log(
+        '✅ TwiML generado correctamente (longitud:',
+        twimlString.length,
+        'caracteres)',
+      );
       res.type('text/xml').send(twimlString);
     } catch (error) {
       // 🔒 No loggear el error completo que podría contener información sensible
-      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
       console.error('❌ Error al procesar la llamada entrante:', errorMessage);
       (r.say as any)(
         'Ha ocurrido un error interno. Por favor, inténtelo más tarde.',
@@ -286,7 +340,11 @@ export class CallsController {
 
     const twimlString = r.toString();
     // ✅ Solo loggear longitud, no el contenido completo
-    console.log('📄 TwiML resume generado (longitud:', twimlString.length, 'caracteres)');
+    console.log(
+      '📄 TwiML resume generado (longitud:',
+      twimlString.length,
+      'caracteres)',
+    );
     res.type('text/xml').send(twimlString);
   }
 }

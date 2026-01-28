@@ -18,6 +18,12 @@ export class AgentParametersDto {
 }
 
 export class AgentDto {
+  @ApiProperty({
+    example: 1738000000000,
+    description: 'ID único del agente',
+  })
+  agentId: number;
+
   @ApiProperty({ example: 'Marta', description: 'Nombre del agente' })
   name: string;
 
@@ -95,8 +101,8 @@ export class CreateAgentResponseDto {
   agent: AgentDto;
 
   @ApiProperty({
-    example: 0,
-    description: 'Índice del agente en el array',
+    example: 1738000000000,
+    description: 'ID único del agente creado',
   })
-  index: number;
+  agentId: number;
 }

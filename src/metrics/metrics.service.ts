@@ -264,15 +264,20 @@ export class MetricsService {
           // 🔒 No loggear el contenido completo de error.response?.data que podría contener tokens o información sensible
           // Solo loggear el tipo de error si existe
           if (error.response?.data) {
-            const errorType = typeof error.response.data === 'object' && error.response.data !== null
-              ? (error.response.data as { message?: string; error?: string })?.message || 
-                (error.response.data as { message?: string; error?: string })?.error || 
-                'Error desconocido'
-              : 'Error desconocido';
+            const errorType =
+              typeof error.response.data === 'object' &&
+              error.response.data !== null
+                ? (error.response.data as { message?: string; error?: string })
+                    ?.message ||
+                  (error.response.data as { message?: string; error?: string })
+                    ?.error ||
+                  'Error desconocido'
+                : 'Error desconocido';
             console.error(`[Metrics] Tipo de error: ${errorType}`);
           }
         } else {
-          const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+          const errorMessage =
+            error instanceof Error ? error.message : 'Error desconocido';
           console.error(
             '[Metrics] Error obteniendo llamadas de Twilio:',
             errorMessage,

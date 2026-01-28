@@ -13,4 +13,3 @@ export class ShopifyCallbackResponseDto {
   })
   message: string;
 }
-

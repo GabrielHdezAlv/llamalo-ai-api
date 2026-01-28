@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -45,7 +53,8 @@ export class TwilioController {
   @UseGuards(FirebaseAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Verificar si un número de teléfono está disponible en la cuenta de Twilio del usuario',
+    summary:
+      'Verificar si un número de teléfono está disponible en la cuenta de Twilio del usuario',
   })
   @ApiResponse({ status: 201, type: ValidatePhoneResponseDto })
   @ApiResponse({ status: 400, description: 'Número no disponible' })

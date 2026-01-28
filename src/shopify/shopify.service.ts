@@ -702,7 +702,10 @@ export class ShopifyService {
               title: (item.title as string) || '',
               quantity: (item.quantity as number) || 0,
               price: parseFloat((item.price as string) || '0'),
-              currency: (item.currency as string) || (order.currency as string) || 'USD',
+              currency:
+                (item.currency as string) ||
+                (order.currency as string) ||
+                'USD',
             })),
           );
         }
@@ -762,8 +765,7 @@ export class ShopifyService {
 
       // Filtrar por email (case-insensitive)
       const filteredOrders = allOrders.orders.filter(
-        (order) =>
-          order.customer?.email?.toLowerCase() === email.toLowerCase(),
+        (order) => order.customer?.email?.toLowerCase() === email.toLowerCase(),
       );
 
       // Ordenar por fecha de creación (más reciente primero)

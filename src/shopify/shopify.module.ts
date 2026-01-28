@@ -8,4 +8,3 @@ import { ShopifyService } from './shopify.service';
   exports: [ShopifyService],
 })
 export class ShopifyModule {}
-

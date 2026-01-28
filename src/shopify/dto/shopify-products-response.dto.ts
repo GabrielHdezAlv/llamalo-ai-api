@@ -4,7 +4,10 @@ export class NormalizedVariantDto {
   @ApiProperty({ example: 123456789, description: 'ID de la variante' })
   id: number;
 
-  @ApiProperty({ example: 'Talla M / Color Rojo', description: 'Título de la variante' })
+  @ApiProperty({
+    example: 'Talla M / Color Rojo',
+    description: 'Título de la variante',
+  })
   title: string;
 
   @ApiProperty({
@@ -47,10 +50,16 @@ export class NormalizedProductDto {
   @ApiProperty({ example: 123456789, description: 'ID del producto' })
   productId: number;
 
-  @ApiProperty({ example: 'Camiseta de Algodón', description: 'Título del producto' })
+  @ApiProperty({
+    example: 'Camiseta de Algodón',
+    description: 'Título del producto',
+  })
   title: string;
 
-  @ApiProperty({ example: 'camiseta-algodon', description: 'Handle del producto' })
+  @ApiProperty({
+    example: 'camiseta-algodon',
+    description: 'Handle del producto',
+  })
   handle: string;
 
   @ApiProperty({
@@ -109,4 +118,3 @@ export class ShopifyProductsResponseDto {
   })
   products: NormalizedProductDto[];
 }
-

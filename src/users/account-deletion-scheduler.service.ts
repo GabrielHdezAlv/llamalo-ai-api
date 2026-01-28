@@ -11,8 +11,10 @@ export class AccountDeletionSchedulerService {
   // Ejecutar cada día a las 2:00 AM para procesar eliminaciones programadas
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
   async handleScheduledDeletions() {
-    this.logger.log('🔄 Iniciando procesamiento de eliminaciones programadas...');
-    
+    this.logger.log(
+      '🔄 Iniciando procesamiento de eliminaciones programadas...',
+    );
+
     try {
       const result = await this.usersService.processScheduledDeletions();
       this.logger.log(

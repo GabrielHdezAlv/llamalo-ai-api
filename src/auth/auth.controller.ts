@@ -4,7 +4,12 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { RecoverDto } from './dto/recover.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { FirebaseAuthGuard } from './firebase-auth.guard';
 import { GetUser } from './get-user.decorator';
 

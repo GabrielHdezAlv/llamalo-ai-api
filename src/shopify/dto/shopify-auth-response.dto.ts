@@ -14,4 +14,3 @@ export class ShopifyAuthResponseDto {
   })
   message: string;
 }
-

@@ -37,7 +37,9 @@ export class UsersController {
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Obtener perfil del usuario autenticado' })
   @ApiResponse({ status: 200, type: UserProfileResponseDto })
-  async getProfile(@GetUser('uid') userId: string): Promise<UserProfileResponse> {
+  async getProfile(
+    @GetUser('uid') userId: string,
+  ): Promise<UserProfileResponse> {
     return this.usersService.getUserProfile(userId);
   }
 
@@ -79,9 +81,10 @@ export class UsersController {
 
   @Delete('account')
   @UseGuards(FirebaseAuthGuard)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Eliminar cuenta del usuario',
-    description: 'Programa la eliminación de la cuenta para dentro de 10 días. Durante este período, el usuario puede recuperar sus datos. Después de 10 días, la cuenta será marcada como "Eliminado".'
+    description:
+      'Programa la eliminación de la cuenta para dentro de 10 días. Durante este período, el usuario puede recuperar sus datos. Después de 10 días, la cuenta será marcada como "Eliminado".',
   })
   @ApiResponse({
     status: 200,

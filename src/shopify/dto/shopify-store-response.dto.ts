@@ -61,4 +61,3 @@ export class ShopifyStoreResponseDto {
   })
   store: NormalizedStoreDto;
 }
-

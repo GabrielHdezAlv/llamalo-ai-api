@@ -61,7 +61,7 @@ async function bootstrap() {
     console.log('🛰️ Nueva conexión WebSocket establecida');
     // 🔒 No loggear dirección IP completa por privacidad
     const remoteAddress = req.socket.remoteAddress;
-    const maskedIp = remoteAddress 
+    const maskedIp = remoteAddress
       ? remoteAddress.split('.').slice(0, 2).join('.') + '.***.***'
       : 'desconocida';
     console.log('📡 Cliente conectado desde:', maskedIp);

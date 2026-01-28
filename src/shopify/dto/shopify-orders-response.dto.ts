@@ -18,7 +18,10 @@ export class NormalizedLineItemDto {
   })
   variantId: number | null;
 
-  @ApiProperty({ example: 'Camiseta - Talla M', description: 'Título del item' })
+  @ApiProperty({
+    example: 'Camiseta - Talla M',
+    description: 'Título del item',
+  })
   title: string;
 
   @ApiProperty({ example: 2, description: 'Cantidad' })
@@ -117,4 +120,3 @@ export class ShopifyOrdersResponseDto {
   })
   orders: NormalizedOrderDto[];
 }
-

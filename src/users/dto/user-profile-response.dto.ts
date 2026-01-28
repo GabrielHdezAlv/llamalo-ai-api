@@ -58,7 +58,10 @@ export class UserProfileResponseDto {
   @ApiProperty({ description: 'Configuración de Twilio' })
   twilio?: Record<string, unknown>;
 
-  @ApiProperty({ description: 'Configuración del agente (compatibilidad: primer agente del array)' })
+  @ApiProperty({
+    description:
+      'Configuración del agente (compatibilidad: primer agente del array)',
+  })
   agent?: Record<string, unknown>;
 
   @ApiProperty({ description: 'Integraciones del usuario' })
