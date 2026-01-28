@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   UseGuards,
   HttpCode,
@@ -19,6 +20,8 @@ import { TwilioConfigResponseDto } from './dto/twilio-config-response.dto';
 import { TwilioInfoResponseDto } from './dto/twilio-info-response.dto';
 import { ValidatePhoneDto } from './dto/validate-phone.dto';
 import { ValidatePhoneResponseDto } from './dto/validate-phone-response.dto';
+import { DeletePhoneDto } from './dto/delete-phone.dto';
+import { DeletePhoneResponseDto } from './dto/delete-phone-response.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 
@@ -67,5 +70,21 @@ export class TwilioController {
       validatePhoneDto.countryCode,
       validatePhoneDto.number,
     );
+  }
+
+  @Delete('phone-number')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary: 'Eliminar un número de teléfono',
+    description:
+      'Elimina un número de teléfono del array phoneNumbers del usuario. Si algún agente tiene este número, se eliminará el número del agente y se pondrá su estado a "Inactivo".',
+  })
+  @ApiResponse({ status: 200, type: DeletePhoneResponseDto })
+  @ApiResponse({ status: 404, description: 'Número de teléfono no encontrado' })
+  async deletePhoneNumber(
+    @GetUser('uid') userId: string,
+    @Body() deletePhoneDto: DeletePhoneDto,
+  ) {
+    return this.twilioService.deletePhoneNumber(userId, deletePhoneDto.phoneId);
   }
 }

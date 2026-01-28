@@ -243,6 +243,120 @@ export class TwilioService {
     }
   }
 
+  // Helper para calcular el estado de un phoneNumber basado en si algún agente lo usa
+  private calculatePhoneNumberState(
+    phoneId: number,
+    agents: Array<Record<string, unknown>>,
+  ): 'Activo' | 'Inactivo' {
+    if (!agents || agents.length === 0) {
+      return 'Inactivo';
+    }
+    const isUsed = agents.some((agent) => {
+      const agentPhone = agent.phoneNumbers as
+        | Record<string, unknown>
+        | undefined;
+      return agentPhone && (agentPhone.phoneId as number) === phoneId;
+    });
+    return isUsed ? 'Activo' : 'Inactivo';
+  }
+
+  // Helper para actualizar el estado de todos los phoneNumbers
+  private updatePhoneNumbersState(
+    phoneNumbersArray: Array<Record<string, unknown>>,
+    agentsArray: Array<Record<string, unknown>>,
+  ): Array<Record<string, unknown>> {
+    return phoneNumbersArray.map((phone) => ({
+      ...phone,
+      state: this.calculatePhoneNumberState(
+        phone.phoneId as number,
+        agentsArray,
+      ),
+      importedBy: phone.importedBy || 'Twilio',
+    }));
+  }
+
+  // ✅ Eliminar número de teléfono
+  async deletePhoneNumber(userId: string, phoneId: number) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const phoneNumbersArray =
+        (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+
+      // Buscar el número de teléfono en el array
+      const phoneIndex = phoneNumbersArray.findIndex(
+        (phone) => (phone.phoneId as number) === phoneId,
+      );
+
+      if (phoneIndex === -1) {
+        throw new NotFoundException(
+          `Número de teléfono con phoneId ${phoneId} no encontrado.`,
+        );
+      }
+
+      // Buscar agentes que usen este phoneId
+      const affectedAgents: number[] = [];
+      const updatedAgents = agentsArray.map((agent) => {
+        const agentPhone = agent.phoneNumbers as
+          | Record<string, unknown>
+          | undefined;
+        const agentPhoneId = agentPhone?.phoneId as number | undefined;
+
+        if (agentPhoneId === phoneId) {
+          affectedAgents.push(agent.agentId as number);
+          // Eliminar phoneNumbers del agente y poner estado a "Inactivo"
+          const { phoneNumbers, ...agentWithoutPhone } = agent;
+          return {
+            ...agentWithoutPhone,
+            state: 'Inactivo',
+          };
+        }
+        return agent;
+      });
+
+      // Eliminar el número del array phoneNumbers
+      phoneNumbersArray.splice(phoneIndex, 1);
+
+      // Actualizar el estado de todos los phoneNumbers restantes basado en los agentes
+      const updatedPhoneNumbers = this.updatePhoneNumbersState(
+        phoneNumbersArray,
+        updatedAgents,
+      );
+
+      // Guardar en Firestore
+      await userDocRef.set(
+        {
+          agents: updatedAgents,
+          phoneNumbers: updatedPhoneNumbers,
+        },
+        { merge: true },
+      );
+
+      return {
+        message: 'Número de teléfono eliminado correctamente.',
+        affectedAgents: affectedAgents.length,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al eliminar el número de teléfono: ${(error as Error).message}`,
+      );
+    }
+  }
+
   // ✅ Verificar si un número de teléfono está en la cuenta de Twilio del usuario
   async validatePhoneNumber(
     userId: string,
