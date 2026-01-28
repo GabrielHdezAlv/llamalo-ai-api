@@ -8,6 +8,7 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -32,6 +33,37 @@ import { GetUser } from '../auth/get-user.decorator';
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Get('phone-numbers')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({ summary: 'Obtener los números de teléfono del usuario' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      type: 'object',
+      properties: {
+        phoneNumbers: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              phoneId: { type: 'number' },
+              countryCode: { type: 'string' },
+              number: { type: 'string' },
+              state: { type: 'string', enum: ['Activo', 'Inactivo'] },
+              importedBy: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  })
+  async getPhoneNumbers(
+    @GetUser('uid') userId: string,
+    @Query('q') query?: string,
+  ) {
+    return this.usersService.getUserPhoneNumbers(userId, query);
+  }
 
   @Get('profile')
   @UseGuards(FirebaseAuthGuard)

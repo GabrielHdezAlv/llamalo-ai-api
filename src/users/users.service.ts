@@ -134,6 +134,28 @@ export class UsersService {
   private firestore = getFirestore();
   private storage = admin.storage();
 
+  private filterPhoneNumbers(phoneNumbers: PhoneNumber[], query?: string) {
+    if (!query || !query.trim()) {
+      return phoneNumbers;
+    }
+
+    const q = query.toLowerCase().trim();
+
+    return phoneNumbers.filter((phone) => {
+      const countryCode = phone.countryCode?.toLowerCase() || '';
+      const number = phone.number?.toLowerCase() || '';
+      const importedBy = phone.importedBy?.toLowerCase() || '';
+      const state = phone.state?.toLowerCase() || '';
+
+      return (
+        countryCode.includes(q) ||
+        number.includes(q) ||
+        importedBy.includes(q) ||
+        state.includes(q)
+      );
+    });
+  }
+
   // Helper para calcular el estado de un phoneNumber basado en si algún agente lo usa
   private calculatePhoneNumberState(
     phoneId: number,
@@ -214,6 +236,46 @@ export class UsersService {
       }
       throw new BadRequestException(
         `Error al obtener el perfil del usuario: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Obtener phoneNumbers del usuario (con búsqueda opcional)
+  async getUserPhoneNumbers(userId: string, query?: string) {
+    try {
+      const docRef = this.firestore.collection('users').doc(userId);
+      const snapshot = await docRef.get();
+
+      if (!snapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado en Firestore');
+      }
+
+      const userData = snapshot.data() as UserData;
+
+      const rawPhoneNumbers = userData?.phoneNumbers || [];
+      const enrichedPhoneNumbers = rawPhoneNumbers.map((phone) => ({
+        ...phone,
+        state: this.calculatePhoneNumberState(
+          phone.phoneId,
+          userData?.agents,
+        ),
+        importedBy: phone.importedBy || 'Twilio',
+      }));
+
+      const filteredPhoneNumbers = this.filterPhoneNumbers(
+        enrichedPhoneNumbers,
+        query,
+      );
+
+      return {
+        phoneNumbers: filteredPhoneNumbers,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al obtener los números de teléfono: ${(error as Error).message}`,
       );
     }
   }
