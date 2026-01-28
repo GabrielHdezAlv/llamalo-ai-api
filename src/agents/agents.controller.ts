@@ -8,6 +8,7 @@ import {
   Param,
   ParseIntPipe,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -55,8 +56,11 @@ export class AgentsController {
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Listar todos los agentes del usuario' })
   @ApiResponse({ status: 200, type: ListAgentsResponseDto })
-  async getUserAgents(@GetUser('uid') userId: string) {
-    return this.agentsService.getUserAgents(userId);
+  async getUserAgents(
+    @GetUser('uid') userId: string,
+    @Query('q') query?: string,
+  ) {
+    return this.agentsService.getUserAgents(userId, query);
   }
 
   @Put('agents/:agentId')

@@ -10,6 +10,26 @@ import { getFirestore } from '../firebase/firebase.config';
 export class AgentsService {
   private firestore = getFirestore();
 
+  // Helper para filtrar agentes por parámetros de búsqueda
+  private filterAgents(agents: Array<Record<string, unknown>>, query?: string) {
+    if (!query || !query.trim()) {
+      return agents;
+    }
+
+    const q = query.toLowerCase().trim();
+
+    return agents.filter((agent) => {
+      const name = (agent.name as string | undefined)?.toLowerCase() || '';
+      const label = (agent.label as string | undefined)?.toLowerCase() || '';
+
+      const phone = agent.phoneNumbers as Record<string, unknown> | undefined;
+      const phoneNumber =
+        (phone?.number as string | undefined)?.toLowerCase() || '';
+
+      return name.includes(q) || label.includes(q) || phoneNumber.includes(q);
+    });
+  }
+
   // Helper para calcular el estado de un phoneNumber basado en si algún agente lo usa
   private calculatePhoneNumberState(
     phoneId: number,
@@ -243,8 +263,8 @@ export class AgentsService {
     }
   }
 
-  // ✅ Listar todos los agentes del usuario
-  async getUserAgents(userId: string) {
+  // ✅ Listar todos los agentes del usuario (con búsqueda opcional)
+  async getUserAgents(userId: string, query?: string) {
     try {
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
@@ -257,6 +277,8 @@ export class AgentsService {
       const agentsArray =
         (userData?.agents as Array<Record<string, unknown>>) || [];
       const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
+
+      let resultAgents = agentsArray;
 
       // Si hay estructura antigua, incluirla en la respuesta
       if (legacyAgent && Object.keys(legacyAgent).length > 0) {
@@ -296,13 +318,13 @@ export class AgentsService {
           totalMinutes: 0,
         };
 
-        return {
-          agents: [migratedAgent, ...agentsArray],
-        };
+        resultAgents = [migratedAgent, ...agentsArray];
       }
 
+      const filteredAgents = this.filterAgents(resultAgents, query);
+
       return {
-        agents: agentsArray,
+        agents: filteredAgents,
       };
     } catch (error) {
       if (
