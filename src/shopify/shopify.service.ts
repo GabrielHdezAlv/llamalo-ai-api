@@ -436,14 +436,48 @@ export class ShopifyService {
         });
       }
 
-      // Actualizar referencia en users
+      // Actualizar referencia en users - añadir o actualizar en el array
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const integrations =
+        (userData?.integrations as Record<string, unknown>) || {};
+      const currentShopifyArray =
+        (integrations.shopify as Array<{
+          connected: boolean;
+          shopDomain: string;
+        }>) || [];
+
+      // Buscar si esta tienda ya existe en el array
+      const existingIndex = currentShopifyArray.findIndex(
+        (store) => store.shopDomain === normalizedShop,
+      );
+
+      let updatedShopifyArray: Array<{
+        connected: boolean;
+        shopDomain: string;
+      }>;
+
+      if (existingIndex !== -1) {
+        // Actualizar la tienda existente
+        updatedShopifyArray = [...currentShopifyArray];
+        updatedShopifyArray[existingIndex] = {
+          connected: true,
+          shopDomain: normalizedShop,
+        };
+      } else {
+        // Añadir nueva tienda al array
+        updatedShopifyArray = [
+          ...currentShopifyArray,
+          {
+            connected: true,
+            shopDomain: normalizedShop,
+          },
+        ];
+      }
+
       await userDocRef.set(
         {
           integrations: {
-            shopify: {
-              connected: true,
-              shopDomain: normalizedShop,
-            },
+            shopify: updatedShopifyArray,
           },
         },
         { merge: true },
@@ -848,7 +882,7 @@ export class ShopifyService {
         updatedAt: now,
       });
 
-      // Actualizar referencia en users - eliminar la referencia si no hay más tiendas activas
+      // Actualizar referencia en users - eliminar del array
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
 
@@ -856,42 +890,32 @@ export class ShopifyService {
         const userData = userSnapshot.data() as Record<string, unknown>;
         const integrations =
           (userData?.integrations as Record<string, unknown>) || {};
-        const shopifyIntegration = integrations.shopify as
-          | Record<string, unknown>
-          | undefined;
+        const shopifyArray =
+          (integrations.shopify as Array<{
+            connected: boolean;
+            shopDomain: string;
+          }>) || [];
 
-        // Verificar si hay otras tiendas activas
-        const activeStoresQuery = await this.firestore
-          .collection('shopifyStores')
-          .where('ownerUserId', '==', userId)
-          .where('status', '==', 'active')
-          .get();
+        // Filtrar la tienda revocada del array
+        const updatedShopifyArray = shopifyArray.filter(
+          (store) => store.shopDomain !== normalizedShop,
+        );
 
-        if (activeStoresQuery.empty) {
-          // No hay más tiendas activas, eliminar referencia
-          if (shopifyIntegration) {
-            delete integrations.shopify;
-            await userDocRef.set({ integrations }, { merge: true });
-          }
+        // Actualizar en users
+        if (updatedShopifyArray.length === 0) {
+          // Si no quedan tiendas, eliminar la propiedad shopify
+          delete integrations.shopify;
+          await userDocRef.set({ integrations }, { merge: true });
         } else {
-          // Hay otras tiendas activas, actualizar solo si esta era la tienda referenciada
-          if (shopifyIntegration?.shopDomain === normalizedShop) {
-            // Actualizar a la primera tienda activa disponible
-            const firstActiveStore =
-              activeStoresQuery.docs[0].data() as ShopifyStoreDocument;
-            await userDocRef.set(
-              {
-                integrations: {
-                  ...integrations,
-                  shopify: {
-                    connected: true,
-                    shopDomain: firstActiveStore.shopDomain,
-                  },
-                },
+          // Si quedan tiendas, actualizar el array
+          await userDocRef.set(
+            {
+              integrations: {
+                shopify: updatedShopifyArray,
               },
-              { merge: true },
-            );
-          }
+            },
+            { merge: true },
+          );
         }
       }
     } catch (error) {

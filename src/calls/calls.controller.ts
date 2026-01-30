@@ -122,39 +122,35 @@ export class CallsController {
 
       const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
 
-      // Obtener shopDomain de integrations.shopify si existe
+      // Obtener shopDomain de integrations.shopify (ahora es un array)
       const integrations =
         (agent.integrations as Record<string, unknown>) || {};
-      const shopifyIntegration =
-        (integrations.shopify as Record<string, unknown>) || {};
-      const shopDomain =
-        typeof shopifyIntegration.shopDomain === 'string'
-          ? shopifyIntegration.shopDomain
-          : undefined;
+      const shopifyArray =
+        (integrations.shopify as Array<{
+          connected: boolean;
+          shopDomain: string;
+        }>) || [];
+
+      // Usar la primera tienda conectada del array (si existe)
+      const firstShopify = shopifyArray.find((store) => store.connected);
+      const shopDomain = firstShopify?.shopDomain;
 
       // 🔍 Logging para debugging de Shopify
       if (!integrations || Object.keys(integrations).length === 0) {
         console.log(
           `⚠️ [Calls] Usuario ${userId} no tiene integraciones configuradas`,
         );
-      } else if (
-        !shopifyIntegration ||
-        Object.keys(shopifyIntegration).length === 0
-      ) {
+      } else if (!shopifyArray || shopifyArray.length === 0) {
         console.log(
-          `⚠️ [Calls] Usuario ${userId} no tiene integración Shopify configurada`,
+          `⚠️ [Calls] Usuario ${userId} no tiene tiendas Shopify configuradas`,
         );
-      } else if (!shopDomain) {
+      } else if (!firstShopify) {
         console.log(
-          `⚠️ [Calls] Usuario ${userId} tiene integración Shopify pero no shopDomain. Datos:`,
-          {
-            connected: shopifyIntegration.connected,
-            shopDomain: shopifyIntegration.shopDomain,
-          },
+          `⚠️ [Calls] Usuario ${userId} tiene ${shopifyArray.length} tiendas Shopify pero ninguna conectada`,
         );
       } else {
         console.log(
-          `✅ [Calls] ShopDomain encontrado para usuario ${userId}: ${shopDomain}`,
+          `✅ [Calls] ShopDomain encontrado para usuario ${userId}: ${shopDomain} (${shopifyArray.length} tienda(s) total)`,
         );
       }
 

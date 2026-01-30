@@ -64,12 +64,20 @@ export class UserProfileResponseDto {
   })
   agent?: Record<string, unknown>;
 
-  @ApiProperty({ description: 'Integraciones del usuario' })
+  @ApiProperty({
+    description: 'Integraciones del usuario',
+    example: {
+      shopify: [
+        { connected: true, shopDomain: 'llamaloai-dev.myshopify.com' },
+        { connected: true, shopDomain: 'new-llamalo.myshopify.com' },
+      ],
+    },
+  })
   integrations?: {
-    shopify?: {
+    shopify?: Array<{
       connected: boolean;
       shopDomain: string;
-    };
+    }>;
   };
 
   @ApiProperty({ description: 'Números de teléfono del usuario' })

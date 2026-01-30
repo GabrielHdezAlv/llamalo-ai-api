@@ -108,10 +108,7 @@ export class AuthService {
         accountStatus,
         createdAt: admin.firestore.Timestamp.now(),
         integrations: {
-          shopify: {
-            connected: false,
-            shopDomain: '',
-          },
+          shopify: [],
         },
         twilio: {
           twilioSid: '',

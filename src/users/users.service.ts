@@ -52,10 +52,10 @@ interface UserData {
   createdAt?: admin.firestore.Timestamp | string;
   scheduledDeletionDate?: admin.firestore.Timestamp;
   integrations?: {
-    shopify?: {
+    shopify?: Array<{
       connected: boolean;
       shopDomain: string;
-    };
+    }>;
   };
   twilio?: {
     twilioSid: string;
@@ -85,10 +85,10 @@ export type UserProfileResponse = {
   };
   agent?: Record<string, unknown>;
   integrations?: {
-    shopify?: {
+    shopify?: Array<{
       connected: boolean;
       shopDomain: string;
-    };
+    }>;
   };
   phoneNumbers?: Array<{
     phoneId: number;
@@ -255,10 +255,7 @@ export class UsersService {
       const rawPhoneNumbers = userData?.phoneNumbers || [];
       const enrichedPhoneNumbers = rawPhoneNumbers.map((phone) => ({
         ...phone,
-        state: this.calculatePhoneNumberState(
-          phone.phoneId,
-          userData?.agents,
-        ),
+        state: this.calculatePhoneNumberState(phone.phoneId, userData?.agents),
         importedBy: phone.importedBy || 'Twilio',
       }));
 
