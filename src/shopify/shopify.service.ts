@@ -30,6 +30,8 @@ interface OAuthSessionDocument {
   id: string;
   userId: string;
   shopDomain: string;
+  /** URL del frontend a la que redirigir tras el callback (opcional) */
+  frontendRedirectUrl?: string;
   createdAt: admin.firestore.Timestamp | Date;
   expiresAt: admin.firestore.Timestamp | Date;
 }
@@ -184,9 +186,36 @@ export class ShopifyService {
   }
 
   /**
-   * Crea una sesión OAuth y retorna el oauthSessionId
+   * Valida que returnTo pertenezca al dominio permitido (FRONTEND_URL) para evitar open redirect.
    */
-  async createOAuthSession(userId: string, shop: string): Promise<string> {
+  private validateReturnTo(returnTo: string | undefined): string | undefined {
+    if (!returnTo || typeof returnTo !== 'string' || !returnTo.trim()) {
+      return undefined;
+    }
+    const base = process.env.FRONTEND_URL?.trim();
+    if (!base) {
+      return undefined;
+    }
+    const baseNormalized = base.replace(/\/$/, '');
+    const urlNormalized = returnTo.trim();
+    if (
+      urlNormalized === baseNormalized ||
+      urlNormalized.startsWith(baseNormalized + '/')
+    ) {
+      return urlNormalized;
+    }
+    return undefined;
+  }
+
+  /**
+   * Crea una sesión OAuth y retorna el oauthSessionId.
+   * Si se pasa returnTo (URL del frontend), debe empezar por FRONTEND_URL; se guarda para redirigir tras el callback.
+   */
+  async createOAuthSession(
+    userId: string,
+    shop: string,
+    returnTo?: string,
+  ): Promise<string> {
     try {
       // Verificar que el usuario existe
       const userDocRef = this.firestore.collection('users').doc(userId);
@@ -200,6 +229,8 @@ export class ShopifyService {
       const normalizedShop = shop
         .replace(/^https?:\/\//, '')
         .replace(/\/$/, '');
+
+      const frontendRedirectUrl = this.validateReturnTo(returnTo);
 
       // Generar ID único para la sesión
       const sessionId = crypto.randomBytes(32).toString('hex');
@@ -215,6 +246,7 @@ export class ShopifyService {
         id: sessionId,
         userId: userId,
         shopDomain: normalizedShop,
+        ...(frontendRedirectUrl && { frontendRedirectUrl }),
         createdAt: now,
         expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
       });

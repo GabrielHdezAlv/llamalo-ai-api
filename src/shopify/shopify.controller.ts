@@ -62,6 +62,14 @@ export class ShopifyController {
       'Si es false, devuelve la URL en JSON en lugar de redirigir. Nota: Swagger se detecta automáticamente y devuelve JSON sin necesidad de este parámetro.',
     required: false,
   })
+  @ApiQuery({
+    name: 'returnTo',
+    type: String,
+    example: 'https://app.ejemplo.com/dashboard/agents/create',
+    description:
+      'URL absoluta del frontend a la que redirigir tras autorizar en Shopify. Debe pertenecer al dominio FRONTEND_URL.',
+    required: false,
+  })
   @ApiResponse({
     status: 302,
     description:
@@ -97,10 +105,11 @@ export class ShopifyController {
         referer.includes('swagger') ||
         userAgent.includes('Swagger');
 
-      // Crear sesión OAuth segura
+      // Crear sesión OAuth segura (returnTo se guarda para redirigir tras el callback)
       const oauthSessionId = await this.shopifyService.createOAuthSession(
         userId,
         query.shop,
+        query.returnTo,
       );
 
       // Construir la URL de callback
@@ -163,9 +172,15 @@ export class ShopifyController {
     required: true,
   })
   @ApiResponse({
+    status: 302,
+    description:
+      'Redirección al frontend (returnTo o FRONTEND_URL/dashboard/agents/create) con ?shopify=success&shop=...',
+  })
+  @ApiResponse({
     status: 200,
     type: ShopifyCallbackResponseDto,
-    description: 'Token guardado correctamente',
+    description:
+      'Token guardado correctamente (solo si no hay returnTo/FRONTEND_URL configurado)',
   })
   @ApiResponse({
     status: 400,
@@ -180,8 +195,39 @@ export class ShopifyController {
     @Query() query: ShopifyCallbackQueryDto,
     @Res() res: Response,
   ) {
+    const getRedirectBase = (frontendRedirectUrl?: string): string | null => {
+      if (frontendRedirectUrl) return frontendRedirectUrl;
+      const base = process.env.FRONTEND_URL?.trim();
+      if (!base) return null;
+      return base.replace(/\/$/, '') + '/dashboard/agents/create';
+    };
+
+    const redirectToFrontend = (
+      base: string,
+      params: {
+        shopify: string;
+        shop?: string;
+        code?: string;
+        message?: string;
+      },
+    ) => {
+      const url = new URL(base);
+      Object.entries(params).forEach(([k, v]) => {
+        if (v != null && v !== '') url.searchParams.set(k, v);
+      });
+      return res.redirect(302, url.toString());
+    };
+
     try {
       if (!query.state) {
+        const base = getRedirectBase();
+        if (base) {
+          return redirectToFrontend(base, {
+            shopify: 'error',
+            code: '400',
+            message: 'state requerido',
+          });
+        }
         throw new BadRequestException(
           'El parámetro state (oauthSessionId) es requerido',
         );
@@ -191,12 +237,20 @@ export class ShopifyController {
       const oauthSession = await this.shopifyService.validateOAuthSession(
         query.state,
       );
+      const redirectBase = getRedirectBase(oauthSession.frontendRedirectUrl);
 
       // Verificar que el shopDomain coincide
       const normalizedShop = query.shop
         .replace(/^https?:\/\//, '')
         .replace(/\/$/, '');
       if (oauthSession.shopDomain !== normalizedShop) {
+        if (redirectBase) {
+          return redirectToFrontend(redirectBase, {
+            shopify: 'error',
+            code: '400',
+            message: 'dominio no coincide con la sesión',
+          });
+        }
         throw new BadRequestException(
           'El dominio de la tienda no coincide con la sesión OAuth',
         );
@@ -219,11 +273,29 @@ export class ShopifyController {
       // Eliminar sesión OAuth después de usarla (one-time use)
       await this.shopifyService.deleteOAuthSession(query.state);
 
+      if (redirectBase) {
+        return redirectToFrontend(redirectBase, {
+          shopify: 'success',
+          shop: normalizedShop,
+        });
+      }
+
       return res.json({
         success: true,
         message: 'Token de acceso guardado correctamente',
       });
     } catch (error) {
+      const base = getRedirectBase();
+      if (base) {
+        const code = error instanceof UnauthorizedException ? '401' : '400';
+        const message =
+          error instanceof Error ? error.message : 'Error en callback';
+        return redirectToFrontend(base, {
+          shopify: 'error',
+          code,
+          message: message.slice(0, 200),
+        });
+      }
       if (
         error instanceof BadRequestException ||
         error instanceof UnauthorizedException

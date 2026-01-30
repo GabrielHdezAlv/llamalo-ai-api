@@ -1,6 +1,50 @@
 # Comunicación al equipo de Frontend
 
-## 1. Nuevo campo `shopifyDomain` en el modelo de Agente
+## 1. Shopify OAuth: redirección a "Conecta tu negocio" tras autorizar
+
+### Cambio en el flujo de conexión Shopify
+
+Tras autorizar la app en Shopify, el backend **ya no devuelve JSON** en la misma pestaña. Ahora **redirige (302)** a la pantalla del frontend que indiquéis, con el resultado en la URL.
+
+### Qué debe hacer el frontend
+
+1. **Al iniciar el flujo de conexión Shopify**  
+   Llamar al backend con el query param `returnTo` apuntando a la URL absoluta de la pantalla "Conecta tu negocio":
+   - Ruta a usar: **`/dashboard/agents/create`** (pantalla "Conecta tu negocio" del wizard Crear Agente).
+
+   Ejemplo de llamada (el usuario ya está en esa pantalla o en un paso previo; al pulsar "Conectar" se abre/redirige a la URL de auth):
+
+   ```
+   GET /shopify/auth?shop=<dominio>.myshopify.com&redirect=false&returnTo=https://<vuestro-dominio>/dashboard/agents/create
+   Authorization: Bearer <firebase_token>
+   ```
+
+   - `returnTo` debe ser la URL **completa** de esa pantalla (mismo origen que el frontend).
+   - El backend solo acepta `returnTo` si pertenece al dominio configurado en `FRONTEND_URL` (evita open redirect).
+
+2. **En la pantalla `/dashboard/agents/create`**  
+   Al cargar la página (o al volver de Shopify), leer los **query params** de la URL:
+   - **Éxito:** `shopify=success` y `shop=<dominio>`  
+     → Mostrar mensaje de éxito (equivalente a 200) y actualizar el estado de la tienda conectada.
+   - **Error:** `shopify=error`, `code=400` o `401`, y opcionalmente `message=<texto>`  
+     → Mostrar el error según `code` y `message`.
+
+   Recomendación: después de mostrar el mensaje, limpiar los query params de la URL (por ejemplo con `history.replace` sin esos params) para que al recargar no se vuelva a mostrar.
+
+### Resumen para el equipo
+
+| Qué               | Detalle                                             |
+| ----------------- | --------------------------------------------------- | ---------------- |
+| Ruta de retorno   | `/dashboard/agents/create`                          |
+| Parámetro en auth | `returnTo=https://<origen>/dashboard/agents/create` |
+| Éxito en URL      | `?shopify=success&shop=<dominio>`                   |
+| Error en URL      | `?shopify=error&code=400                            | 401&message=...` |
+
+Si no enviáis `returnTo` pero el backend tiene `FRONTEND_URL` configurado, redirigirá por defecto a `FRONTEND_URL/dashboard/agents/create` con los mismos query params.
+
+---
+
+## 2. Nuevo campo `shopifyDomain` en el modelo de Agente
 
 ### 🔔 Cambio en los endpoints de Agentes
 
@@ -70,7 +114,7 @@ El agente devuelto incluye ahora `shopifyDomain` cuando está asignado:
 
 ---
 
-## 2. Cambio en integrations.shopify (histórico)
+## 3. Cambio en integrations.shopify (histórico)
 
 Hemos actualizado el modelo de datos para permitir que los usuarios conecten **múltiples tiendas Shopify**.
 

@@ -1,5 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, Matches } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Matches,
+} from 'class-validator';
 
 export class ShopifyAuthQueryDto {
   @ApiProperty({
@@ -12,4 +18,14 @@ export class ShopifyAuthQueryDto {
     message: 'El formato del shop debe ser: nombre-tienda.myshopify.com',
   })
   shop: string;
+
+  @ApiPropertyOptional({
+    example: 'https://app.ejemplo.com/dashboard/agents/create',
+    description:
+      'URL absoluta del frontend a la que redirigir tras el callback de Shopify. Debe pertenecer al dominio permitido (FRONTEND_URL).',
+  })
+  @IsOptional()
+  @IsString()
+  @IsUrl({ require_tld: false })
+  returnTo?: string;
 }
