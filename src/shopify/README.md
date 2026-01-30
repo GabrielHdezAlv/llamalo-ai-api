@@ -27,7 +27,6 @@ Agregar al archivo `.env`:
 SHOPIFY_API_KEY=tu_api_key_de_shopify
 SHOPIFY_API_SECRET=tu_api_secret_de_shopify
 APP_URL=http://localhost:3000  # URL base del backend (para callbacks de Shopify)
-FRONTEND_URL=https://app.ejemplo.com  # URL base del frontend (para redirigir tras autorizar Shopify)
 ```
 
 ## Endpoints
@@ -41,7 +40,7 @@ FRONTEND_URL=https://app.ejemplo.com  # URL base del frontend (para redirigir tr
 **Query Params:**
 
 - `shop` (requerido): Dominio de la tienda, ej: `llamaloai-dev.myshopify.com`
-- `returnTo` (opcional): URL absoluta del frontend a la que redirigir tras autorizar en Shopify. Debe pertenecer al dominio configurado en `FRONTEND_URL`.
+- `returnTo` (opcional): URL absoluta del frontend a la que redirigir tras autorizar en Shopify. Se guarda tal cual y se usa en el callback.
 
 **Ejemplo:**
 
@@ -74,7 +73,7 @@ GET /shopify/callback?shop=llamaloai-dev.myshopify.com&code=abc123&state=oauthSe
 
 **Nota:** El sistema valida la sesión OAuth, recupera el `userId` de forma segura y elimina la sesión después de usarla.
 
-**Respuesta (si hay `returnTo` o `FRONTEND_URL` configurado):** Redirección 302 al frontend con query params:
+**Respuesta (si se envió `returnTo` en `/auth`):** Redirección 302 a esa URL con query params:
 
 - **Éxito:** `?shopify=success&shop=<dominio>`
 - **Error:** `?shopify=error&code=400|401&message=<mensaje>`

@@ -19,8 +19,7 @@ Tras autorizar la app en Shopify, el backend **ya no devuelve JSON** en la misma
    Authorization: Bearer <firebase_token>
    ```
 
-   - `returnTo` debe ser la URL **completa** de esa pantalla (mismo origen que el frontend).
-   - El backend solo acepta `returnTo` si pertenece al dominio configurado en `FRONTEND_URL` (evita open redirect).
+   - `returnTo` debe ser la URL **completa** de esa pantalla (por ejemplo `http://localhost:4200/dashboard/agents/create` en local o la URL de producción).
 
 2. **En la pantalla `/dashboard/agents/create`**  
    Al cargar la página (o al volver de Shopify), leer los **query params** de la URL:
@@ -40,7 +39,7 @@ Tras autorizar la app en Shopify, el backend **ya no devuelve JSON** en la misma
 | Éxito en URL      | `?shopify=success&shop=<dominio>`                   |
 | Error en URL      | `?shopify=error&code=400                            | 401&message=...` |
 
-Si no enviáis `returnTo` pero el backend tiene `FRONTEND_URL` configurado, redirigirá por defecto a `FRONTEND_URL/dashboard/agents/create` con los mismos query params.
+Si no enviáis `returnTo`, el callback devolverá JSON como antes (no habrá redirección al frontend).
 
 ---
 

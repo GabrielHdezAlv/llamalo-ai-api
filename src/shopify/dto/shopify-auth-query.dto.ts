@@ -22,7 +22,7 @@ export class ShopifyAuthQueryDto {
   @ApiPropertyOptional({
     example: 'https://app.ejemplo.com/dashboard/agents/create',
     description:
-      'URL absoluta del frontend a la que redirigir tras el callback de Shopify. Debe pertenecer al dominio permitido (FRONTEND_URL).',
+      'URL absoluta del frontend a la que redirigir tras el callback de Shopify. Se usa tal cual.',
   })
   @IsOptional()
   @IsString()

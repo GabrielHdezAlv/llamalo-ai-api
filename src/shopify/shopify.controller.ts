@@ -67,7 +67,7 @@ export class ShopifyController {
     type: String,
     example: 'https://app.ejemplo.com/dashboard/agents/create',
     description:
-      'URL absoluta del frontend a la que redirigir tras autorizar en Shopify. Debe pertenecer al dominio FRONTEND_URL.',
+      'URL absoluta del frontend a la que redirigir tras autorizar en Shopify. Se usa tal cual en el callback.',
     required: false,
   })
   @ApiResponse({
@@ -174,13 +174,13 @@ export class ShopifyController {
   @ApiResponse({
     status: 302,
     description:
-      'Redirección al frontend (returnTo o FRONTEND_URL/dashboard/agents/create) con ?shopify=success&shop=...',
+      'Redirección al frontend (URL enviada en returnTo) con ?shopify=success&shop=...',
   })
   @ApiResponse({
     status: 200,
     type: ShopifyCallbackResponseDto,
     description:
-      'Token guardado correctamente (solo si no hay returnTo/FRONTEND_URL configurado)',
+      'Token guardado correctamente (solo si no se envió returnTo en /auth)',
   })
   @ApiResponse({
     status: 400,
@@ -196,10 +196,9 @@ export class ShopifyController {
     @Res() res: Response,
   ) {
     const getRedirectBase = (frontendRedirectUrl?: string): string | null => {
-      if (frontendRedirectUrl) return frontendRedirectUrl;
-      const base = process.env.FRONTEND_URL?.trim();
-      if (!base) return null;
-      return base.replace(/\/$/, '') + '/dashboard/agents/create';
+      return frontendRedirectUrl && frontendRedirectUrl.trim()
+        ? frontendRedirectUrl.trim()
+        : null;
     };
 
     const redirectToFrontend = (

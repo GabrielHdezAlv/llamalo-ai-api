@@ -186,30 +186,8 @@ export class ShopifyService {
   }
 
   /**
-   * Valida que returnTo pertenezca al dominio permitido (FRONTEND_URL) para evitar open redirect.
-   */
-  private validateReturnTo(returnTo: string | undefined): string | undefined {
-    if (!returnTo || typeof returnTo !== 'string' || !returnTo.trim()) {
-      return undefined;
-    }
-    const base = process.env.FRONTEND_URL?.trim();
-    if (!base) {
-      return undefined;
-    }
-    const baseNormalized = base.replace(/\/$/, '');
-    const urlNormalized = returnTo.trim();
-    if (
-      urlNormalized === baseNormalized ||
-      urlNormalized.startsWith(baseNormalized + '/')
-    ) {
-      return urlNormalized;
-    }
-    return undefined;
-  }
-
-  /**
    * Crea una sesión OAuth y retorna el oauthSessionId.
-   * Si se pasa returnTo (URL del frontend), debe empezar por FRONTEND_URL; se guarda para redirigir tras el callback.
+   * Si se pasa returnTo (URL del frontend), se guarda tal cual para redirigir tras el callback.
    */
   async createOAuthSession(
     userId: string,
@@ -230,7 +208,10 @@ export class ShopifyService {
         .replace(/^https?:\/\//, '')
         .replace(/\/$/, '');
 
-      const frontendRedirectUrl = this.validateReturnTo(returnTo);
+      const frontendRedirectUrl =
+        returnTo && typeof returnTo === 'string' && returnTo.trim()
+          ? returnTo.trim()
+          : undefined;
 
       // Generar ID único para la sesión
       const sessionId = crypto.randomBytes(32).toString('hex');
