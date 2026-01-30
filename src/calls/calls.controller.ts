@@ -125,11 +125,12 @@ export class CallsController {
       // Obtener shopDomain de integrations.shopify (ahora es un array)
       const integrations =
         (agent.integrations as Record<string, unknown>) || {};
-      const shopifyArray =
-        (integrations.shopify as Array<{
-          connected: boolean;
-          shopDomain: string;
-        }>) || [];
+
+      // Asegurar que shopify sea un array (manejar formato antiguo o valores inválidos)
+      const shopifyArray: Array<{
+        connected: boolean;
+        shopDomain: string;
+      }> = Array.isArray(integrations.shopify) ? integrations.shopify : [];
 
       // Usar la primera tienda conectada del array (si existe)
       const firstShopify = shopifyArray.find((store) => store.connected);

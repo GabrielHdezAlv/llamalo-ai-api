@@ -120,9 +120,11 @@ migrateShopifyIntegrations()
 
 El código está diseñado para manejar ambos formatos durante la transición:
 
-- En `shopify.service.ts` (`saveAccessToken` y `revokeStore`), se trata `shopify` como array, incluso si está vacío.
-- En `calls.controller.ts`, se busca la primera tienda conectada en el array.
+- En `shopify.service.ts` (`saveAccessToken` y `revokeStore`), se usa `Array.isArray()` para verificar que `shopify` sea un array válido. Si no lo es (formato antiguo, objeto vacío, null, etc.), se inicializa como array vacío `[]`.
+- En `calls.controller.ts`, se aplica la misma validación antes de buscar la primera tienda conectada.
 - Los nuevos usuarios se crean directamente con `shopify: []`.
+
+**Nota importante:** Gracias a la validación con `Array.isArray()`, el código funciona correctamente incluso sin ejecutar la migración de datos, ya que convierte automáticamente cualquier valor inválido a un array vacío.
 
 ## Testing
 

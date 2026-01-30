@@ -440,11 +440,12 @@ export class ShopifyService {
       const userData = userSnapshot.data() as Record<string, unknown>;
       const integrations =
         (userData?.integrations as Record<string, unknown>) || {};
-      const currentShopifyArray =
-        (integrations.shopify as Array<{
-          connected: boolean;
-          shopDomain: string;
-        }>) || [];
+
+      // Asegurar que shopify sea un array (manejar formato antiguo o valores inválidos)
+      const currentShopifyArray: Array<{
+        connected: boolean;
+        shopDomain: string;
+      }> = Array.isArray(integrations.shopify) ? integrations.shopify : [];
 
       // Buscar si esta tienda ya existe en el array
       const existingIndex = currentShopifyArray.findIndex(
@@ -890,11 +891,12 @@ export class ShopifyService {
         const userData = userSnapshot.data() as Record<string, unknown>;
         const integrations =
           (userData?.integrations as Record<string, unknown>) || {};
-        const shopifyArray =
-          (integrations.shopify as Array<{
-            connected: boolean;
-            shopDomain: string;
-          }>) || [];
+
+        // Asegurar que shopify sea un array (manejar formato antiguo o valores inválidos)
+        const shopifyArray: Array<{
+          connected: boolean;
+          shopDomain: string;
+        }> = Array.isArray(integrations.shopify) ? integrations.shopify : [];
 
         // Filtrar la tienda revocada del array
         const updatedShopifyArray = shopifyArray.filter(
