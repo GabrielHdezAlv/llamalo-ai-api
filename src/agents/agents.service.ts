@@ -47,6 +47,19 @@ export class AgentsService {
     return isUsed ? 'Activo' : 'Inactivo';
   }
 
+  // Helper para normalizar el dominio de Shopify
+  private normalizeShopifyDomain(domain?: string): string | undefined {
+    if (!domain || typeof domain !== 'string' || !domain.trim()) {
+      return undefined;
+    }
+    return (
+      domain
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '')
+        .trim() || undefined
+    );
+  }
+
   // Helper para actualizar el estado de todos los phoneNumbers
   private updatePhoneNumbersState(
     phoneNumbersArray: Array<Record<string, unknown>>,
@@ -142,6 +155,9 @@ export class AgentsService {
 
       // Crear nuevo agente
       const agentId = Date.now();
+      const shopifyDomain = this.normalizeShopifyDomain(
+        agentConfig.shopifyDomain,
+      );
       const newAgent = {
         agentId: agentId,
         name: agentConfig.name,
@@ -155,6 +171,7 @@ export class AgentsService {
         state: agentConfig.state || 'Activo',
         parameters: agentConfig.parameters,
         totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
+        ...(shopifyDomain && { shopifyDomain }),
       };
 
       // Si hay estructura antigua, migrar primero
@@ -425,7 +442,11 @@ export class AgentsService {
         number: newNumber,
       };
 
-      // Actualizar agente
+      // Actualizar agente (preservar shopifyDomain existente si no se envía en el request)
+      const shopifyDomain =
+        agentConfig.shopifyDomain !== undefined
+          ? (this.normalizeShopifyDomain(agentConfig.shopifyDomain) ?? null)
+          : ((existingAgent.shopifyDomain as string | undefined) ?? null);
       const updatedAgent = {
         agentId: agentId,
         name: agentConfig.name,
@@ -439,6 +460,7 @@ export class AgentsService {
         state: agentConfig.state || 'Activo',
         parameters: agentConfig.parameters,
         totalMinutes: (existingAgent.totalMinutes as number) || 0, // Mantener valor existente, no se acepta del request
+        shopifyDomain,
       };
 
       // Actualizar en el array
@@ -592,6 +614,9 @@ export class AgentsService {
         // Si no hay agentes, crear uno nuevo
         if (!firstAgent) {
           const newAgentId = Date.now();
+          const shopifyDomain = this.normalizeShopifyDomain(
+            agentConfig.shopifyDomain,
+          );
           firstAgent = {
             agentId: newAgentId,
             name: agentConfig.name,
@@ -605,6 +630,7 @@ export class AgentsService {
             state: agentConfig.state || 'Activo',
             parameters: agentConfig.parameters,
             totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
+            ...(shopifyDomain && { shopifyDomain }),
           };
           hasChanges = true;
         } else {
@@ -677,6 +703,20 @@ export class AgentsService {
             };
             hasChanges = true;
           }
+
+          // Actualizar shopifyDomain si viene en el request
+          if (agentConfig.shopifyDomain !== undefined) {
+            const newShopifyDomain = this.normalizeShopifyDomain(
+              agentConfig.shopifyDomain,
+            );
+            const currentShopifyDomain = firstAgent.shopifyDomain as
+              | string
+              | undefined;
+            if (newShopifyDomain !== (currentShopifyDomain ?? null)) {
+              firstAgent.shopifyDomain = newShopifyDomain ?? null;
+              hasChanges = true;
+            }
+          }
         }
 
         if (hasChanges) {
@@ -712,6 +752,9 @@ export class AgentsService {
 
         // Crear nuevo agente con estructura completa
         const newAgentId = Date.now();
+        const shopifyDomain = this.normalizeShopifyDomain(
+          agentConfig.shopifyDomain,
+        );
         const newAgent = {
           agentId: newAgentId,
           name: agentConfig.name,
@@ -725,6 +768,7 @@ export class AgentsService {
           state: agentConfig.state || 'Activo',
           parameters: agentConfig.parameters,
           totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
+          ...(shopifyDomain && { shopifyDomain }),
         };
 
         // Migrar a nueva estructura

@@ -88,6 +88,14 @@ export class AgentDto {
     description: 'Total de minutos consumidos por el agente',
   })
   totalMinutes: number;
+
+  @ApiProperty({
+    example: 'mi-tienda.myshopify.com',
+    description: 'Dominio de la tienda Shopify asociada al agente',
+    required: false,
+    nullable: true,
+  })
+  shopifyDomain?: string | null;
 }
 
 export class CreateAgentResponseDto {

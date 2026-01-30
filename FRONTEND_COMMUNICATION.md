@@ -1,6 +1,76 @@
-# Comunicación al equipo de Frontend: Cambio en integrations.shopify
+# Comunicación al equipo de Frontend
 
-## 🔔 Cambio importante en la API
+## 1. Nuevo campo `shopifyDomain` en el modelo de Agente
+
+### 🔔 Cambio en los endpoints de Agentes
+
+Se ha añadido el campo opcional `shopifyDomain` al modelo de agente para permitir **asociar una tienda Shopify a cada agente**. Así, al crear o editar un agente se puede indicar qué tienda de Shopify debe usar ese agente.
+
+### Endpoints afectados
+
+- `POST /agents` — Crear agente
+- `PATCH /agents/:agentId` — Actualizar agente
+- `GET /agents` — Listar agentes
+
+### Cambios en los DTOs
+
+**Request (crear/actualizar agente):**
+
+Se puede enviar el campo opcional `shopifyDomain`:
+
+```json
+{
+  "name": "Marta",
+  "type": "inbound",
+  "language": "es",
+  "voiceId": "gD1IexrzCvsXPHUuT0s3",
+  "firstInteraction": "Hola...",
+  "agentInstruction": "Eres un asistente...",
+  "phoneNumbers": { "countryCode": "+34", "number": 654316415 },
+  "label": "Agente principal",
+  "state": "Activo",
+  "parameters": { ... },
+  "shopifyDomain": "mi-tienda.myshopify.com"  // ← NUEVO (opcional)
+}
+```
+
+**Response (agente en create/list/update):**
+
+El agente devuelto incluye ahora `shopifyDomain` cuando está asignado:
+
+```json
+{
+  "agentId": 1738000000000,
+  "name": "Marta",
+  "type": "inbound",
+  "language": "es",
+  ...
+  "shopifyDomain": "mi-tienda.myshopify.com"  // ← NUEVO (opcional, puede ser null)
+}
+```
+
+### Qué debe actualizar el frontend
+
+1. **Tipos/Interfaces del Agente**  
+   Añadir `shopifyDomain?: string | null` al tipo/interfaz del agente.
+
+2. **Formulario de crear/editar agente**
+   - Añadir un selector (dropdown, etc.) para elegir la tienda Shopify cuando el usuario tenga tiendas conectadas (`integrations.shopify`).
+   - Al guardar, enviar el `shopifyDomain` seleccionado en el body del request.
+
+3. **Vista de detalle/listado de agentes**  
+   Mostrar la tienda asociada cuando el agente tenga `shopifyDomain`.
+
+### Notas
+
+- El dominio se normaliza en backend (se quita `https://` y barras finales).
+- Para desvincular la tienda: enviar `"shopifyDomain": ""` o `null` al actualizar.
+- Si no se envía `shopifyDomain` al actualizar, se conserva el valor anterior.
+- Los agentes existentes no tendrán este campo (o será `undefined`/`null`); el frontend debe tratarlo como opcional.
+
+---
+
+## 2. Cambio en integrations.shopify (histórico)
 
 Hemos actualizado el modelo de datos para permitir que los usuarios conecten **múltiples tiendas Shopify**.
 

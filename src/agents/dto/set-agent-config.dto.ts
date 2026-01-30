@@ -160,6 +160,16 @@ export class SetAgentConfigDto {
   state: 'Activo' | 'Inactivo';
 
   @ApiProperty({
+    example: 'mi-tienda.myshopify.com',
+    description:
+      'Dominio de la tienda Shopify asociada al agente (ej: mi-tienda.myshopify.com)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  shopifyDomain?: string;
+
+  @ApiProperty({
     type: AgentParametersDto,
     description: 'Parámetros de configuración de la voz',
   })
