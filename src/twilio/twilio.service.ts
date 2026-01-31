@@ -11,6 +11,47 @@ import { getFirestore } from '../firebase/firebase.config';
 export class TwilioService {
   private firestore = getFirestore();
 
+  // 🔧 Normalizar twilio: convierte estructura antigua (objeto) a nueva (array)
+  private normalizeTwilioArray(
+    twilioData: unknown,
+  ): Array<{
+    twilioAccountId: number;
+    twilioSid: string;
+    twilioToken: string;
+  }> {
+    // Si es undefined o null, retornar array vacío
+    if (!twilioData) {
+      return [];
+    }
+
+    // Si ya es un array, retornar
+    if (Array.isArray(twilioData)) {
+      return twilioData as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>;
+    }
+
+    // Si es un objeto (estructura antigua), convertir a array
+    if (typeof twilioData === 'object' && twilioData !== null) {
+      const oldTwilio = twilioData as Record<string, unknown>;
+      if (oldTwilio.twilioSid && oldTwilio.twilioToken) {
+        // Convertir estructura antigua a nueva
+        return [
+          {
+            twilioAccountId: 1,
+            twilioSid: oldTwilio.twilioSid as string,
+            twilioToken: oldTwilio.twilioToken as string,
+          },
+        ];
+      }
+    }
+
+    // Si no es ni array ni objeto válido, retornar array vacío
+    return [];
+  }
+
   // 🔒 Verificar si twilioSid o twilioToken están en uso por otro usuario
   private async checkTwilioCredentialsInUse(
     userId: string,
@@ -27,11 +68,7 @@ export class TwilioService {
       }
 
       const userData = userDoc.data() as Record<string, unknown>;
-      const twilioArray = (userData?.twilio as Array<{
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      }>) || [];
+      const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
       const isInUse = twilioArray.some(
         (account) => account.twilioSid === twilioSid || account.twilioToken === twilioToken
@@ -56,11 +93,7 @@ export class TwilioService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioArray = (userData?.twilio as Array<{
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      }>) || [];
+      const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
       // Validar que los parámetros no estén en uso por otro usuario
       await this.checkTwilioCredentialsInUse(
@@ -165,11 +198,7 @@ export class TwilioService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioArray = (userData?.twilio as Array<{
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      }>) || [];
+      const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
       if (twilioArray.length === 0) {
         throw new NotFoundException(
@@ -398,11 +427,7 @@ export class TwilioService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioArray = (userData?.twilio as Array<{
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      }>) || [];
+      const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
       if (twilioArray.length === 0) {
         throw new NotFoundException(
@@ -598,11 +623,7 @@ export class TwilioService {
 
       // 2. Buscar la cuenta de Twilio que corresponde a estas credenciales
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioArray = (userData?.twilio as Array<{
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      }>) || [];
+      const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
       const matchingAccount = twilioArray.find(
         (acc) => acc.twilioSid === twilioSid && acc.twilioToken === twilioToken
