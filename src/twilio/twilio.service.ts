@@ -40,7 +40,7 @@ export class TwilioService {
         // Convertir estructura antigua a nueva
         return [
           {
-            twilioAccountId: 1,
+            twilioAccountId: Date.now(),
             twilioSid: oldTwilio.twilioSid as string,
             twilioToken: oldTwilio.twilioToken as string,
           },
@@ -145,11 +145,8 @@ export class TwilioService {
           twilioToken: config.twilioToken,
         };
       } else {
-        // Crear nueva cuenta (generar ID único)
-        const maxId = twilioArray.length > 0
-          ? Math.max(...twilioArray.map(acc => acc.twilioAccountId))
-          : 0;
-        const newAccountId = maxId + 1;
+        // Crear nueva cuenta (generar ID único usando timestamp)
+        const newAccountId = Date.now();
 
         // Verificar que las credenciales no estén en uso por otra cuenta del mismo usuario
         const existingAccount = twilioArray.find(
