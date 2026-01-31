@@ -55,8 +55,21 @@ export class UserProfileResponseDto {
   })
   createdAt?: string | null;
 
-  @ApiProperty({ description: 'Configuración de Twilio' })
-  twilio?: Record<string, unknown>;
+  @ApiProperty({ 
+    description: 'Configuración de Twilio',
+    example: [
+      {
+        twilioAccountId: 1,
+        twilioSid: 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+        twilioToken: 'your_token'
+      }
+    ]
+  })
+  twilio?: Array<{
+    twilioAccountId: number;
+    twilioSid: string;
+    twilioToken: string;
+  }>;
 
   @ApiProperty({
     description:
@@ -87,6 +100,7 @@ export class UserProfileResponseDto {
     number: string;
     state: 'Activo' | 'Inactivo';
     importedBy: string;
+    twilioAccountId: number;
   }>;
 
   @ApiProperty({ description: 'Agentes configurados del usuario' })

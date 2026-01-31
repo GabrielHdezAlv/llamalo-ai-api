@@ -120,7 +120,26 @@ export class CallsController {
         },
       );
 
-      const twilioConfig = (agent.twilio as Record<string, unknown>) || {};
+      // Obtener phoneNumbers y twilio array
+      const phoneNumbers = (agent.phoneNumbers as Array<{
+        phoneId?: number;
+        countryCode?: string;
+        number?: string;
+        twilioAccountId?: number;
+      }>) || [];
+      
+      const twilioArray = (agent.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
+
+      // Buscar el phoneNumber que coincide con el número de la llamada
+      const matchingPhone = phoneNumbers.find((phone) => {
+        const phoneNumStr = phone.number?.replace(/\D/g, '') || '';
+        const phoneNum = parseInt(phoneNumStr, 10);
+        return phoneNum === agentNumber;
+      });
 
       // Obtener shopDomain de integrations.shopify (ahora es un array)
       const integrations =
@@ -232,22 +251,18 @@ export class CallsController {
 
       addStreamParameter('agentName', agentName);
 
-      // Obtener firstInteraction: primero de agentData, luego de twilioConfig (compatibilidad)
+      // Obtener firstInteraction: primero de agentData
       const firstInteraction =
         typeof agentData.firstInteraction === 'string'
           ? agentData.firstInteraction
-          : typeof twilioConfig.firstInteraction === 'string'
-            ? twilioConfig.firstInteraction
-            : undefined;
+          : undefined;
       addStreamParameter('greeting', firstInteraction);
 
-      // Obtener agentInstruction: primero de agentData, luego de twilioConfig (compatibilidad)
+      // Obtener agentInstruction: primero de agentData
       const agentInstruction =
         typeof agentData.agentInstruction === 'string'
           ? agentData.agentInstruction
-          : typeof twilioConfig.agentInstruction === 'string'
-            ? twilioConfig.agentInstruction
-            : undefined;
+          : undefined;
       addStreamParameter('instructions', agentInstruction);
 
       addStreamParameter(
@@ -268,18 +283,30 @@ export class CallsController {
             ? ((agentData.language as Record<string, unknown>).code as string)
             : undefined;
       addStreamParameter('language', languageCode);
-      addStreamParameter(
-        'twilioSid',
-        typeof twilioConfig.twilioSid === 'string'
-          ? twilioConfig.twilioSid
-          : undefined,
-      );
-      addStreamParameter(
-        'twilioToken',
-        typeof twilioConfig.twilioToken === 'string'
-          ? twilioConfig.twilioToken
-          : undefined,
-      );
+
+      // Obtener credenciales de Twilio basadas en el phoneNumber
+      if (twilioArray.length === 0) {
+        console.warn(`⚠️ [Calls] Usuario ${userId} no tiene cuentas de Twilio configuradas`);
+      } else {
+        let twilioConfig: { twilioAccountId: number; twilioSid: string; twilioToken: string } | undefined;
+
+        if (matchingPhone && matchingPhone.twilioAccountId) {
+          // Buscar la cuenta de Twilio correspondiente al phoneNumber
+          twilioConfig = twilioArray.find(
+            (acc) => acc.twilioAccountId === matchingPhone.twilioAccountId
+          );
+        }
+
+        // Si no se encuentra o el phoneNumber no tiene twilioAccountId, usar la primera cuenta
+        if (!twilioConfig && twilioArray.length > 0) {
+          twilioConfig = twilioArray[0];
+        }
+
+        if (twilioConfig) {
+          addStreamParameter('twilioSid', twilioConfig.twilioSid);
+          addStreamParameter('twilioToken', twilioConfig.twilioToken);
+        }
+      }
 
       // Agregar userId y shopDomain como customParameters para Shopify
       addStreamParameter('userId', userId);

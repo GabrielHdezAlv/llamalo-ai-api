@@ -110,10 +110,7 @@ export class AuthService {
         integrations: {
           shopify: [],
         },
-        twilio: {
-          twilioSid: '',
-          twilioToken: '',
-        },
+        twilio: [],
         phoneNumbers: [],
         agents: [],
       });

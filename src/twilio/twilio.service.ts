@@ -27,14 +27,17 @@ export class TwilioService {
       }
 
       const userData = userDoc.data() as Record<string, unknown>;
-      const userTwilioConfig =
-        (userData?.twilio as Record<string, unknown>) || {};
+      const twilioArray = (userData?.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
 
-      const existingSid = userTwilioConfig.twilioSid as string | undefined;
-      const existingToken = userTwilioConfig.twilioToken as string | undefined;
+      const isInUse = twilioArray.some(
+        (account) => account.twilioSid === twilioSid || account.twilioToken === twilioToken
+      );
 
-      // Verificar si alguno de los dos parámetros está en uso
-      if (existingSid === twilioSid || existingToken === twilioToken) {
+      if (isInUse) {
         throw new BadRequestException(
           'Error: No se han podido asignar estos datos de configuración de Twilio, para más información contacte con nuestro equipo de soporte',
         );
@@ -53,8 +56,11 @@ export class TwilioService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioConfig =
-        (userData?.twilio as Record<string, unknown>) || null;
+      const twilioArray = (userData?.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
 
       // Validar que los parámetros no estén en uso por otro usuario
       await this.checkTwilioCredentialsInUse(
@@ -63,65 +69,78 @@ export class TwilioService {
         config.twilioToken,
       );
 
-      let hasChanges = false;
+      // Validar credenciales antes de guardar
+      const isValid = await this.validateTwilioCredentials(
+        config.twilioSid,
+        config.twilioToken,
+      );
+      if (!isValid) {
+        throw new BadRequestException(
+          'Las credenciales de Twilio son inválidas.',
+        );
+      }
 
-      // Nueva estructura: twilio solo contiene twilioSid y twilioToken
-      // Los otros campos (countryCode, phoneNumber, firstInteraction, agentInstruction)
-      // deberían ir en phoneNumbers[] y agents[] respectivamente
-      const newTwilioConfig: { twilioSid: string; twilioToken: string } = {
-        twilioSid: config.twilioSid,
-        twilioToken: config.twilioToken,
+      // Si se proporciona twilioAccountId, actualizar esa cuenta
+      if (config.twilioAccountId !== undefined) {
+        const accountIndex = twilioArray.findIndex(
+          (acc) => acc.twilioAccountId === config.twilioAccountId
+        );
+
+        if (accountIndex === -1) {
+          throw new NotFoundException(
+            `Cuenta de Twilio con ID ${config.twilioAccountId} no encontrada.`,
+          );
+        }
+
+        // Verificar que las nuevas credenciales no estén en uso por otra cuenta del mismo usuario
+        const otherAccount = twilioArray.find(
+          (acc, idx) => 
+            idx !== accountIndex && 
+            (acc.twilioSid === config.twilioSid || acc.twilioToken === config.twilioToken)
+        );
+
+        if (otherAccount) {
+          throw new BadRequestException(
+            'Estas credenciales ya están asociadas a otra cuenta de Twilio en tu perfil.',
+          );
+        }
+
+        // Actualizar cuenta existente
+        twilioArray[accountIndex] = {
+          twilioAccountId: config.twilioAccountId,
+          twilioSid: config.twilioSid,
+          twilioToken: config.twilioToken,
+        };
+      } else {
+        // Crear nueva cuenta (generar ID único)
+        const maxId = twilioArray.length > 0
+          ? Math.max(...twilioArray.map(acc => acc.twilioAccountId))
+          : 0;
+        const newAccountId = maxId + 1;
+
+        // Verificar que las credenciales no estén en uso por otra cuenta del mismo usuario
+        const existingAccount = twilioArray.find(
+          (acc) => acc.twilioSid === config.twilioSid || acc.twilioToken === config.twilioToken
+        );
+
+        if (existingAccount) {
+          throw new BadRequestException(
+            'Estas credenciales ya están asociadas a otra cuenta de Twilio en tu perfil.',
+          );
+        }
+
+        twilioArray.push({
+          twilioAccountId: newAccountId,
+          twilioSid: config.twilioSid,
+          twilioToken: config.twilioToken,
+        });
+      }
+
+      await userDocRef.set({ twilio: twilioArray }, { merge: true });
+
+      return {
+        message: 'Configuración de Twilio actualizada correctamente.',
       };
-
-      // Si no existe o hay cambios en SID/Token, actualizar
-      if (!twilioConfig) {
-        hasChanges = true;
-      } else {
-        if (
-          (twilioConfig.twilioSid as string) !== config.twilioSid ||
-          (twilioConfig.twilioToken as string) !== config.twilioToken
-        ) {
-          hasChanges = true;
-        }
-      }
-
-      // Si hay cambios en twilio, validar credenciales antes de actualizar
-      if (hasChanges) {
-        // Validar credenciales antes de guardar (especialmente importante la primera vez)
-        const isValid = await this.validateTwilioCredentials(
-          config.twilioSid,
-          config.twilioToken,
-        );
-        if (!isValid) {
-          throw new BadRequestException(
-            'Las credenciales de Twilio son inválidas.',
-          );
-        }
-
-        await userDocRef.set({ twilio: newTwilioConfig }, { merge: true });
-
-        // TODO: Migrar countryCode y phoneNumber a phoneNumbers[]
-        // TODO: Migrar firstInteraction y agentInstruction a agents[]
-        // Por ahora mantenemos compatibilidad pero estos campos ya no se guardan en twilio
-        return {
-          message: 'Configuración de Twilio actualizada correctamente.',
-        };
-      } else {
-        // No hay cambios, validar credenciales
-        const isValid = await this.validateTwilioCredentials(
-          config.twilioSid,
-          config.twilioToken,
-        );
-        if (!isValid) {
-          throw new BadRequestException(
-            'Las credenciales de Twilio son inválidas.',
-          );
-        }
-        return {
-          message:
-            'No hubo cambios en la configuración de Twilio, pero las credenciales son válidas.',
-        };
-      }
     } catch (error) {
       if (
         error instanceof NotFoundException ||
@@ -146,67 +165,73 @@ export class TwilioService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioConfig = userData?.twilio as Record<string, unknown>;
+      const twilioArray = (userData?.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
 
-      if (!twilioConfig) {
+      if (twilioArray.length === 0) {
         throw new NotFoundException(
           'Configuración de Twilio no encontrada para el usuario.',
         );
       }
 
-      // Obtener minutos consumidos
-      let inboundMinutes = {};
-      try {
-        const sid = twilioConfig.twilioSid as string;
-        const token = twilioConfig.twilioToken as string;
-
-        if (sid && token) {
-          const auth = Buffer.from(`${sid}:${token}`).toString('base64');
-          const response = await axios.get<{
-            usage_records: Array<{
-              category: string;
-              usage: string;
-              usage_unit: string;
-            }>;
-          }>(
-            `https://api.twilio.com/2010-04-01/Accounts/${sid}/Usage/Records/ThisMonth.json`,
-            {
-              headers: {
-                Authorization: `Basic ${auth}`,
+      // Obtener minutos consumidos para todas las cuentas
+      const accountsWithMinutes = await Promise.all(
+        twilioArray.map(async (account) => {
+          let inboundMinutes = {};
+          try {
+            const auth = Buffer.from(`${account.twilioSid}:${account.twilioToken}`).toString('base64');
+            const response = await axios.get<{
+              usage_records: Array<{
+                category: string;
+                usage: string;
+                usage_unit: string;
+              }>;
+            }>(
+              `https://api.twilio.com/2010-04-01/Accounts/${account.twilioSid}/Usage/Records/ThisMonth.json`,
+              {
+                headers: {
+                  Authorization: `Basic ${auth}`,
+                },
               },
-            },
-          );
+            );
 
-          const usageRecords = response.data.usage_records;
-          const inbound = usageRecords.find(
-            (record) => record.category === 'calls-inbound',
-          );
+            const usageRecords = response.data.usage_records;
+            const inbound = usageRecords.find(
+              (record) => record.category === 'calls-inbound',
+            );
 
-          if (inbound) {
-            inboundMinutes = {
-              minutes: inbound.usage,
-              unit: inbound.usage_unit,
-            };
-          } else {
+            if (inbound) {
+              inboundMinutes = {
+                minutes: inbound.usage,
+                unit: inbound.usage_unit,
+              };
+            } else {
+              inboundMinutes = {
+                minutes: '0',
+                message: 'No hay consumo de llamadas entrantes registrado.',
+              };
+            }
+          } catch {
             inboundMinutes = {
               minutes: '0',
-              message: 'No hay consumo de llamadas entrantes registrado.',
+              message: 'No se pudieron obtener los minutos consumidos.',
             };
           }
-        }
-      } catch {
-        // Si falla la obtención de minutos, continuar sin ellos
-        inboundMinutes = {
-          minutes: '0',
-          message: 'No se pudieron obtener los minutos consumidos.',
-        };
-      }
 
-      // Devolver solo los campos que el frontend espera
+          return {
+            twilioAccountId: account.twilioAccountId,
+            twilioSid: account.twilioSid,
+            twilioToken: account.twilioToken,
+            inboundMinutes,
+          };
+        })
+      );
+
       return {
-        twilioSid: twilioConfig.twilioSid as string,
-        twilioToken: twilioConfig.twilioToken as string,
-        inboundMinutes,
+        accounts: accountsWithMinutes,
       };
     } catch (error) {
       if (
@@ -362,6 +387,7 @@ export class TwilioService {
     userId: string,
     countryCode: string,
     number: string,
+    twilioAccountId?: number,
   ) {
     try {
       const userDocRef = this.firestore.collection('users').doc(userId);
@@ -372,16 +398,38 @@ export class TwilioService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioConfig = userData?.twilio as Record<string, unknown>;
+      const twilioArray = (userData?.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
 
-      if (!twilioConfig) {
+      if (twilioArray.length === 0) {
         throw new NotFoundException(
           'Configuración de Twilio no encontrada para el usuario.',
         );
       }
 
-      const sid = twilioConfig.twilioSid as string;
-      const token = twilioConfig.twilioToken as string;
+      // Si se proporciona twilioAccountId, usar esa cuenta
+      let twilioConfig: { twilioAccountId: number; twilioSid: string; twilioToken: string };
+      
+      if (twilioAccountId !== undefined) {
+        const account = twilioArray.find(
+          (acc) => acc.twilioAccountId === twilioAccountId
+        );
+        if (!account) {
+          throw new NotFoundException(
+            `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
+          );
+        }
+        twilioConfig = account;
+      } else {
+        // Si no se especifica, usar la primera cuenta
+        twilioConfig = twilioArray[0];
+      }
+
+      const sid = twilioConfig.twilioSid;
+      const token = twilioConfig.twilioToken;
 
       if (!sid || !token) {
         throw new BadRequestException(
@@ -496,6 +544,7 @@ export class TwilioService {
           number: numberWithoutCountryCode,
           state: 'Inactivo', // Inactivo porque no está siendo usado por ningún agente aún
           importedBy: 'Twilio',
+          twilioAccountId: twilioConfig.twilioAccountId,
         });
 
         // Actualizar phoneNumbers en Firestore
@@ -547,7 +596,25 @@ export class TwilioService {
         );
       }
 
-      // 2. Validar que el número de teléfono existe en esa cuenta de Twilio
+      // 2. Buscar la cuenta de Twilio que corresponde a estas credenciales
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const twilioArray = (userData?.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
+
+      const matchingAccount = twilioArray.find(
+        (acc) => acc.twilioSid === twilioSid && acc.twilioToken === twilioToken
+      );
+
+      if (!matchingAccount) {
+        throw new BadRequestException(
+          'Las credenciales de Twilio proporcionadas no están configuradas en tu cuenta.',
+        );
+      }
+
+      // 3. Validar que el número de teléfono existe en esa cuenta de Twilio
       const normalizedCountryCode = countryCode.startsWith('+')
         ? countryCode
         : `+${countryCode}`;
@@ -592,8 +659,7 @@ export class TwilioService {
         );
       }
 
-      // 3. Verificar que ese número de teléfono no esté ya en los números del usuario
-      const userData = userSnapshot.data() as Record<string, unknown>;
+      // 4. Verificar que ese número de teléfono no esté ya en los números del usuario
       const phoneNumbersArray =
         (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
 
@@ -613,7 +679,7 @@ export class TwilioService {
         );
       }
 
-      // 4. Agregar el número de teléfono a los números del usuario
+      // 5. Agregar el número de teléfono a los números del usuario
       const phoneId = Date.now();
       const agentsArray =
         (userData?.agents as Array<Record<string, unknown>>) || [];
@@ -624,6 +690,7 @@ export class TwilioService {
         number: normalizedNumber,
         state: 'Inactivo', // Inactivo porque no está siendo usado por ningún agente aún
         importedBy: 'Twilio',
+        twilioAccountId: matchingAccount.twilioAccountId,
       });
 
       // Actualizar el estado de todos los phoneNumbers basado en los agentes

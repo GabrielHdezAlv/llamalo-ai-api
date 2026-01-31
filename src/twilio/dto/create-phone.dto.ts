@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsNumber } from 'class-validator';
 
 export class CreatePhoneDto {
   @ApiProperty({
@@ -33,4 +33,13 @@ export class CreatePhoneDto {
   @IsNotEmpty()
   @IsString()
   twilioToken: string;
+
+  @ApiProperty({
+    example: 1,
+    description: 'ID de la cuenta de Twilio a usar (opcional, se detecta automáticamente por credenciales)',
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  twilioAccountId?: number;
 }

@@ -56,16 +56,23 @@ export class MetricsService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioConfig = userData?.twilio as Record<string, unknown>;
+      const twilioArray = (userData?.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
 
-      if (!twilioConfig) {
+      if (twilioArray.length === 0) {
         throw new NotFoundException(
           'Configuración de Twilio no encontrada para el usuario.',
         );
       }
 
-      const sid = twilioConfig.twilioSid as string;
-      const token = twilioConfig.twilioToken as string;
+      // Usar la primera cuenta de Twilio para las métricas
+      const twilioConfig = twilioArray[0];
+
+      const sid = twilioConfig.twilioSid;
+      const token = twilioConfig.twilioToken;
 
       if (!sid || !token) {
         throw new BadRequestException(

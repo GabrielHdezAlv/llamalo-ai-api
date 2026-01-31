@@ -13,6 +13,7 @@ interface PhoneNumber {
   number: string;
   state: 'Activo' | 'Inactivo';
   importedBy: string;
+  twilioAccountId: number;
 }
 
 interface Agent {
@@ -57,10 +58,11 @@ interface UserData {
       shopDomain: string;
     }>;
   };
-  twilio?: {
+  twilio?: Array<{
+    twilioAccountId: number;
     twilioSid: string;
     twilioToken: string;
-  };
+  }>;
   phoneNumbers?: PhoneNumber[];
   agents?: Agent[];
 }
@@ -79,10 +81,11 @@ export type UserProfileResponse = {
   marketingConsent?: boolean;
   accountStatus?: number;
   createdAt?: string | null;
-  twilio?: {
+  twilio?: Array<{
+    twilioAccountId: number;
     twilioSid: string;
     twilioToken: string;
-  };
+  }>;
   agent?: Record<string, unknown>;
   integrations?: {
     shopify?: Array<{
@@ -96,6 +99,7 @@ export type UserProfileResponse = {
     number: string;
     state: 'Activo' | 'Inactivo';
     importedBy: string;
+    twilioAccountId: number;
   }>;
   agents?: Array<{
     name: string;

@@ -71,6 +71,7 @@ export class TwilioController {
       userId,
       validatePhoneDto.countryCode,
       validatePhoneDto.number,
+      validatePhoneDto.twilioAccountId,
     );
   }
 
