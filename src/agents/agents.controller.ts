@@ -24,6 +24,8 @@ import { CreateAgentResponseDto } from './dto/create-agent-response.dto';
 import { UpdateAgentResponseDto } from './dto/update-agent-response.dto';
 import { ListAgentsResponseDto } from './dto/list-agents-response.dto';
 import { DeleteAgentResponseDto } from './dto/delete-agent-response.dto';
+import { GenerateAgentInstructionRequestDto } from './dto/generate-agent-instruction-request.dto';
+import { GenerateAgentInstructionResponseDto } from './dto/generate-agent-instruction-response.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 
@@ -39,6 +41,18 @@ export class AgentsController {
   @ApiResponse({ status: 200, type: [AgentDto] })
   async getAllVoices() {
     return this.agentsService.getAllAgents();
+  }
+
+  @Post('agents/instructions/generate')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary: 'Generar instrucciones del agente con IA (sin guardar en BD)',
+  })
+  @ApiResponse({ status: 200, type: GenerateAgentInstructionResponseDto })
+  async generateAgentInstructions(
+    @Body() payload: GenerateAgentInstructionRequestDto,
+  ) {
+    return await this.agentsService.generateAgentInstruction(payload);
   }
 
   @Post('agents')

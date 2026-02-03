@@ -3,12 +3,112 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import OpenAI from 'openai';
+import * as fs from 'fs';
+import * as path from 'path';
 import { SetAgentConfigDto } from './dto/set-agent-config.dto';
+import { GenerateAgentInstructionRequestDto } from './dto/generate-agent-instruction-request.dto';
+import { GenerateAgentInstructionResponseDto } from './dto/generate-agent-instruction-response.dto';
 import { getFirestore } from '../firebase/firebase.config';
 
 @Injectable()
 export class AgentsService {
   private firestore = getFirestore();
+
+  private readonly openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+
+  private readAgentPromptTemplate(): string {
+    const candidatePaths = [
+      path.resolve(process.cwd(), 'AGENT_PROMPT_TEMPLATE.md'),
+      path.resolve(__dirname, '..', '..', 'AGENT_PROMPT_TEMPLATE.md'),
+    ];
+
+    for (const filePath of candidatePaths) {
+      try {
+        return fs.readFileSync(filePath, 'utf8');
+      } catch {
+        // continuar con el siguiente candidate path
+      }
+    }
+
+    return '============================================================\nINSTRUCCIONES DEL AGENTE\n============================================================\n\nEres un asistente de voz profesional y resolutivo.';
+  }
+
+  private sanitizeGeneratedInstruction(text: string): string {
+    const trimmed = (text || '').trim();
+
+    if (!trimmed) return '';
+
+    if (trimmed.startsWith('```')) {
+      const withoutFirstFence = trimmed.replace(/^```[a-zA-Z]*\n?/, '');
+      const withoutLastFence = withoutFirstFence.replace(/```\s*$/, '').trim();
+      return withoutLastFence;
+    }
+
+    return trimmed;
+  }
+
+  async generateAgentInstruction(
+    payload: GenerateAgentInstructionRequestDto,
+  ): Promise<GenerateAgentInstructionResponseDto> {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new BadRequestException('OPENAI_API_KEY no configurado.');
+    }
+
+    const template = this.readAgentPromptTemplate();
+
+    const systemPrompt = `Tu tarea es generar un texto completo de INSTRUCCIONES DEL AGENTE para un agente telefónico de voz.
+
+Requisitos:
+- Devuelve SOLO el texto final de instrucciones. No devuelvas JSON, ni explicaciones, ni rodees el texto con backticks.
+- Mantén una estructura similar al ejemplo/plantilla proporcionado.
+- El texto debe estar en el idioma indicado por language (ISO-639-1). Si el ejemplo está en otro idioma, traduce y adapta el contenido.
+- Integra enterpriseName y agentName.
+- Adapta el comportamiento según callType (inbound u outbound).
+- Si se proporciona shopDomain, incluye una sección sobre uso de contexto Shopify y menciona el shopDomain de forma segura (sin tokens/IDs técnicos).
+
+Ejemplo/plantilla de referencia:
+${template}`;
+
+    const userPrompt = `Datos para personalizar:
+- enterpriseName: ${payload.enterpriseName}
+- agentName: ${payload.agentName}
+- callType: ${payload.callType}
+- language: ${payload.language}
+- voiceId: ${payload.voiceId}
+- voiceParameters: ${JSON.stringify(payload.voiceParameters)}
+- shopDomain: ${payload.shopDomain ?? '(no proporcionado)'}
+
+Descripción del usuario:
+${payload.userDescription}`;
+
+    const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+    const temperature = Number(process.env.OPENAI_TEMPERATURE ?? 0.4);
+    const maxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 2500);
+
+    const completion = await this.openai.chat.completions.create({
+      model,
+      temperature,
+      max_tokens: maxTokens,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    });
+
+    const content = completion.choices?.[0]?.message?.content ?? '';
+    const agentInstruction = this.sanitizeGeneratedInstruction(content);
+
+    if (!agentInstruction) {
+      throw new BadRequestException(
+        'No se pudo generar agentInstruction (respuesta vacía).',
+      );
+    }
+
+    return { agentInstruction };
+  }
 
   // Helper para filtrar agentes por parámetros de búsqueda
   private filterAgents(agents: Array<Record<string, unknown>>, query?: string) {
