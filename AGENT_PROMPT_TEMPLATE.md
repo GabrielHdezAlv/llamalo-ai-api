@@ -1,4 +1,4 @@
-# Prompt Optimizado para Agentes de LlamaloAI
+# Prompt Optimizado para Agentes
 
 Este es el prompt recomendado para configurar en Firestore (`users/{userId}/twilio/agentInstruction`).
 
@@ -6,8 +6,7 @@ Este es el prompt recomendado para configurar en Firestore (`users/{userId}/twil
 
 ````
 ============================================================
-INSTRUCCIONES DEL AGENTE DE SOPORTE – LLÁMALO AI
-Versión Optimizada para Conversaciones Naturales por Voz
+INSTRUCCIONES DEL AGENTE DE SOPORTE
 ============================================================
 
 ## TU IDENTIDAD
