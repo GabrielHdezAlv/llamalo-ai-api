@@ -41,13 +41,26 @@ export class AgentsService {
 
     if (!trimmed) return '';
 
+    // Si hay un bloque ```...```, devolver su contenido aunque haya markdown antes
+    const fenceMatch = trimmed.match(/```[a-zA-Z]*\n([\s\S]*?)\n```/);
+    if (fenceMatch?.[1]) {
+      return fenceMatch[1].trim();
+    }
+
+    // Si empieza directamente con ```...```
     if (trimmed.startsWith('```')) {
       const withoutFirstFence = trimmed.replace(/^```[a-zA-Z]*\n?/, '');
       const withoutLastFence = withoutFirstFence.replace(/```\s*$/, '').trim();
       return withoutLastFence;
     }
 
-    return trimmed;
+    // Quitar encabezados/separadores markdown comunes si vinieran
+    const withoutMarkdown = trimmed
+      .replace(/^#\s+.*\n+/, '')
+      .replace(/^---\s*\n+/, '')
+      .trim();
+
+    return withoutMarkdown;
   }
 
   async generateAgentInstruction(
@@ -68,6 +81,7 @@ Requisitos:
 - Integra enterpriseName y agentName.
 - Adapta el comportamiento según callType (inbound u outbound).
 - Si se proporciona shopDomain, incluye una sección sobre uso de contexto Shopify y menciona el shopDomain de forma segura (sin tokens/IDs técnicos).
+- La salida debe ser extensa y cubrir todas las secciones críticas del ejemplo. No dejes la respuesta a medias.
 
 Ejemplo/plantilla de referencia:
 ${template}`;
@@ -86,20 +100,44 @@ ${payload.userDescription}`;
 
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
     const temperature = Number(process.env.OPENAI_TEMPERATURE ?? 0.4);
-    const maxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 2500);
+    // No reutilizar OPENAI_MAX_TOKENS global (puede estar bajo para llamadas). Usar uno propio.
+    const baseMaxTokens = 3500;
 
-    const completion = await this.openai.chat.completions.create({
-      model,
-      temperature,
-      max_tokens: maxTokens,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    });
+    const callOpenAI = async (max_tokens: number) => {
+      return await this.openai.chat.completions.create({
+        model,
+        temperature,
+        max_tokens,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      });
+    };
+
+    let completion = await callOpenAI(baseMaxTokens);
+    const finishReason = completion.choices?.[0]?.finish_reason;
+
+    // Si el modelo truncó por longitud, reintentar una vez con más tokens
+    if (finishReason === 'length') {
+      completion = await callOpenAI(Math.max(baseMaxTokens * 2, 6000));
+    }
 
     const content = completion.choices?.[0]?.message?.content ?? '';
-    const agentInstruction = this.sanitizeGeneratedInstruction(content);
+    let agentInstruction = this.sanitizeGeneratedInstruction(content);
+
+    // Si la respuesta es demasiado corta, forzar un reintento (a veces no viene finish_reason=length)
+    const minChars = 1800;
+    if (agentInstruction.length > 0 && agentInstruction.length < minChars) {
+      const retryCompletion = await callOpenAI(
+        Math.max(baseMaxTokens * 2, 6000),
+      );
+      const retryContent = retryCompletion.choices?.[0]?.message?.content ?? '';
+      const retryInstruction = this.sanitizeGeneratedInstruction(retryContent);
+      if (retryInstruction.length > agentInstruction.length) {
+        agentInstruction = retryInstruction;
+      }
+    }
 
     if (!agentInstruction) {
       throw new BadRequestException(
