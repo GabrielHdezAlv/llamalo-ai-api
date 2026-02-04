@@ -4,6 +4,7 @@ import {
   MinLength,
   IsBoolean,
   IsIn,
+  IsOptional,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -59,4 +60,13 @@ export class CreateUserDto {
   @IsNotEmpty()
   @IsIn([0, 1, 2, 3])
   accountStatus: number;
+
+  @ApiProperty({
+    example: 'client_user',
+    description: 'Rol del usuario: owner o client_user',
+    default: 'client_user',
+  })
+  @IsOptional()
+  @IsIn(['owner', 'client_user'])
+  rol?: 'owner' | 'client_user';
 }

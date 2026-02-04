@@ -67,4 +67,13 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsIn([0, 1, 2, 3])
   accountStatus?: number;
+
+  @ApiProperty({
+    example: 'client_user',
+    description: 'Rol del usuario: owner o client_user',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(['owner', 'client_user'])
+  rol?: 'owner' | 'client_user';
 }

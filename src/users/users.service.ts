@@ -51,6 +51,7 @@ interface UserData {
   country?: string;
   marketingConsent?: boolean;
   accountStatus?: number;
+  rol?: 'owner' | 'client_user';
   createdAt?: admin.firestore.Timestamp | string;
   scheduledDeletionDate?: admin.firestore.Timestamp;
   integrations?: {
@@ -81,6 +82,7 @@ export type UserProfileResponse = {
   country?: string;
   marketingConsent?: boolean;
   accountStatus?: number;
+  rol?: 'owner' | 'client_user';
   createdAt?: string | null;
   twilio?: Array<{
     twilioAccountId: number;
@@ -221,6 +223,7 @@ export class UsersService {
         country: userData?.country,
         marketingConsent: userData?.marketingConsent,
         accountStatus: userData?.accountStatus,
+        rol: userData?.rol || 'client_user',
         createdAt: createdAtStr,
         twilio: userData?.twilio,
         agent: (userData?.agents?.[0] || {}) as Record<string, unknown>, // Compatibilidad: devolver primer agente como agent
@@ -310,6 +313,7 @@ export class UsersService {
         updates.marketingConsent = updateDto.marketingConsent;
       if (updateDto.accountStatus !== undefined)
         updates.accountStatus = updateDto.accountStatus;
+      if (updateDto.rol !== undefined) updates.rol = updateDto.rol;
 
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
@@ -332,6 +336,7 @@ export class UsersService {
         country: updatedData?.country,
         marketingConsent: updatedData?.marketingConsent,
         accountStatus: updatedData?.accountStatus,
+        rol: updatedData?.rol || 'client_user',
         createdAt: updatedData?.createdAt,
       };
     } catch (error) {

@@ -50,20 +50,26 @@ export class UserProfileResponseDto {
   accountStatus?: number;
 
   @ApiProperty({
+    example: 'client_user',
+    description: 'Rol del usuario: owner o client_user',
+  })
+  rol?: 'owner' | 'client_user';
+
+  @ApiProperty({
     example: '12 de octubre de 2025, 10:30:45',
     description: 'Fecha de creación formateada en español',
   })
   createdAt?: string | null;
 
-  @ApiProperty({ 
+  @ApiProperty({
     description: 'Configuración de Twilio',
     example: [
       {
         twilioAccountId: 1,
         twilioSid: 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-        twilioToken: 'your_token'
-      }
-    ]
+        twilioToken: 'your_token',
+      },
+    ],
   })
   twilio?: Array<{
     twilioAccountId: number;

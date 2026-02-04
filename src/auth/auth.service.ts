@@ -47,7 +47,7 @@ export class AuthService {
 
   // ✅ Registro de usuario
   async registerUser(createUserDto: CreateUserDto) {
-    const { name, lastname, email, password, country, marketingConsent } =
+    const { name, lastname, email, password, country, marketingConsent, rol } =
       createUserDto;
 
     if (!email || !password)
@@ -105,6 +105,7 @@ export class AuthService {
         country,
         marketingConsent,
         accountStatus: 3, // Forzar estado 3 = No validado
+        rol: rol || 'client_user', // Por defecto 'client_user' si no se especifica
         verificationToken,
         verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
         createdAt: admin.firestore.Timestamp.now(),
