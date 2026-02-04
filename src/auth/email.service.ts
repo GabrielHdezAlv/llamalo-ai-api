@@ -17,12 +17,26 @@ export class EmailService {
         pass: process.env.SMTP_PASS, // Contraseña de aplicación o app password
       },
     });
+
+    // Verificar configuración al iniciar
+    this.logger.log(
+      `Email service configurado con host: ${process.env.SMTP_HOST || 'smtp.gmail.com'}, user: ${process.env.SMTP_USER || 'teams@llamalo.ai'}`,
+    );
+
+    // Si no hay contraseña de SMTP, advertir
+    if (!process.env.SMTP_PASS) {
+      this.logger.warn(
+        '⚠️ SMTP_PASS no está configurado - los emails no se enviarán',
+      );
+    }
   }
 
   /**
    * Enviar email de verificación de cuenta
    */
   async sendVerificationEmail(email: string, verificationToken: string) {
+    this.logger.log(`📧 Intentando enviar email de verificación a: ${email}`);
+
     const verificationUrl = `${process.env.FRONTEND_URL || 'https://app.llamalo.ai'}/verify-email?token=${verificationToken}`;
 
     const mailOptions = {
@@ -71,16 +85,30 @@ export class EmailService {
     };
 
     try {
+      // Verificar conexión SMTP antes de enviar
+      this.logger.log('🔍 Verificando conexión SMTP...');
+      await this.transporter.verify();
+      this.logger.log('✅ Conexión SMTP verificada');
+
       const info = await this.transporter.sendMail(mailOptions);
       this.logger.log(
-        `Email de verificación enviado a ${email}: ${info.messageId}`,
+        `✅ Email de verificación enviado a ${email}: ${info.messageId}`,
       );
       return { success: true, messageId: info.messageId };
     } catch (error) {
       this.logger.error(
-        `Error al enviar email de verificación a ${email}:`,
+        `❌ Error al enviar email de verificación a ${email}:`,
         error,
       );
+
+      // Detalles del error para diagnóstico
+      if (error instanceof Error) {
+        this.logger.error(`Error details: ${error.message}`);
+        if ('code' in error) {
+          this.logger.error(`Error code: ${(error as any).code}`);
+        }
+      }
+
       throw new Error(
         `No se pudo enviar el email de verificación: ${(error as Error).message}`,
       );
