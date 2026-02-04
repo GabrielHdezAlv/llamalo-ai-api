@@ -4,6 +4,8 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { RecoverDto } from './dto/recover.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -55,5 +57,43 @@ export class AuthController {
     @Body() changePasswordDto: ChangePasswordDto,
   ) {
     return this.authService.changePassword(userId, changePasswordDto);
+  }
+
+  @Post('verify-email')
+  @ApiOperation({ summary: 'Verificar email del usuario' })
+  @ApiResponse({
+    status: 200,
+    description: 'Email verificado correctamente',
+    schema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          example: 'Email verificado correctamente',
+        },
+      },
+    },
+  })
+  async verifyEmail(@Body() verifyEmailDto: VerifyEmailDto) {
+    return await this.authService.verifyEmail(verifyEmailDto.token);
+  }
+
+  @Post('resend-verification')
+  @ApiOperation({ summary: 'Reenviar email de verificación' })
+  @ApiResponse({
+    status: 200,
+    description: 'Email de verificación reenviado',
+    schema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          example: 'Email de verificación reenviado correctamente',
+        },
+      },
+    },
+  })
+  async resendVerification(@Body() resendDto: ResendVerificationDto) {
+    return await this.authService.resendVerificationEmail(resendDto.email);
   }
 }

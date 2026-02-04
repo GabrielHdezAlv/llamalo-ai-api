@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUrl, IsBoolean, IsIn } from 'class-validator';
+import { IsOptional, IsString, IsBoolean, IsIn } from 'class-validator';
 
 export class UpdateProfileDto {
   @ApiProperty({
@@ -60,10 +60,11 @@ export class UpdateProfileDto {
 
   @ApiProperty({
     example: 1,
-    description: 'Estado de la cuenta: 0 = Inactivo, 1 = Activo, 2 = Eliminado',
+    description:
+      'Estado de la cuenta: 0 = Inactivo, 1 = Activo, 2 = Eliminado, 3 = No validado',
     required: false,
   })
   @IsOptional()
-  @IsIn([0, 1, 2])
+  @IsIn([0, 1, 2, 3])
   accountStatus?: number;
 }

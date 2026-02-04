@@ -2,11 +2,13 @@ import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { RecoverDto } from './dto/recover.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { EmailService } from './email.service';
 import axios from 'axios';
 import * as bcrypt from 'bcryptjs';
 import * as admin from 'firebase-admin';
@@ -16,8 +18,9 @@ import { getFirestore } from '../firebase/firebase.config'; // 👈 Usamos el in
 export class AuthService {
   private firebaseApiKey = process.env.FIREBASE_API_KEY;
   private firestore = getFirestore();
+  private readonly logger = new Logger(AuthService.name);
 
-  constructor() {
+  constructor(private readonly emailService: EmailService) {
     // Validar que FIREBASE_API_KEY esté configurada al inicializar el servicio
     if (!this.firebaseApiKey) {
       console.error(
@@ -44,15 +47,8 @@ export class AuthService {
 
   // ✅ Registro de usuario
   async registerUser(createUserDto: CreateUserDto) {
-    const {
-      name,
-      lastname,
-      email,
-      password,
-      country,
-      marketingConsent,
-      accountStatus,
-    } = createUserDto;
+    const { name, lastname, email, password, country, marketingConsent } =
+      createUserDto;
 
     if (!email || !password)
       throw new BadRequestException(
@@ -87,7 +83,10 @@ export class AuthService {
     // 2️⃣ Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3️⃣ Guardar usuario en Firestore con nueva estructura
+    // 3️⃣ Generar token de verificación
+    const verificationToken = this.generateVerificationToken();
+
+    // 4️⃣ Guardar usuario en Firestore con estado 3 (No validado) y token
     try {
       const userRef = this.firestore
         .collection('users')
@@ -105,7 +104,9 @@ export class AuthService {
         password: hashedPassword,
         country,
         marketingConsent,
-        accountStatus,
+        accountStatus: 3, // Forzar estado 3 = No validado
+        verificationToken,
+        verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
         createdAt: admin.firestore.Timestamp.now(),
         integrations: {
           shopify: [],
@@ -117,6 +118,17 @@ export class AuthService {
       console.log(
         `✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`,
       );
+
+      // 5️⃣ Enviar email de verificación
+      try {
+        await this.emailService.sendVerificationEmail(email, verificationToken);
+        console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
+      } catch (emailError) {
+        console.error(
+          `❌ [Auth] Error al enviar email de verificación: ${emailError}`,
+        );
+        // No fallamos el registro si el email no se envía, pero lo registramos
+      }
     } catch (error: any) {
       console.error(
         `❌ [Auth] Error al guardar usuario en Firestore: ${error.message}`,
@@ -146,6 +158,58 @@ export class AuthService {
         `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${this.firebaseApiKey}`,
         { email, password, returnSecureToken: true },
       );
+
+      // 🔍 Verificar accountStatus en Firestore después del login exitoso en Firebase Auth
+      try {
+        const userDoc = await this.firestore
+          .collection('users')
+          .doc(data.localId as string)
+          .get();
+
+        if (!userDoc.exists) {
+          throw new UnauthorizedException(
+            'Usuario no encontrado en el sistema',
+          );
+        }
+
+        const userData = userDoc.data();
+
+        // 🚫 Bloquear login si accountStatus es 3 (No validado)
+        if (userData?.accountStatus === 3) {
+          console.warn(
+            `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
+          );
+          throw new UnauthorizedException(
+            'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
+          );
+        }
+
+        // 🚫 Bloquear login si accountStatus es 2 (Eliminado)
+        if (userData?.accountStatus === 2) {
+          console.warn(
+            `⚠️ [Auth] Login bloqueado para ${email} - cuenta eliminada (accountStatus: 2)`,
+          );
+          throw new UnauthorizedException('Esta cuenta ha sido eliminada');
+        }
+
+        // 🚫 Bloquear login si accountStatus es 0 (Inactivo)
+        if (userData?.accountStatus === 0) {
+          console.warn(
+            `⚠️ [Auth] Login bloqueado para ${email} - cuenta inactiva (accountStatus: 0)`,
+          );
+          throw new UnauthorizedException('Esta cuenta está inactiva');
+        }
+      } catch (firestoreError) {
+        // Si el error es UnauthorizedException ya lo manejamos arriba
+        if (firestoreError instanceof UnauthorizedException) {
+          throw firestoreError;
+        }
+        // Si hay error al leer Firestore, logueamos pero permitimos el login
+        console.error(
+          `❌ [Auth] Error al verificar accountStatus para ${email}: ${firestoreError}`,
+        );
+      }
+
       console.log(
         `✅ [Auth] Login exitoso para: ${email} (userId: ${data.localId})`,
       );
@@ -276,6 +340,115 @@ export class AuthService {
 
       throw new BadRequestException(
         `No se pudo actualizar la contraseña: ${errorMessage}`,
+      );
+    }
+  }
+
+  /**
+   * Generar token de verificación único
+   */
+  private generateVerificationToken(): string {
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let token = '';
+    for (let i = 0; i < 32; i++) {
+      token += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return token;
+  }
+
+  /**
+   * Verificar email del usuario usando token
+   */
+  async verifyEmail(token: string) {
+    try {
+      // Buscar usuario con el token de verificación
+      const usersRef = this.firestore.collection('users');
+      const snapshot = await usersRef
+        .where('verificationToken', '==', token)
+        .where('accountStatus', '==', 3) // Solo usuarios no validados
+        .get();
+
+      if (snapshot.empty) {
+        throw new BadRequestException(
+          'Token de verificación inválido o expirado',
+        );
+      }
+
+      const userDoc = snapshot.docs[0];
+      const userId = userDoc.id;
+
+      // Actualizar usuario: cambiar accountStatus a 1 (Activo) y eliminar token
+      await userDoc.ref.update({
+        accountStatus: 1,
+        verificationToken: null,
+        emailVerifiedAt: admin.firestore.Timestamp.now(),
+      });
+
+      this.logger.log(`✅ [Auth] Email verificado para usuario: ${userId}`);
+
+      return {
+        message: 'Email verificado correctamente',
+        accountStatus: 1,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('❌ [Auth] Error al verificar email:', error);
+      throw new BadRequestException(
+        `Error al verificar email: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Reenviar email de verificación
+   */
+  async resendVerificationEmail(email: string) {
+    try {
+      // Buscar usuario por email
+      const usersRef = this.firestore.collection('users');
+      const snapshot = await usersRef.where('email', '==', email).get();
+
+      if (snapshot.empty) {
+        throw new BadRequestException('No existe una cuenta con este email');
+      }
+
+      const userDoc = snapshot.docs[0];
+      const userData = userDoc.data();
+
+      // Solo reenviar si el usuario está en estado 3 (No validado)
+      if (userData.accountStatus !== 3) {
+        throw new BadRequestException(
+          'Esta cuenta ya está verificada o no necesita verificación',
+        );
+      }
+
+      // Generar nuevo token
+      const verificationToken = this.generateVerificationToken();
+
+      // Actualizar token en Firestore
+      await userDoc.ref.update({
+        verificationToken,
+        verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
+      });
+
+      // Enviar email
+      await this.emailService.sendVerificationEmail(email, verificationToken);
+
+      this.logger.log(`✅ [Auth] Email de verificación reenviado a: ${email}`);
+
+      return {
+        message: 'Email de verificación reenviado correctamente',
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('❌ [Auth] Error al reenviar verificación:', error);
+      throw new BadRequestException(
+        `Error al reenviar email de verificación: ${(error as Error).message}`,
       );
     }
   }

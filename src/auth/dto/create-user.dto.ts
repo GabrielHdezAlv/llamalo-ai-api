@@ -52,10 +52,11 @@ export class CreateUserDto {
   marketingConsent: boolean;
 
   @ApiProperty({
-    example: 1,
-    description: 'Estado de la cuenta: 0 = Inactivo, 1 = Activo, 2 = Eliminado',
+    example: 3,
+    description:
+      'Estado de la cuenta: 0 = Inactivo, 1 = Activo, 2 = Eliminado, 3 = No validado',
   })
   @IsNotEmpty()
-  @IsIn([0, 1, 2])
+  @IsIn([0, 1, 2, 3])
   accountStatus: number;
 }
