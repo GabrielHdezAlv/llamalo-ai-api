@@ -17,20 +17,20 @@ export class EmailService {
       );
     }
 
-    // Configuración del transporter para teams@llamalo.ai
+    // Configuración del transporter para team@llamalo.ai
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.SMTP_PORT || '587'),
       secure: false, // true for 465, false for other ports
       auth: {
-        user: process.env.SMTP_USER || 'teams@llamalo.ai',
+        user: process.env.SMTP_USER || 'team@llamalo.ai',
         pass: process.env.SMTP_PASS, // Contraseña de aplicación o app password
       },
     });
 
     // Verificar configuración al iniciar
     this.logger.log(
-      `Email service configurado con host: ${process.env.SMTP_HOST || 'smtp.gmail.com'}, user: ${process.env.SMTP_USER || 'teams@llamalo.ai'}`,
+      `Email service configurado con host: ${process.env.SMTP_HOST || 'smtp.gmail.com'}, user: ${process.env.SMTP_USER || 'team@llamalo.ai'}`,
     );
     this.logger.log(`SMTP_PASS está configurada: ${!!process.env.SMTP_PASS}`);
     this.logger.log(
@@ -54,7 +54,7 @@ export class EmailService {
     const verificationUrl = `${process.env.FRONTEND_URL || 'https://app.llamalo.ai'}/verify-email?token=${verificationToken}`;
 
     const mailOptions = {
-      from: `"Llamalo AI" <${process.env.SMTP_USER || 'teams@llamalo.ai'}>`,
+      from: `"Llamalo AI" <${process.env.SMTP_USER || 'team@llamalo.ai'}>`,
       to: email,
       subject: 'Verifica tu cuenta de correo electrónico',
       html: `

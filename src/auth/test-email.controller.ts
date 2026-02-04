@@ -13,7 +13,7 @@ export class TestEmailController {
     return {
       smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
       smtpPort: process.env.SMTP_PORT || '587',
-      smtpUser: process.env.SMTP_USER || 'teams@llamalo.ai',
+      smtpUser: process.env.SMTP_USER || 'team@llamalo.ai',
       hasSmtpPass: !!process.env.SMTP_PASS,
       frontendUrl: process.env.FRONTEND_URL || 'https://app.llamalo.ai',
     };
