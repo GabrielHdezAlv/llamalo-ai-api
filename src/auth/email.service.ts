@@ -8,7 +8,7 @@ export class EmailService {
 
   constructor() {
     // Configuración del transporter para teams@llamalo.ai
-    this.transporter = nodemailer.createTransporter({
+    this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.SMTP_PORT || '587'),
       secure: false, // true for 465, false for other ports
