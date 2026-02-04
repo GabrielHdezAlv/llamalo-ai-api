@@ -24,6 +24,7 @@ interface Agent {
   firstInteraction: string;
   agentInstruction: string;
   phoneNumbers: PhoneNumber;
+  twilioAccountId?: number;
   label: string;
   state: 'Activo' | 'Inactivo';
   parameters: {
@@ -113,6 +114,7 @@ export type UserProfileResponse = {
       countryCode: string;
       number: string;
     };
+    twilioAccountId?: number;
     label: string;
     state: 'Activo' | 'Inactivo';
     parameters: {

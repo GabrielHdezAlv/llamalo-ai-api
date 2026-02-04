@@ -213,6 +213,33 @@ ${payload.userDescription}`;
     }));
   }
 
+  private resolveTwilioAccountId(
+    userData: Record<string, unknown>,
+    agentTwilioAccountId: number | undefined,
+    phoneNumbersArray: Array<Record<string, unknown>>,
+    phoneId: number,
+  ): number | undefined {
+    if (agentTwilioAccountId !== undefined) {
+      const twilioArray =
+        (userData?.twilio as Array<Record<string, unknown>>) || [];
+      const exists = twilioArray.some(
+        (acc) => (acc.twilioAccountId as number) === agentTwilioAccountId,
+      );
+      if (!exists) {
+        throw new BadRequestException(
+          `Cuenta de Twilio con ID ${agentTwilioAccountId} no encontrada para el usuario.`,
+        );
+      }
+      return agentTwilioAccountId;
+    }
+
+    const phoneEntry = phoneNumbersArray.find(
+      (p) => (p.phoneId as number) === phoneId,
+    );
+    const inferred = phoneEntry?.twilioAccountId as number | undefined;
+    return inferred;
+  }
+
   // ✅ Obtener todas las voces disponibles
   async getAllAgents() {
     try {
@@ -248,6 +275,11 @@ ${payload.userDescription}`;
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
+
+      if (agentConfig.twilioAccountId === undefined) {
+        throw new BadRequestException('twilioAccountId es obligatorio.');
+      }
+
       const agentsArray =
         (userData?.agents as Array<Record<string, unknown>>) || [];
       const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
@@ -284,6 +316,25 @@ ${payload.userDescription}`;
         });
       }
 
+      const resolvedTwilioAccountId = this.resolveTwilioAccountId(
+        userData,
+        agentConfig.twilioAccountId,
+        phoneNumbersArray,
+        phoneId,
+      );
+
+      if (resolvedTwilioAccountId !== undefined) {
+        const phoneEntryIndex = phoneNumbersArray.findIndex(
+          (p) => (p.phoneId as number) === phoneId,
+        );
+        if (phoneEntryIndex !== -1) {
+          phoneNumbersArray[phoneEntryIndex] = {
+            ...phoneNumbersArray[phoneEntryIndex],
+            twilioAccountId: resolvedTwilioAccountId,
+          };
+        }
+      }
+
       // Preparar phoneNumbers con phoneId
       const phoneNumbersWithId = {
         phoneId: phoneId,
@@ -305,6 +356,9 @@ ${payload.userDescription}`;
         firstInteraction: agentConfig.firstInteraction,
         agentInstruction: agentConfig.agentInstruction,
         phoneNumbers: phoneNumbersWithId,
+        ...(resolvedTwilioAccountId !== undefined && {
+          twilioAccountId: resolvedTwilioAccountId,
+        }),
         label: agentConfig.label,
         state: agentConfig.state || 'Activo',
         parameters: agentConfig.parameters,
@@ -573,6 +627,32 @@ ${payload.userDescription}`;
         phoneId = (existingPhone?.phoneId as number) || Date.now();
       }
 
+      const existingAgentTwilioAccountId =
+        (existingAgent.twilioAccountId as number | undefined) ?? undefined;
+      const requestedTwilioAccountId =
+        agentConfig.twilioAccountId !== undefined
+          ? agentConfig.twilioAccountId
+          : existingAgentTwilioAccountId;
+
+      const resolvedTwilioAccountId = this.resolveTwilioAccountId(
+        userData,
+        requestedTwilioAccountId,
+        phoneNumbersArray,
+        phoneId,
+      );
+
+      if (resolvedTwilioAccountId !== undefined) {
+        const phoneEntryIndex = phoneNumbersArray.findIndex(
+          (p) => (p.phoneId as number) === phoneId,
+        );
+        if (phoneEntryIndex !== -1) {
+          phoneNumbersArray[phoneEntryIndex] = {
+            ...phoneNumbersArray[phoneEntryIndex],
+            twilioAccountId: resolvedTwilioAccountId,
+          };
+        }
+      }
+
       // Preparar phoneNumbers con phoneId
       const phoneNumbersWithId = {
         phoneId: phoneId,
@@ -594,6 +674,9 @@ ${payload.userDescription}`;
         firstInteraction: agentConfig.firstInteraction,
         agentInstruction: agentConfig.agentInstruction,
         phoneNumbers: phoneNumbersWithId,
+        ...(resolvedTwilioAccountId !== undefined && {
+          twilioAccountId: resolvedTwilioAccountId,
+        }),
         label: agentConfig.label,
         state: agentConfig.state || 'Activo',
         parameters: agentConfig.parameters,

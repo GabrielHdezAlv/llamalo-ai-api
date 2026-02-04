@@ -65,6 +65,13 @@ export class AgentDto {
   };
 
   @ApiProperty({
+    example: 1738000000000,
+    description: 'ID de la cuenta Twilio asignada al agente',
+    required: false,
+  })
+  twilioAccountId?: number;
+
+  @ApiProperty({
     example: 'Agente principal',
     description: 'Etiqueta del agente',
   })

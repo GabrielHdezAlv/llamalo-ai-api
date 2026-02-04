@@ -160,6 +160,15 @@ export class SetAgentConfigDto {
   state: 'Activo' | 'Inactivo';
 
   @ApiProperty({
+    example: 1738000000000,
+    description: 'ID de la cuenta Twilio asignada al agente',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  twilioAccountId?: number;
+
+  @ApiProperty({
     example: 'mi-tienda.myshopify.com',
     description:
       'Dominio de la tienda Shopify asociada al agente (ej: mi-tienda.myshopify.com)',
