@@ -7,6 +7,16 @@ export class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor() {
+    // Validar que las credenciales SMTP estén configuradas
+    if (!process.env.SMTP_PASS) {
+      this.logger.error(
+        '❌ SMTP_PASS no está configurada - el servicio de email no funcionará',
+      );
+      throw new Error(
+        'SMTP_PASS no está configurada en las variables de entorno',
+      );
+    }
+
     // Configuración del transporter para teams@llamalo.ai
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -21,6 +31,10 @@ export class EmailService {
     // Verificar configuración al iniciar
     this.logger.log(
       `Email service configurado con host: ${process.env.SMTP_HOST || 'smtp.gmail.com'}, user: ${process.env.SMTP_USER || 'teams@llamalo.ai'}`,
+    );
+    this.logger.log(`SMTP_PASS está configurada: ${!!process.env.SMTP_PASS}`);
+    this.logger.log(
+      `Longitud de SMTP_PASS: ${process.env.SMTP_PASS?.length || 0}`,
     );
 
     // Si no hay contraseña de SMTP, advertir
