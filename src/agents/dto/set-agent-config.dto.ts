@@ -16,6 +16,15 @@ import { Type } from 'class-transformer';
 
 export class PhoneNumberDto {
   @ApiProperty({
+    example: 1738000000000,
+    description: 'ID único del número de teléfono',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  phoneId?: number;
+
+  @ApiProperty({
     example: '+34',
     description: 'Código de país',
   })
