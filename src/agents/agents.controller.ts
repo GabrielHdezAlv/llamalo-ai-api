@@ -16,6 +16,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { AgentsService } from './agents.service';
 import { AgentDto } from './dto/agent.dto';
@@ -70,6 +71,13 @@ export class AgentsController {
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Listar todos los agentes del usuario' })
   @ApiResponse({ status: 200, type: ListAgentsResponseDto })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description:
+      'Texto para buscar agentes por nombre, etiqueta o número de teléfono',
+    type: String,
+  })
   async getUserAgents(
     @GetUser('uid') userId: string,
     @Query('q') query?: string,
