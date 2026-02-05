@@ -72,19 +72,25 @@ export class AgentsService {
 
     const template = this.readAgentPromptTemplate();
 
-    const systemPrompt = `Tu tarea es generar un texto completo de INSTRUCCIONES DEL AGENTE para un agente telefónico de voz.
+    const systemPrompt = `Tu tarea es generar instrucciones personalizadas para un agente telefónico de voz basándote en la descripción específica del usuario.
 
 Requisitos:
 - Devuelve SOLO el texto final de instrucciones. No devuelvas JSON, ni explicaciones, ni rodees el texto con backticks.
-- Mantén una estructura similar al ejemplo/plantilla proporcionado.
-- El texto debe estar en el idioma indicado por language (ISO-639-1). Si el ejemplo está en otro idioma, traduce y adapta el contenido.
-- Integra enterpriseName y agentName.
+- Usa la estructura y formato del ejemplo/plantilla proporcionado como referencia, pero ADAPTA EL CONTENIDO completamente al negocio del usuario.
+- El texto debe estar en el idioma indicado por language (ISO-639-1).
+- Integra enterpriseName y agentName de forma natural.
 - Adapta el comportamiento según callType (inbound u outbound).
-- Si se proporciona shopDomain, incluye una sección sobre uso de contexto Shopify y menciona el shopDomain de forma segura (sin tokens/IDs técnicos).
-- La salida debe ser extensa y cubrir todas las secciones críticas del ejemplo. No dejes la respuesta a medias.
+- Si se proporciona shopDomain, incluye una sección sobre uso de contexto Shopify y menciona el shopDomain de forma segura.
+- **IMPORTANTE**: El contenido debe estar basado en la descripción del usuario (userDescription), no en un agente de soporte genérico.
+- La salida debe ser extensa y cubrir todas las secciones críticas: identidad, personalidad, reglas de conversación, alcance, límites, y finalización.
 
-Ejemplo/plantilla de referencia:
-${template}`;
+Ejemplo/plantilla de referencia (solo para estructura y formato, no para contenido):
+${template}
+
+Instrucciones clave:
+- Si el usuario describe un negocio de coches, el agente debe hablar de coches, no de software LlamaloAI
+- Si el usuario describe atención al cliente de productos, enfócate en esos productos
+- Mantén el estilo conversacional y las reglas de formato, pero personaliza el contenido completamente según la descripción del usuario`;
 
     const userPrompt = `Datos para personalizar:
 - enterpriseName: ${payload.enterpriseName}
@@ -95,8 +101,10 @@ ${template}`;
 - voiceParameters: ${JSON.stringify(payload.voiceParameters)}
 - shopDomain: ${payload.shopDomain ?? '(no proporcionado)'}
 
-Descripción del usuario:
-${payload.userDescription}`;
+Descripción específica del usuario (ESTA ES LA BASE DEL CONTENIDO):
+${payload.userDescription}
+
+Genera instrucciones completas basadas en esta descripción. Si el usuario describe políticas de devolución de coches, crea un agente especializado en atención al cliente para venta de coches. Si describe soporte técnico, crea un agente de soporte. ADAPTA TODO EL CONTENIDO a lo que el usuario describe.`;
 
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
     const temperature = Number(process.env.OPENAI_TEMPERATURE ?? 0.4);
