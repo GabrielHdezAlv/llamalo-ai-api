@@ -1047,6 +1047,17 @@ ${shopifyContextJson}
 
   private async handleFinalTranscript(session: CallSession, text: string) {
     session.userSpeakingStartTime = undefined;
+
+    // Resetear estado de interrupción para permitir nueva respuesta
+    if (session.interrupted) {
+      console.log(
+        `🔄 Reseteando estado de interrupción - usuario terminó de hablar`,
+      );
+      session.interrupted = false;
+      session.agentSpeaking = false;
+      session.interceptedResponseText = '';
+    }
+
     session.history.push({ role: 'user', content: text });
     console.log(
       `🧾 Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
@@ -1665,11 +1676,40 @@ ${shopifyContextJson}
           break;
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
-          // Si el agente está hablando, interrumpir
+          // Si el agente está hablando, interrumpir completamente
           if (session.agentSpeaking && session.allowInterruptions !== false) {
-            console.log(`🛑 Usuario interrumpió al agente`);
+            console.log(
+              `🛑 Usuario interrumpió al agente - deteniendo completamente`,
+            );
             session.interrupted = true;
             session.agentSpeaking = false;
+
+            // Cancelar cualquier TTS en progreso
+            if (session.ttsCancelStream) {
+              session.ttsCancelStream();
+              session.ttsCancelStream = undefined;
+            }
+
+            // Cancelar cualquier request TTS pendiente
+            if (session.currentTTSRequest) {
+              session.currentTTSRequest = undefined;
+            }
+
+            // Limpiar texto interceptado para evitar que continúe hablando
+            session.interceptedResponseText = '';
+
+            // Detener el envío de audio buffered
+            if (session.outboundSendTimer) {
+              clearTimeout(session.outboundSendTimer);
+              session.outboundSendTimer = undefined;
+            }
+
+            // Limpiar buffer de audio saliente
+            session.outboundBuffer = Buffer.alloc(0);
+
+            console.log(
+              `🧹 Estado del agente limpiado completamente por interrupción`,
+            );
           }
           break;
         case 'AgentThinking':
