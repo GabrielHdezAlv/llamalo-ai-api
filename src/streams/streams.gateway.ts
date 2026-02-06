@@ -1096,12 +1096,10 @@ ${shopifyContextJson}
       }
 
       session.history.push({ role: 'assistant', content });
-      session.agentSpeaking = true;
-      session.interrupted = false;
       console.log(
         `💬 Respuesta LLM: "${content.substring(0, 120)}${content.length > 120 ? '...' : ''}"`,
       );
-      await this.streamTTSFromText(session, content);
+      // El TTS se maneja a través de ConversationText en tiempo real, no aquí
       session.agentSpeaking = false;
       session.interceptedResponseText = '';
     } catch (err) {
