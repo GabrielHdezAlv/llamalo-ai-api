@@ -1,5 +1,20 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+export class ComparacionDiaAnteriorDto {
+  @ApiProperty({
+    description:
+      'Total de llamadas exitosas el mismo día de la semana anterior',
+    example: 12,
+  })
+  total: number;
+
+  @ApiProperty({
+    description: 'Variación porcentual respecto a la semana anterior',
+    example: 25.0,
+  })
+  variacionPorcentual: number;
+}
+
 export class LlamadaExitosaPorDiaDto {
   @ApiProperty({
     description: 'Fecha en formato YYYY-MM-DD',
@@ -12,6 +27,33 @@ export class LlamadaExitosaPorDiaDto {
     example: 15,
   })
   total: number;
+
+  @ApiProperty({
+    description: 'Comparación con la misma semana del período anterior',
+    required: false,
+    type: ComparacionDiaAnteriorDto,
+  })
+  comparacionSemanaAnterior?: ComparacionDiaAnteriorDto;
+}
+
+export class ResumenComparativoSemanalDto {
+  @ApiProperty({
+    description: 'Total de llamadas exitosas en los últimos 7 días',
+    example: 155,
+  })
+  totalSemanaActual: number;
+
+  @ApiProperty({
+    description: 'Total de llamadas exitosas en los 7 días anteriores',
+    example: 120,
+  })
+  totalSemanaAnterior: number;
+
+  @ApiProperty({
+    description: 'Variación porcentual entre la semana actual y la anterior',
+    example: 29.2,
+  })
+  variacionPorcentual: number;
 }
 
 export class TiposLlamadasDto {
@@ -100,6 +142,12 @@ export class TwilioDetailedMetricsResponseDto {
     type: [LlamadaExitosaPorDiaDto],
   })
   llamadasExitosasUltimos7Dias: LlamadaExitosaPorDiaDto[];
+
+  @ApiProperty({
+    description: 'Resumen comparativo semanal de llamadas exitosas',
+    type: ResumenComparativoSemanalDto,
+  })
+  resumenComparativoSemanal: ResumenComparativoSemanalDto;
 
   @ApiProperty({
     description: 'Total de minutos de todas las llamadas del último mes',

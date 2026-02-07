@@ -14,6 +14,8 @@ import {
 import {
   TwilioDetailedMetricsResponseDto,
   LlamadaExitosaPorDiaDto,
+  ComparacionDiaAnteriorDto,
+  ResumenComparativoSemanalDto,
   TiposLlamadasDto,
   PaisOrigenDto,
   EvaluacionExitoDto,
@@ -155,6 +157,47 @@ export class MetricsService {
         weekAgo.getUTCFullYear(),
         weekAgo.getUTCMonth(),
         weekAgo.getUTCDate(),
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
+
+    return { startDate, endDate };
+  }
+
+  /**
+   * Obtiene el rango de fechas de los últimos 14 días (para comparación semanal)
+   */
+  private getLast14DaysRange(): {
+    startDate: Date;
+    endDate: Date;
+  } {
+    const now = new Date();
+
+    // EndDate: fin del día actual (23:59:59.999)
+    const endDate = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
+
+    // StartDate: inicio del día hace 13 días (00:00:00.000)
+    // Restamos 13 días para obtener exactamente 14 días incluyendo hoy
+    const twoWeeksAgo = new Date(now);
+    twoWeeksAgo.setUTCDate(twoWeeksAgo.getUTCDate() - 13);
+    const startDate = new Date(
+      Date.UTC(
+        twoWeeksAgo.getUTCFullYear(),
+        twoWeeksAgo.getUTCMonth(),
+        twoWeeksAgo.getUTCDate(),
         0,
         0,
         0,
@@ -516,24 +559,29 @@ export class MetricsService {
       // 3. Obtener datos para diferentes períodos
       const { startDate: startDate7Days, endDate: endDate7Days } =
         this.getLast7DaysRange();
+      const { startDate: startDate14Days, endDate: endDate14Days } =
+        this.getLast14DaysRange();
       const { startDate: startDateMonth, endDate: endDateMonth } =
         this.getLastMonthRange();
 
       // 4. Obtener todas las llamadas necesarias
-      const [callsLast7Days, callsLastMonth, allCallsForAnalysis] =
+      const [callsLast14Days, callsLastMonth, allCallsForAnalysis] =
         await Promise.all([
-          this.fetchTwilioCalls(sid, token, startDate7Days, endDate7Days),
+          this.fetchTwilioCalls(sid, token, startDate14Days, endDate14Days), // 14 días para comparación
           this.fetchTwilioCalls(sid, token, startDateMonth, endDateMonth),
           this.fetchAllCallsForAnalysis(sid, token), // Para análisis completos
         ]);
 
       console.log(
-        `[Metrics] Llamadas obtenidas - Últimos 7 días: ${callsLast7Days.length}, Último mes: ${callsLastMonth.length}, Total análisis: ${allCallsForAnalysis.length}`,
+        `[Metrics] Llamadas obtenidas - Últimos 14 días: ${callsLast14Days.length}, Último mes: ${callsLastMonth.length}, Total análisis: ${allCallsForAnalysis.length}`,
       );
 
       // 5. Calcular todas las métricas
       const llamadasExitosasUltimos7Dias =
-        this.calculateLlamadasExitosasPorDia(callsLast7Days);
+        this.calculateLlamadasExitosasPorDiaConComparacion(callsLast14Days);
+      const resumenComparativoSemanal = this.calculateResumenComparativoSemanal(
+        llamadasExitosasUltimos7Dias,
+      );
       const totalMinutosUltimoMes = await this.calculateTotalMinutosUltimoMes(
         sid,
         token,
@@ -549,6 +597,7 @@ export class MetricsService {
 
       return {
         llamadasExitosasUltimos7Dias,
+        resumenComparativoSemanal,
         totalMinutosUltimoMes,
         duracionMediaLlamadas,
         tiposLlamadas,
@@ -623,58 +672,9 @@ export class MetricsService {
         999,
       ),
     );
-
-    return this.fetchTwilioCalls(sid, token, startDate, endDate);
-  }
-
-  /**
-   * Calcula las llamadas exitosas de los últimos 7 días por día
-   */
-  private calculateLlamadasExitosasPorDia(
-    calls: TwilioCall[],
-  ): LlamadaExitosaPorDiaDto[] {
-    const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
-    const hoy = new Date();
-
-    for (let i = 6; i >= 0; i--) {
-      const fecha = new Date(hoy);
-      fecha.setUTCDate(fecha.getUTCDate() - i);
-      fecha.setUTCHours(0, 0, 0, 0);
-
-      const year = fecha.getUTCFullYear();
-      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(fecha.getUTCDate()).padStart(2, '0');
-      const fechaStr = `${year}-${month}-${day}`;
-
-      // Filtrar llamadas exitosas (status 'completed') de ese día
-      const llamadasExitosasDelDia = calls.filter((call) => {
-        if (call.status !== 'completed') return false;
-
-        const fechaLlamada = call.start_time || call.date_created;
-        if (!fechaLlamada) return false;
-
-        const callDate = new Date(fechaLlamada);
-        const callYear = callDate.getUTCFullYear();
-        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
-        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
-        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
-
-        return callDateStr === fechaStr;
-      });
-
-      ultimos7Dias.push({
-        fecha: fechaStr,
-        total: llamadasExitosasDelDia.length,
-      });
-    }
-
-    return ultimos7Dias;
-  }
-
-  /**
-   * Calcula el total de minutos del último mes usando Usage Records API
-   */
-  private async calculateTotalMinutosUltimoMes(
+    if (!account) {
+      throw new NotFoundException(
+        `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
     sid: string,
     token: string,
   ): Promise<number> {
