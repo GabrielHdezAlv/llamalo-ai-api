@@ -17,9 +17,9 @@ Este endpoint proporciona métricas avanzadas y detalladas de Twilio para análi
 
 ### Query Parameters (Opcional)
 
-| Parámetro | Tipo | Requerido | Descripción | Ejemplo |
-|-----------|------|-----------|-------------|---------|
-| `twilioAccountId` | number | No | ID de la cuenta de Twilio para obtener métricas específicas. Si no se especifica, se usa la primera cuenta configurada. | 1234567890 |
+| Parámetro         | Tipo   | Requerido | Descripción                                                                                                             | Ejemplo    |
+| ----------------- | ------ | --------- | ----------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `twilioAccountId` | number | No        | ID de la cuenta de Twilio para obtener métricas específicas. Si no se especifica, se usa la primera cuenta configurada. | 1234567890 |
 
 ## Response
 
@@ -60,35 +60,45 @@ Este endpoint proporciona métricas avanzadas y detalladas de Twilio para análi
 ### Detalle de Campos
 
 #### `llamadasExitosasUltimos7Dias`
+
 - **Descripción**: Llamadas exitosas (status: 'completed') de los últimos 7 días divididas por día
 - **Tipo**: Array de objetos
 - **Formato**: `{ fecha: "YYYY-MM-DD", total: number }`
 
 #### `totalMinutosUltimoMes`
+
 - **Descripción**: Total de minutos consumidos en el mes actual (día 1 al último día)
 - **Tipo**: number
 - **Fuente**: Twilio Usage Records API (inbound + outbound)
 
 #### `duracionMediaLlamadas`
+
 - **Descripción**: Duración promedio de todas las llamadas en minutos
 - **Tipo**: number
 - **Precisión**: 1 decimal
 - **Período**: Últimos 90 días
 
 #### `tiposLlamadas`
+
 - **Descripción**: Distribución porcentual de tipos de llamadas
 - **Tipo**: objeto
-- **Campos**: 
+- **Campos**:
   - `inbound`: porcentaje de llamadas entrantes
   - `outbound`: porcentaje de llamadas salientes
 
 #### `paisesOrigen`
+
 - **Descripción**: Top 10 países de donde provienen las llamadas
 - **Tipo**: Array de objetos
-- **Formato**: `{ pais: "Código ISO", cantidad: number }`
+- **Formato**: `{ pais: "Código ISO o 'SIN IDENTIFICAR'", cantidad: number, porcentaje: number }`
 - **Orden**: Descendente por cantidad
+- **Campos**:
+  - `pais`: Código de país numérico o "SIN IDENTIFICAR" para números ocultos
+  - `cantidad`: Número absoluto de llamadas
+  - `porcentaje`: Porcentaje del total con 1 decimal
 
 #### `evaluacionExito`
+
 - **Descripción**: Evaluación porcentual del éxito de las llamadas
 - **Tipo**: objeto
 - **Categorías**:
@@ -97,6 +107,7 @@ Este endpoint proporciona métricas avanzadas y detalladas de Twilio para análi
   - `fallidas`: llamadas fallidas (failed, busy, no-answer, canceled)
 
 #### `razonesFinalizacion`
+
 - **Descripción**: Razones de finalización de las llamadas
 - **Tipo**: objeto
 - **Categorías**:
@@ -141,11 +152,10 @@ curl -X GET "https://api.example.com/metrics/twilio-detailed?twilioAccountId=123
     "outbound": 25
   },
   "paisesOrigen": [
-    { "pais": "34", "cantidad": 45 },
-    { "pais": "52", "cantidad": 12 },
-    { "pais": "54", "cantidad": 8 },
-    { "pais": "1", "cantidad": 6 },
-    { "pais": "44", "cantidad": 4 }
+    { "pais": "34", "cantidad": 45, "porcentaje": 65.2 },
+    { "pais": "52", "cantidad": 12, "porcentaje": 17.4 },
+    { "pais": "SIN IDENTIFICAR", "cantidad": 8, "porcentaje": 11.6 },
+    { "pais": "54", "cantidad": 6, "porcentaje": 8.7 }
   ],
   "evaluacionExito": {
     "exitosas": 85,
@@ -163,13 +173,13 @@ curl -X GET "https://api.example.com/metrics/twilio-detailed?twilioAccountId=123
 
 ## Códigos de Estado
 
-| Código | Descripción |
-|--------|-------------|
-| 200 | Métricas obtenidas exitosamente |
-| 400 | Bad Request - Parámetros inválidos |
-| 401 | Unauthorized - Token inválido o expirado |
-| 404 | Not Found - Usuario o cuenta de Twilio no encontrada |
-| 500 | Internal Server Error - Error del servidor |
+| Código | Descripción                                          |
+| ------ | ---------------------------------------------------- |
+| 200    | Métricas obtenidas exitosamente                      |
+| 400    | Bad Request - Parámetros inválidos                   |
+| 401    | Unauthorized - Token inválido o expirado             |
+| 404    | Not Found - Usuario o cuenta de Twilio no encontrada |
+| 500    | Internal Server Error - Error del servidor           |
 
 ## Consideraciones Técnicas
 
@@ -194,6 +204,7 @@ curl -X GET "https://api.example.com/metrics/twilio-detailed?twilioAccountId=123
 ## Errores Comunes
 
 ### Cuenta no encontrada
+
 ```json
 {
   "message": "Cuenta de Twilio con ID 1234567890 no encontrada.",
@@ -203,15 +214,17 @@ curl -X GET "https://api.example.com/metrics/twilio-detailed?twilioAccountId=123
 ```
 
 ### Sin credenciales configuradas
+
 ```json
 {
   "message": "Configuración de Twilio no encontrada para el usuario.",
-  "error": "Not Found", 
+  "error": "Not Found",
   "statusCode": 404
 }
 ```
 
 ### Error de API de Twilio
+
 ```json
 {
   "message": "Error al obtener las métricas detalladas de Twilio: [Error message]",

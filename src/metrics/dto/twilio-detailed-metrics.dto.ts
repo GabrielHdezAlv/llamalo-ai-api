@@ -30,7 +30,7 @@ export class TiposLlamadasDto {
 
 export class PaisOrigenDto {
   @ApiProperty({
-    description: 'Código del país (ISO 3166-1 alpha-2)',
+    description: 'Código del país (ISO 3166-1 alpha-2) o "SIN IDENTIFICAR"',
     example: 'ES',
   })
   pais: string;
@@ -40,6 +40,12 @@ export class PaisOrigenDto {
     example: 45,
   })
   cantidad: number;
+
+  @ApiProperty({
+    description: 'Porcentaje de llamadas desde ese país',
+    example: 65.2,
+  })
+  porcentaje: number;
 }
 
 export class EvaluacionExitoDto {
