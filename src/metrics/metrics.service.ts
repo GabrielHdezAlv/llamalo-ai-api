@@ -978,7 +978,7 @@ export class MetricsService {
       if (docSnapshot.exists) {
         // Si existe, añadir la nueva latencia al array existente
         const data = docSnapshot.data();
-        const latencias = data.latencias || [];
+        const latencias = (data && data.latencies) || [];
         latencias.push(latenciaMs);
 
         await docRef.update({
