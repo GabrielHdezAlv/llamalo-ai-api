@@ -557,8 +557,6 @@ export class MetricsService {
       }
 
       // 3. Obtener datos para diferentes períodos
-      const { startDate: startDate7Days, endDate: endDate7Days } =
-        this.getLast7DaysRange();
       const { startDate: startDate14Days, endDate: endDate14Days } =
         this.getLast14DaysRange();
       const { startDate: startDateMonth, endDate: endDateMonth } =
@@ -672,9 +670,131 @@ export class MetricsService {
         999,
       ),
     );
-    if (!account) {
-      throw new NotFoundException(
-        `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
+
+    return this.fetchTwilioCalls(sid, token, startDate, endDate);
+  }
+
+  /**
+   * Calcula las llamadas exitosas de los últimos 7 días con comparación semanal
+   */
+  private calculateLlamadasExitosasPorDiaConComparacion(
+    calls: TwilioCall[],
+  ): LlamadaExitosaPorDiaDto[] {
+    const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
+    const hoy = new Date();
+
+    // Obtener datos de los últimos 14 días para comparación
+    const datosPorFecha = new Map<string, number>();
+
+    // Primero, procesar todas las llamadas para tener un mapa de fechas
+    calls.forEach((call) => {
+      if (call.status !== 'completed') return;
+
+      const fechaLlamada = call.start_time || call.date_created;
+      if (!fechaLlamada) return;
+
+      const callDate = new Date(fechaLlamada);
+      const year = callDate.getUTCFullYear();
+      const month = String(callDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(callDate.getUTCDate()).padStart(2, '0');
+      const fechaStr = `${year}-${month}-${day}`;
+
+      datosPorFecha.set(fechaStr, (datosPorFecha.get(fechaStr) || 0) + 1);
+    });
+
+    // Generar los últimos 7 días con comparación
+    for (let i = 6; i >= 0; i--) {
+      const fecha = new Date(hoy);
+      fecha.setUTCDate(fecha.getUTCDate() - i);
+      fecha.setUTCHours(0, 0, 0, 0);
+
+      const year = fecha.getUTCFullYear();
+      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(fecha.getUTCDate()).padStart(2, '0');
+      const fechaStr = `${year}-${month}-${day}`;
+
+      const totalActual = datosPorFecha.get(fechaStr) || 0;
+
+      // Calcular comparación con la semana anterior (mismo día de la semana - 7 días)
+      const fechaSemanaAnterior = new Date(fecha);
+      fechaSemanaAnterior.setUTCDate(fechaSemanaAnterior.getUTCDate() - 7);
+
+      const yearAnterior = fechaSemanaAnterior.getUTCFullYear();
+      const monthAnterior = String(
+        fechaSemanaAnterior.getUTCMonth() + 1,
+      ).padStart(2, '0');
+      const dayAnterior = String(fechaSemanaAnterior.getUTCDate()).padStart(
+        2,
+        '0',
+      );
+      const fechaStrAnterior = `${yearAnterior}-${monthAnterior}-${dayAnterior}`;
+
+      const totalAnterior = datosPorFecha.get(fechaStrAnterior) || 0;
+
+      // Calcular variación porcentual
+      let variacionPorcentual = 0;
+      if (totalAnterior > 0) {
+        variacionPorcentual =
+          Math.round(
+            ((totalActual - totalAnterior) / totalAnterior) * 100 * 10,
+          ) / 10;
+      } else if (totalActual > 0) {
+        // Si no había datos la semana anterior pero sí ahora, es un incremento infinito
+        variacionPorcentual = 100;
+      }
+
+      const comparacion: ComparacionDiaAnteriorDto = {
+        total: totalAnterior,
+        variacionPorcentual,
+      };
+
+      ultimos7Dias.push({
+        fecha: fechaStr,
+        total: totalActual,
+        comparacionSemanaAnterior: comparacion,
+      });
+    }
+
+    return ultimos7Dias;
+  }
+
+  /**
+   * Calcula el resumen comparativo semanal
+   */
+  private calculateResumenComparativoSemanal(
+    llamadasDiarias: LlamadaExitosaPorDiaDto[],
+  ): ResumenComparativoSemanalDto {
+    const totalSemanaActual = llamadasDiarias.reduce(
+      (sum, dia) => sum + dia.total,
+      0,
+    );
+    const totalSemanaAnterior = llamadasDiarias.reduce((sum, dia) => {
+      return sum + (dia.comparacionSemanaAnterior?.total || 0);
+    }, 0);
+
+    let variacionPorcentual = 0;
+    if (totalSemanaAnterior > 0) {
+      variacionPorcentual =
+        Math.round(
+          ((totalSemanaActual - totalSemanaAnterior) / totalSemanaAnterior) *
+            100 *
+            10,
+        ) / 10;
+    } else if (totalSemanaActual > 0) {
+      variacionPorcentual = 100;
+    }
+
+    return {
+      totalSemanaActual,
+      totalSemanaAnterior,
+      variacionPorcentual,
+    };
+  }
+
+  /**
+   * Calcula el total de minutos del último mes usando Usage Records API
+   */
+  private async calculateTotalMinutosUltimoMes(
     sid: string,
     token: string,
   ): Promise<number> {
