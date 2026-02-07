@@ -11,6 +11,14 @@ import {
   AgenteDto,
   LlamadaPorDiaDto,
 } from './dto/dashboard-metrics-response.dto';
+import {
+  TwilioDetailedMetricsResponseDto,
+  LlamadaExitosaPorDiaDto,
+  TiposLlamadasDto,
+  PaisOrigenDto,
+  EvaluacionExitoDto,
+  RazonesFinalizacionDto,
+} from './dto/twilio-detailed-metrics.dto';
 
 interface TwilioCall {
   sid: string;
@@ -56,11 +64,12 @@ export class MetricsService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioArray = (userData?.twilio as Array<{
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      }>) || [];
+      const twilioArray =
+        (userData?.twilio as Array<{
+          twilioAccountId: number;
+          twilioSid: string;
+          twilioToken: string;
+        }>) || [];
 
       if (twilioArray.length === 0) {
         throw new NotFoundException(
@@ -440,5 +449,475 @@ export class MetricsService {
     }
 
     return ultimos7Dias;
+  }
+
+  /**
+   * Obtiene métricas detalladas de Twilio
+   * Incluye todas las métricas solicitadas para análisis avanzado
+   */
+  async getTwilioDetailedMetrics(
+    userId: string,
+    twilioAccountId?: number,
+  ): Promise<TwilioDetailedMetricsResponseDto> {
+    try {
+      // 1. Obtener configuración de Twilio del usuario
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const twilioArray =
+        (userData?.twilio as Array<{
+          twilioAccountId: number;
+          twilioSid: string;
+          twilioToken: string;
+        }>) || [];
+
+      if (twilioArray.length === 0) {
+        throw new NotFoundException(
+          'Configuración de Twilio no encontrada para el usuario.',
+        );
+      }
+
+      // 2. Seleccionar la cuenta de Twilio correcta
+      let twilioConfig: {
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      };
+
+      if (twilioAccountId !== undefined) {
+        const account = twilioArray.find(
+          (acc) => acc.twilioAccountId === twilioAccountId,
+        );
+        if (!account) {
+          throw new NotFoundException(
+            `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
+          );
+        }
+        twilioConfig = account;
+      } else {
+        // Si no se especifica, usar la primera cuenta
+        twilioConfig = twilioArray[0];
+      }
+
+      const sid = twilioConfig.twilioSid;
+      const token = twilioConfig.twilioToken;
+
+      if (!sid || !token) {
+        throw new BadRequestException(
+          'Credenciales de Twilio no configuradas.',
+        );
+      }
+
+      // 3. Obtener datos para diferentes períodos
+      const { startDate: startDate7Days, endDate: endDate7Days } =
+        this.getLast7DaysRange();
+      const { startDate: startDateMonth, endDate: endDateMonth } =
+        this.getLastMonthRange();
+
+      // 4. Obtener todas las llamadas necesarias
+      const [callsLast7Days, callsLastMonth, allCallsForAnalysis] =
+        await Promise.all([
+          this.fetchTwilioCalls(sid, token, startDate7Days, endDate7Days),
+          this.fetchTwilioCalls(sid, token, startDateMonth, endDateMonth),
+          this.fetchAllCallsForAnalysis(sid, token), // Para análisis completos
+        ]);
+
+      console.log(
+        `[Metrics] Llamadas obtenidas - Últimos 7 días: ${callsLast7Days.length}, Último mes: ${callsLastMonth.length}, Total análisis: ${allCallsForAnalysis.length}`,
+      );
+
+      // 5. Calcular todas las métricas
+      const llamadasExitosasUltimos7Dias =
+        this.calculateLlamadasExitosasPorDia(callsLast7Days);
+      const totalMinutosUltimoMes = await this.calculateTotalMinutosUltimoMes(
+        sid,
+        token,
+      );
+      const duracionMediaLlamadas =
+        this.calculateDuracionMediaLlamadas(allCallsForAnalysis);
+      const tiposLlamadas = this.calculateTiposLlamadas(allCallsForAnalysis);
+      const paisesOrigen = this.calculatePaisesOrigen(allCallsForAnalysis);
+      const evaluacionExito =
+        this.calculateEvaluacionExito(allCallsForAnalysis);
+      const razonesFinalizacion =
+        this.calculateRazonesFinalizacion(allCallsForAnalysis);
+
+      return {
+        llamadasExitosasUltimos7Dias,
+        totalMinutosUltimoMes,
+        duracionMediaLlamadas,
+        tiposLlamadas,
+        paisesOrigen,
+        evaluacionExito,
+        razonesFinalizacion,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al obtener las métricas detalladas de Twilio: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Obtiene el rango de fechas del último mes (día 1 al último día)
+   */
+  private getLastMonthRange(): {
+    startDate: Date;
+    endDate: Date;
+  } {
+    const now = new Date();
+
+    // StartDate: primer día del mes actual a las 00:00:00.000 UTC
+    const startDate = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+    );
+
+    // EndDate: último día del mes actual a las 23:59:59.999 UTC
+    const lastDayOfMonth = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth() + 1,
+        0, // Día 0 del siguiente mes = último día del mes actual
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
+
+    return { startDate, endDate: lastDayOfMonth };
+  }
+
+  /**
+   * Obtiene todas las llamadas para análisis (sin límite de tiempo)
+   */
+  private async fetchAllCallsForAnalysis(
+    sid: string,
+    token: string,
+  ): Promise<TwilioCall[]> {
+    // Para análisis completos, obtenemos llamadas de los últimos 90 días
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setUTCDate(startDate.getUTCDate() - 90);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    const endDate = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
+
+    return this.fetchTwilioCalls(sid, token, startDate, endDate);
+  }
+
+  /**
+   * Calcula las llamadas exitosas de los últimos 7 días por día
+   */
+  private calculateLlamadasExitosasPorDia(
+    calls: TwilioCall[],
+  ): LlamadaExitosaPorDiaDto[] {
+    const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
+    const hoy = new Date();
+
+    for (let i = 6; i >= 0; i--) {
+      const fecha = new Date(hoy);
+      fecha.setUTCDate(fecha.getUTCDate() - i);
+      fecha.setUTCHours(0, 0, 0, 0);
+
+      const year = fecha.getUTCFullYear();
+      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(fecha.getUTCDate()).padStart(2, '0');
+      const fechaStr = `${year}-${month}-${day}`;
+
+      // Filtrar llamadas exitosas (status 'completed') de ese día
+      const llamadasExitosasDelDia = calls.filter((call) => {
+        if (call.status !== 'completed') return false;
+
+        const fechaLlamada = call.start_time || call.date_created;
+        if (!fechaLlamada) return false;
+
+        const callDate = new Date(fechaLlamada);
+        const callYear = callDate.getUTCFullYear();
+        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
+        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
+        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
+
+        return callDateStr === fechaStr;
+      });
+
+      ultimos7Dias.push({
+        fecha: fechaStr,
+        total: llamadasExitosasDelDia.length,
+      });
+    }
+
+    return ultimos7Dias;
+  }
+
+  /**
+   * Calcula el total de minutos del último mes usando Usage Records API
+   */
+  private async calculateTotalMinutosUltimoMes(
+    sid: string,
+    token: string,
+  ): Promise<number> {
+    try {
+      const auth = Buffer.from(`${sid}:${token}`).toString('base64');
+
+      // Obtener tanto inbound como outbound calls del mes
+      const [inboundResponse, outboundResponse] = await Promise.all([
+        axios.get(
+          `https://api.twilio.com/2010-04-01/Accounts/${sid}/Usage/Records/ThisMonth.json?Category=calls-inbound`,
+          {
+            headers: {
+              Authorization: `Basic ${auth}`,
+            },
+          },
+        ),
+        axios.get(
+          `https://api.twilio.com/2010-04-01/Accounts/${sid}/Usage/Records/ThisMonth.json?Category=calls-outbound`,
+          {
+            headers: {
+              Authorization: `Basic ${auth}`,
+            },
+          },
+        ),
+      ]);
+
+      const inboundMinutes = parseInt(
+        inboundResponse.data.usage_records?.[0]?.usage || '0',
+        10,
+      );
+      const outboundMinutes = parseInt(
+        outboundResponse.data.usage_records?.[0]?.usage || '0',
+        10,
+      );
+
+      const totalMinutes = inboundMinutes + outboundMinutes;
+      console.log(
+        `[Metrics] Minutos último mes - Inbound: ${inboundMinutes}, Outbound: ${outboundMinutes}, Total: ${totalMinutes}`,
+      );
+
+      return totalMinutes;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error(
+        '[Metrics] Error obteniendo minutos del último mes:',
+        errorMessage,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * Calcula la duración media de las llamadas en minutos
+   */
+  private calculateDuracionMediaLlamadas(calls: TwilioCall[]): number {
+    if (calls.length === 0) return 0;
+
+    const totalSegundos = calls.reduce((total, call) => {
+      const durationSegundos = parseInt(call.duration || '0', 10);
+      return total + durationSegundos;
+    }, 0);
+
+    const duracionMediaSegundos = totalSegundos / calls.length;
+    const duracionMediaMinutos =
+      Math.round((duracionMediaSegundos / 60) * 10) / 10; // Redondear a 1 decimal
+
+    console.log(
+      `[Metrics] Duración media - Total llamadas: ${calls.length}, Total segundos: ${totalSegundos}, Media minutos: ${duracionMediaMinutos}`,
+    );
+
+    return duracionMediaMinutos;
+  }
+
+  /**
+   * Calcula la distribución porcentual de tipos de llamadas
+   */
+  private calculateTiposLlamadas(calls: TwilioCall[]): TiposLlamadasDto {
+    if (calls.length === 0) {
+      return { inbound: 0, outbound: 0 };
+    }
+
+    const inboundCount = calls.filter(
+      (call) => call.direction === 'inbound',
+    ).length;
+    const outboundCount = calls.filter(
+      (call) => call.direction === 'outbound',
+    ).length;
+
+    const inboundPercentage = Math.round((inboundCount / calls.length) * 100);
+    const outboundPercentage = Math.round((outboundCount / calls.length) * 100);
+
+    console.log(
+      `[Metrics] Tipos llamadas - Inbound: ${inboundCount} (${inboundPercentage}%), Outbound: ${outboundCount} (${outboundPercentage}%)`,
+    );
+
+    return {
+      inbound: inboundPercentage,
+      outbound: outboundPercentage,
+    };
+  }
+
+  /**
+   * Calcula los países de origen de las llamadas
+   */
+  private calculatePaisesOrigen(calls: TwilioCall[]): PaisOrigenDto[] {
+    const paisesCount: Record<string, number> = {};
+
+    calls.forEach((call) => {
+      if (call.from) {
+        // Extraer código de país del número de teléfono
+        const countryCode = this.extractCountryCode(call.from);
+        if (countryCode) {
+          paisesCount[countryCode] = (paisesCount[countryCode] || 0) + 1;
+        }
+      }
+    });
+
+    // Convertir a array y ordenar por cantidad descendente
+    const paisesOrigen = Object.entries(paisesCount)
+      .map(([pais, cantidad]) => ({ pais, cantidad }))
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, 10); // Top 10 países
+
+    console.log(`[Metrics] Países origen encontrados: ${paisesOrigen.length}`);
+
+    return paisesOrigen;
+  }
+
+  /**
+   * Extrae el código de país de un número de teléfono
+   */
+  private extractCountryCode(phoneNumber: string): string | null {
+    // Eliminar caracteres no numéricos excepto +
+    const cleanPhone = phoneNumber.replace(/[^\d+]/g, '');
+
+    // Si empieza con +, extraer los siguientes 2-3 dígitos
+    if (cleanPhone.startsWith('+')) {
+      // Patrones comunes de códigos de país
+      const match = cleanPhone.match(/^\+(\d{1,3})/);
+      return match ? match[1] : null;
+    }
+
+    return null;
+  }
+
+  /**
+   * Calcula la evaluación de éxito de las llamadas
+   */
+  private calculateEvaluacionExito(calls: TwilioCall[]): EvaluacionExitoDto {
+    if (calls.length === 0) {
+      return { exitosas: 0, parciales: 0, fallidas: 0 };
+    }
+
+    // Exitosas: completed
+    const exitosasCount = calls.filter(
+      (call) => call.status === 'completed',
+    ).length;
+
+    // Parciales: answered, in-progress
+    const parcialesCount = calls.filter(
+      (call) => call.status === 'answered' || call.status === 'in-progress',
+    ).length;
+
+    // Fallidas: failed, busy, no-answer, canceled
+    const fallidasCount = calls.filter((call) =>
+      ['failed', 'busy', 'no-answer', 'canceled'].includes(call.status),
+    ).length;
+
+    const exitosasPercentage = Math.round((exitosasCount / calls.length) * 100);
+    const parcialesPercentage = Math.round(
+      (parcialesCount / calls.length) * 100,
+    );
+    const fallidasPercentage = Math.round((fallidasCount / calls.length) * 100);
+
+    console.log(
+      `[Metrics] Evaluación éxito - Exitosas: ${exitosasCount} (${exitosasPercentage}%), Parciales: ${parcialesCount} (${parcialesPercentage}%), Fallidas: ${fallidasCount} (${fallidasPercentage}%)`,
+    );
+
+    return {
+      exitosas: exitosasPercentage,
+      parciales: parcialesPercentage,
+      fallidas: fallidasPercentage,
+    };
+  }
+
+  /**
+   * Calcula las razones de finalización de las llamadas
+   */
+  private calculateRazonesFinalizacion(
+    calls: TwilioCall[],
+  ): RazonesFinalizacionDto {
+    if (calls.length === 0) {
+      return {
+        completada: 0,
+        clienteColgo: 0,
+        errorTecnico: 0,
+        tiempoAgotado: 0,
+      };
+    }
+
+    // Completada con éxito: completed
+    const completadaCount = calls.filter(
+      (call) => call.status === 'completed',
+    ).length;
+
+    // Cliente colgó: no-answer, canceled
+    const clienteColgoCount = calls.filter(
+      (call) => call.status === 'no-answer' || call.status === 'canceled',
+    ).length;
+
+    // Error técnico: failed
+    const errorTecnicoCount = calls.filter(
+      (call) => call.status === 'failed',
+    ).length;
+
+    // Tiempo agotado: busy (puede incluir timeout)
+    const tiempoAgotadoCount = calls.filter(
+      (call) => call.status === 'busy',
+    ).length;
+
+    const completadaPercentage = Math.round(
+      (completadaCount / calls.length) * 100,
+    );
+    const clienteColgoPercentage = Math.round(
+      (clienteColgoCount / calls.length) * 100,
+    );
+    const errorTecnicoPercentage = Math.round(
+      (errorTecnicoCount / calls.length) * 100,
+    );
+    const tiempoAgotadoPercentage = Math.round(
+      (tiempoAgotadoCount / calls.length) * 100,
+    );
+
+    console.log(
+      `[Metrics] Razones finalización - Completada: ${completadaCount} (${completadaPercentage}%), Cliente colgó: ${clienteColgoCount} (${clienteColgoPercentage}%), Error técnico: ${errorTecnicoCount} (${errorTecnicoPercentage}%), Tiempo agotado: ${tiempoAgotadoCount} (${tiempoAgotadoPercentage}%)`,
+    );
+
+    return {
+      completada: completadaPercentage,
+      clienteColgo: clienteColgoPercentage,
+      errorTecnico: errorTecnicoPercentage,
+      tiempoAgotado: tiempoAgotadoPercentage,
+    };
   }
 }
