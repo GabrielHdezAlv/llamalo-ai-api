@@ -10,7 +10,6 @@ import {
   UploadedFile,
   UseInterceptors,
   ParseIntPipe,
-  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,7 +17,6 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
-  ApiQuery,
   ApiConsumes,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -32,6 +30,7 @@ import {
 } from './dto/knowledge-source.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
+import type { Express } from 'express';
 
 @ApiTags('knowledge-base')
 @ApiBearerAuth()
@@ -135,7 +134,9 @@ export class KnowledgeBaseController {
     example: 1738000000000,
   })
   @ApiResponse({ status: 200 })
-  async getAgentKnowledgeSources(@Param('agentId', ParseIntPipe) agentId: number) {
+  async getAgentKnowledgeSources(
+    @Param('agentId', ParseIntPipe) agentId: number,
+  ) {
     return this.knowledgeBaseService.getAgentKnowledgeSources(agentId);
   }
 
@@ -148,7 +149,7 @@ export class KnowledgeBaseController {
     example: 'src_1234567890_abc123',
   })
   @ApiResponse({ status: 200 })
-  async getSourcePreview(@Param('sourceId') sourceId: string) {
+  getSourcePreview(@Param('sourceId') sourceId: string) {
     // This would be implemented to show a preview of the processed content
     // For now, returning a placeholder
     return {
