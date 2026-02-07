@@ -11,6 +11,7 @@ import {
   IsOptional,
   Min,
   Max,
+  IsArray,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -196,4 +197,13 @@ export class SetAgentConfigDto {
   @ValidateNested()
   @Type(() => AgentParametersDto)
   parameters: AgentParametersDto;
+
+  @ApiProperty({
+    description: 'Fuentes de conocimiento para el agente',
+    required: false,
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  knowledgeSourceIds?: string[];
 }

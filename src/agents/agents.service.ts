@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import OpenAI from 'openai';
 import * as fs from 'fs';
@@ -10,6 +12,7 @@ import { SetAgentConfigDto } from './dto/set-agent-config.dto';
 import { GenerateAgentInstructionRequestDto } from './dto/generate-agent-instruction-request.dto';
 import { GenerateAgentInstructionResponseDto } from './dto/generate-agent-instruction-response.dto';
 import { getFirestore } from '../firebase/firebase.config';
+import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 
 @Injectable()
 export class AgentsService {
@@ -19,12 +22,16 @@ export class AgentsService {
     apiKey: process.env.OPENAI_API_KEY,
   });
 
+  constructor(
+    @Inject(forwardRef(() => KnowledgeBaseService))
+    private readonly knowledgeBaseService: KnowledgeBaseService,
+  ) {}
+
   private readAgentPromptTemplate(): string {
     const candidatePaths = [
       path.resolve(process.cwd(), 'AGENT_PROMPT_TEMPLATE.md'),
       path.resolve(__dirname, '..', '..', 'AGENT_PROMPT_TEMPLATE.md'),
     ];
-
     for (const filePath of candidatePaths) {
       try {
         return fs.readFileSync(filePath, 'utf8');

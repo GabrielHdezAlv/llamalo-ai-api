@@ -10,6 +10,7 @@ import { HealthModule } from './health/health.module';
 import { CallsModule } from './calls/calls.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { ShopifyModule } from './shopify/shopify.module';
+import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ShopifyModule } from './shopify/shopify.module';
     HealthModule,
     MetricsModule,
     ShopifyModule,
+    KnowledgeBaseModule,
   ],
   controllers: [],
   providers: [],
