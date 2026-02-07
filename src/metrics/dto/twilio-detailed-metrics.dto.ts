@@ -184,4 +184,11 @@ export class TwilioDetailedMetricsResponseDto {
     type: RazonesFinalizacionDto,
   })
   razonesFinalizacion: RazonesFinalizacionDto;
+
+  @ApiProperty({
+    description: 'Latencia media de respuesta del agente en milisegundos',
+    example: 850,
+    required: false,
+  })
+  latenciaMedia?: number;
 }

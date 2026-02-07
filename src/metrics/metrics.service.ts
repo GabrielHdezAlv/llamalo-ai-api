@@ -592,6 +592,10 @@ export class MetricsService {
         this.calculateEvaluacionExito(allCallsForAnalysis);
       const razonesFinalizacion =
         this.calculateRazonesFinalizacion(allCallsForAnalysis);
+      const latenciaMedia = await this.calculateLatenciaMedia(
+        userId,
+        twilioAccountId,
+      );
 
       return {
         llamadasExitosasUltimos7Dias,
@@ -602,6 +606,7 @@ export class MetricsService {
         paisesOrigen,
         evaluacionExito,
         razonesFinalizacion,
+        latenciaMedia,
       };
     } catch (error) {
       if (
@@ -889,8 +894,117 @@ export class MetricsService {
   }
 
   /**
-   * Calcula la duración media de las llamadas en minutos
+   * Calcula la latencia media de respuesta del agente en milisegundos
    */
+  private async calculateLatenciaMedia(
+    userId: string,
+    twilioAccountId?: number,
+  ): Promise<number> {
+    try {
+      // Obtener fecha de inicio del último mes
+      const { startDate } = this.getLastMonthRange();
+      const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
+
+      // Consultar colección de latencias agregadas
+      let query = this.firestore
+        .collection('latencias_agregadas')
+        .where('userId', '==', userId)
+        .where('periodo', '>=', startDateStr);
+
+      if (twilioAccountId) {
+        query = query.where('twilioAccountId', '==', twilioAccountId);
+      }
+
+      const snapshot = await query.get();
+
+      if (snapshot.empty) {
+        console.log(
+          `[Metrics] No se encontraron datos de latencia para el usuario ${userId}`,
+        );
+        return 0;
+      }
+
+      // Recolectar todas las latencias del período
+      const todasLasLatencias: number[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const latencias = data.latencias || [];
+        todasLasLatencias.push(...latencias);
+      });
+
+      if (todasLasLatencias.length === 0) {
+        console.log(`[Metrics] No hay latencias registradas para el período`);
+        return 0;
+      }
+
+      // Calcular media
+      const latenciaMedia = Math.round(
+        todasLasLatencias.reduce((a, b) => a + b, 0) / todasLasLatencias.length,
+      );
+
+      console.log(
+        `[Metrics] Latencia media calculada - Total mediciones: ${todasLasLatencias.length}, Media: ${latenciaMedia}ms`,
+      );
+
+      return latenciaMedia;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error('[Metrics] Error calculando latencia media:', errorMessage);
+      return 0;
+    }
+  }
+
+  /**
+   * Guarda una medición de latencia en la colección agregada diaria
+   * Método para ser usado desde StreamsGateway
+   */
+  async saveLatencyMeasurement(
+    userId: string,
+    twilioAccountId: number,
+    latenciaMs: number,
+  ): Promise<void> {
+    try {
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const docId = `${userId}_${twilioAccountId}_${today}`;
+
+      const docRef = this.firestore
+        .collection('latencias_agregadas')
+        .doc(docId);
+
+      // Obtener documento actual si existe
+      const docSnapshot = await docRef.get();
+
+      if (docSnapshot.exists) {
+        // Si existe, añadir la nueva latencia al array existente
+        const data = docSnapshot.data();
+        const latencias = data.latencias || [];
+        latencias.push(latenciaMs);
+
+        await docRef.update({
+          latencias,
+          updatedAt: new Date(),
+        });
+      } else {
+        // Si no existe, crear nuevo documento
+        await docRef.set({
+          userId,
+          twilioAccountId,
+          periodo: today,
+          latencias: [latenciaMs],
+          updatedAt: new Date(),
+        });
+      }
+
+      console.log(
+        `[Metrics] Latencia guardada - Usuario: ${userId}, Latencia: ${latenciaMs}ms, Día: ${today}`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error('[Metrics] Error guardando latencia:', errorMessage);
+    }
+  }
   private calculateDuracionMediaLlamadas(calls: TwilioCall[]): number {
     if (calls.length === 0) return 0;
 

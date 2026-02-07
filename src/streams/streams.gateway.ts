@@ -16,6 +16,7 @@ import {
   NormalizedProductsResponse,
   ShopifyService,
 } from '../shopify/shopify.service';
+import { MetricsService } from '../metrics/metrics.service';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -200,7 +201,10 @@ export class StreamsGateway {
 
   private sessions: Map<string, CallSession> = new Map();
 
-  constructor(private readonly shopifyService: ShopifyService) {
+  constructor(
+    private readonly shopifyService: ShopifyService,
+    private readonly metricsService: MetricsService,
+  ) {
     if (!this.elevenLabsApiKey) {
       console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
     }
@@ -1046,8 +1050,6 @@ ${shopifyContextJson}
   }
 
   private async handleFinalTranscript(session: CallSession, text: string) {
-    session.userSpeakingStartTime = undefined;
-
     // Resetear estado de interrupción para permitir nueva respuesta
     if (session.interrupted) {
       console.log(
@@ -1088,6 +1090,7 @@ ${shopifyContextJson}
         enrichedInstructions = session.instructions;
       }
 
+      const agentResponseStart = Date.now(); // Marcar inicio de respuesta del agente
       const completion = await this.openai.chat.completions.create({
         model: this.llmModel,
         temperature: this.llmTemperature,
@@ -1104,6 +1107,30 @@ ${shopifyContextJson}
           `⚠️ [${session.callSid}] Respuesta LLM vacía para texto: "${text}"`,
         );
         return;
+      }
+
+      // Calcular y guardar latencia
+      if (
+        session.userSpeakingStartTime &&
+        session.userId &&
+        session.customParameters?.twilioAccountId
+      ) {
+        const latency = agentResponseStart - session.userSpeakingStartTime;
+        session.responseLatencies.push(latency);
+
+        // Guardar latencia en Firestore
+        try {
+          await this.metricsService.saveLatencyMeasurement(
+            session.userId,
+            parseInt(session.customParameters.twilioAccountId),
+            latency,
+          );
+          console.log(
+            `[Latency] Guardada: ${latency}ms para usuario ${session.userId}`,
+          );
+        } catch (error) {
+          console.warn(`[Latency] Error guardando latencia:`, error);
+        }
       }
 
       session.history.push({ role: 'assistant', content });
