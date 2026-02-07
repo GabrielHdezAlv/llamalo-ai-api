@@ -792,9 +792,61 @@ export class MetricsService {
   }
 
   /**
-   * Calcula el total de minutos del último mes usando Usage Records API
+   * Calcula el total de minutos del último mes sumando duraciones de llamadas
    */
   private async calculateTotalMinutosUltimoMes(
+    sid: string,
+    token: string,
+  ): Promise<number> {
+    try {
+      // Obtener rango del último mes
+      const { startDate, endDate } = this.getLastMonthRange();
+
+      // Obtener todas las llamadas del mes
+      const calls = await this.fetchTwilioCalls(sid, token, startDate, endDate);
+
+      // Sumar duraciones de todas las llamadas (inbound + outbound)
+      const totalSegundos = calls.reduce((total, call) => {
+        const duration = parseInt(call.duration || '0', 10);
+        return total + duration;
+      }, 0);
+
+      // Convertir a minutos
+      const totalMinutos = Math.round((totalSegundos / 60) * 10) / 10; // Redondear a 1 decimal
+
+      console.log(
+        `[Metrics] Minutos último mes (suma directa) - Total llamadas: ${calls.length}, Total segundos: ${totalSegundos}, Total minutos: ${totalMinutos}`,
+      );
+
+      // Opcional: Comparar con método de Usage Records para debug
+      try {
+        const usageRecordsMinutes =
+          await this.calculateTotalMinutosUltimoMesUsageRecords(sid, token);
+        console.log(
+          `[Metrics] Comparación métodos - Suma directa: ${totalMinutos} min, Usage Records: ${usageRecordsMinutes} min, Diferencia: ${Math.abs(totalMinutos - usageRecordsMinutes)} min`,
+        );
+      } catch (error) {
+        console.log(
+          `[Metrics] No se pudo comparar con Usage Records: ${error}`,
+        );
+      }
+
+      return totalMinutos;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error(
+        '[Metrics] Error obteniendo minutos del último mes (suma directa):',
+        errorMessage,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * Calcula el total de minutos del último mes usando Usage Records API (método original)
+   */
+  private async calculateTotalMinutosUltimoMesUsageRecords(
     sid: string,
     token: string,
   ): Promise<number> {
@@ -830,20 +882,9 @@ export class MetricsService {
         10,
       );
 
-      const totalMinutes = inboundMinutes + outboundMinutes;
-      console.log(
-        `[Metrics] Minutos último mes - Inbound: ${inboundMinutes}, Outbound: ${outboundMinutes}, Total: ${totalMinutes}`,
-      );
-
-      return totalMinutes;
+      return inboundMinutes + outboundMinutes;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Error desconocido';
-      console.error(
-        '[Metrics] Error obteniendo minutos del último mes:',
-        errorMessage,
-      );
-      return 0;
+      throw error;
     }
   }
 
