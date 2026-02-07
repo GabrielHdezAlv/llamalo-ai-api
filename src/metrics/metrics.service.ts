@@ -947,34 +947,56 @@ export class MetricsService {
     // Eliminar caracteres no numéricos excepto +
     const cleanPhone = phoneNumber.replace(/[^\d+]/g, '');
 
-    // Caso 1: Formato internacional +34XXX
     if (cleanPhone.startsWith('+')) {
-      // Extraer los siguientes 1-3 dígitos después del +
-      const match = cleanPhone.match(/^\+(\d{1,3})/);
-      return match ? match[1] : null;
+      // Intentar extraer código de país con validación
+      const remainingDigits = cleanPhone.substring(1); // Quitar el +
+
+      // Intentar 3 dígitos primero (para países como +212 Marruecos, +213 Argelia, etc.)
+      if (remainingDigits.length >= 3) {
+        const code3 = remainingDigits.substring(0, 3);
+        if (this.isValidCountryCode(code3)) {
+          return code3;
+        }
+      }
+
+      // Intentar 2 dígitos (para países como +34 España, +52 México, +54 Argentina, etc.)
+      if (remainingDigits.length >= 2) {
+        const code2 = remainingDigits.substring(0, 2);
+        if (this.isValidCountryCode(code2)) {
+          return code2;
+        }
+      }
+
+      // Intentar 1 dígito (para +1 EE.UU./Canadá, +7 Rusia/Kazajistán)
+      if (remainingDigits.length >= 1) {
+        const code1 = remainingDigits.substring(0, 1);
+        if (this.isValidCountryCode(code1)) {
+          return code1;
+        }
+      }
     }
 
     // Caso 2: Formato sin + (ej: 34XXX, 0034XXX)
     if (cleanPhone.length >= 10) {
-      // Para números largos, intentar extraer los primeros 1-3 dígitos como código de país
-      // Códigos de país comunes: 1 (EE.UU.), 34 (España), 52 (México), 54 (Argentina), 55 (Brasil), etc.
-      const firstThree = cleanPhone.substring(0, 3);
-      const firstTwo = cleanPhone.substring(0, 2);
-      const firstOne = cleanPhone.substring(0, 1);
-
-      // Priorizar códigos de 3 dígitos (más específicos)
-      if (this.isValidCountryCode(firstThree)) {
-        return firstThree;
+      // Para números largos, intentar extraer los primeros dígitos como código de país
+      // Priorizar códigos más largos primero (más específicos)
+      if (cleanPhone.length >= 13) {
+        const code3 = cleanPhone.substring(0, 3);
+        if (this.isValidCountryCode(code3)) {
+          return code3;
+        }
       }
 
-      // Luego códigos de 2 dígitos
-      if (this.isValidCountryCode(firstTwo)) {
-        return firstTwo;
+      if (cleanPhone.length >= 12) {
+        const code2 = cleanPhone.substring(0, 2);
+        if (this.isValidCountryCode(code2)) {
+          return code2;
+        }
       }
 
-      // Finalmente códigos de 1 dígito
-      if (this.isValidCountryCode(firstOne)) {
-        return firstOne;
+      const code1 = cleanPhone.substring(0, 1);
+      if (this.isValidCountryCode(code1)) {
+        return code1;
       }
     }
 
