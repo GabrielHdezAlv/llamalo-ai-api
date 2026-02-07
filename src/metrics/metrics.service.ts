@@ -9,11 +9,11 @@ import {
   DashboardMetricsResponseDto,
   SummaryDto,
   AgenteDto,
-  LlamadaPorDiaDto,
+  LlamadaExitosaPorDiaDto,
+  MetricaConComparacionDto,
 } from './dto/dashboard-metrics-response.dto';
 import {
   TwilioDetailedMetricsResponseDto,
-  LlamadaExitosaPorDiaDto,
   ComparacionDiaAnteriorDto,
   ResumenComparativoSemanalDto,
   TiposLlamadasDto,
@@ -50,68 +50,115 @@ export class MetricsService {
   private readonly TIEMPO_AHORRO_FACTOR = 2.5;
 
   /**
-   * Obtiene las métricas del dashboard
-   * Siempre retorna datos de los últimos 7 días
+   * Obtiene todas las cuentas Twilio de un usuario
+   */
+  private async getAllTwilioAccounts(userId: string): Promise<
+    Array<{
+      twilioAccountId: number;
+      twilioSid: string;
+      twilioToken: string;
+    }>
+  > {
+    const userDocRef = this.firestore.collection('users').doc(userId);
+    const userSnapshot = await userDocRef.get();
+
+    if (!userSnapshot.exists) {
+      throw new NotFoundException('Usuario no encontrado.');
+    }
+
+    const userData = userSnapshot.data() as Record<string, unknown>;
+    const twilioArray =
+      (userData?.twilio as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>) || [];
+
+    if (twilioArray.length === 0) {
+      throw new NotFoundException(
+        'Configuración de Twilio no encontrada para el usuario.',
+      );
+    }
+
+    return twilioArray;
+  }
+
+  /**
+   * Obtiene las métricas del dashboard de todas las cuentas Twilio del usuario
+   * Incluye comparaciones semanales y nuevas métricas solicitadas
    */
   async getDashboardMetrics(
     userId: string,
   ): Promise<DashboardMetricsResponseDto> {
     try {
-      // 1. Obtener configuración de Twilio del usuario
-      const userDocRef = this.firestore.collection('users').doc(userId);
-      const userSnapshot = await userDocRef.get();
+      // 1. Obtener todas las cuentas Twilio del usuario
+      const twilioAccounts = await this.getAllTwilioAccounts(userId);
 
-      if (!userSnapshot.exists) {
-        throw new NotFoundException('Usuario no encontrado.');
+      // 2. Calcular rangos de fechas
+      const { startDate: startDate7Days, endDate: endDate7Days } =
+        this.getLast7DaysRange();
+      const { startDate: startDate14Days, endDate: endDate14Days } =
+        this.getLast14DaysRange();
+      const { startDate: startDateMonth, endDate: endDateMonth } =
+        this.getLastMonthRange();
+
+      // 3. Obtener llamadas de todas las cuentas para diferentes períodos
+      const allCalls7Days: TwilioCall[] = [];
+      const allCalls14Days: TwilioCall[] = [];
+      const allCallsMonth: TwilioCall[] = [];
+
+      for (const account of twilioAccounts) {
+        const [calls7Days, calls14Days, callsMonth] = await Promise.all([
+          this.fetchTwilioCalls(
+            account.twilioSid,
+            account.twilioToken,
+            startDate7Days,
+            endDate7Days,
+          ),
+          this.fetchTwilioCalls(
+            account.twilioSid,
+            account.twilioToken,
+            startDate14Days,
+            endDate14Days,
+          ),
+          this.fetchTwilioCalls(
+            account.twilioSid,
+            account.twilioToken,
+            startDateMonth,
+            endDateMonth,
+          ),
+        ]);
+
+        allCalls7Days.push(...calls7Days);
+        allCalls14Days.push(...calls14Days);
+        allCallsMonth.push(...callsMonth);
       }
 
-      const userData = userSnapshot.data() as Record<string, unknown>;
-      const twilioArray =
-        (userData?.twilio as Array<{
-          twilioAccountId: number;
-          twilioSid: string;
-          twilioToken: string;
-        }>) || [];
+      console.log(
+        `[Metrics] Llamadas obtenidas de ${twilioAccounts.length} cuentas - Últimos 7 días: ${allCalls7Days.length}, Últimos 14 días: ${allCalls14Days.length}, Último mes: ${allCallsMonth.length}`,
+      );
 
-      if (twilioArray.length === 0) {
-        throw new NotFoundException(
-          'Configuración de Twilio no encontrada para el usuario.',
-        );
-      }
+      // 4. Calcular métricas con comparación semanal
+      const resumen = this.calculateSummaryWithComparison(
+        allCalls7Days,
+        allCalls14Days,
+        allCallsMonth,
+      );
 
-      // Usar la primera cuenta de Twilio para las métricas
-      const twilioConfig = twilioArray[0];
+      // 5. Obtener agentes
+      const agentes = await this.getAgentes(
+        userId,
+        resumen.minutos_ultimo_mes.actual,
+      );
 
-      const sid = twilioConfig.twilioSid;
-      const token = twilioConfig.twilioToken;
-
-      if (!sid || !token) {
-        throw new BadRequestException(
-          'Credenciales de Twilio no configuradas.',
-        );
-      }
-
-      // 2. Calcular fechas de los últimos 7 días
-      const { startDate, endDate } = this.getLast7DaysRange();
-
-      // 3. Obtener todas las llamadas de los últimos 7 días desde Twilio
-      const calls = await this.fetchTwilioCalls(sid, token, startDate, endDate);
-
-      console.log(`[Metrics] Llamadas obtenidas de Twilio: ${calls.length}`);
-
-      // 4. Calcular resumen (últimos 7 días)
-      const resumen = this.calculateSummary(calls);
-
-      // 5. Obtener agentes (con minutos de los últimos 7 días)
-      const agentes = await this.getAgentes(userId, resumen.minutos_utilizados);
-
-      // 6. Calcular llamadas de los últimos 7 días
-      const llamadasUltimos7Dias = this.calculateLast7Days(calls);
+      // 6. Calcular llamadas exitosas de los últimos 7 días por día
+      const llamadasExitosasUltimos7Dias =
+        this.calculateLlamadasExitosasPorDia(allCalls7Days);
 
       return {
         resumen,
         agentes,
-        llamadas_ultimos_7_dias: llamadasUltimos7Dias,
+        llamadas_exitosas_ultimos_7_dias: llamadasExitosasUltimos7Dias,
       };
     } catch (error) {
       if (
@@ -351,34 +398,212 @@ export class MetricsService {
   }
 
   /**
-   * Calcula el resumen de métricas
+   * Calcula el resumen de métricas con comparación semanal
    */
-  private calculateSummary(calls: TwilioCall[]): SummaryDto {
-    const totalLlamadas = calls.length;
-
-    // Calcular total de segundos primero
-    const totalSegundos = calls.reduce((total, call) => {
-      const durationSegundos = parseInt(call.duration || '0', 10);
-      return total + durationSegundos;
-    }, 0);
-
-    // Convertir segundos a minutos
-    const minutosUtilizados = Math.round(totalSegundos / 60);
-
-    console.log(
-      `[Metrics] Total de segundos de llamadas: ${totalSegundos} segundos (${minutosUtilizados} minutos)`,
+  private calculateSummaryWithComparison(
+    calls7Days: TwilioCall[],
+    calls14Days: TwilioCall[],
+    callsMonth: TwilioCall[],
+  ): SummaryDto {
+    // 1. Total de llamadas (últimos 7 días vs semana anterior)
+    const totalLlamadasActual = calls7Days.length;
+    const totalLlamadasAnterior = this.calculateCallsForPeriod(
+      calls14Days,
+      'semana_anterior',
+    );
+    const totalLlamadasVariacion = this.calculateVariation(
+      totalLlamadasActual,
+      totalLlamadasAnterior,
     );
 
-    // Tiempo ahorrado = minutos utilizados × factor de ahorro
-    const tiempoAhorrado = Math.round(
-      minutosUtilizados * this.TIEMPO_AHORRO_FACTOR,
+    // 2. Total de llamadas exitosas (últimos 7 días vs semana anterior)
+    const llamadasExitosasActual = calls7Days.filter(
+      (call) => call.status === 'completed',
+    ).length;
+    const llamadasExitosasAnterior = this.calculateCallsForPeriod(
+      calls14Days,
+      'semana_anterior',
+      true,
     );
+    const llamadasExitosasVariacion = this.calculateVariation(
+      llamadasExitosasActual,
+      llamadasExitosasAnterior,
+    );
+
+    // 3. Total de minutos del último mes vs semana anterior
+    const minutosMesActual = Math.round(
+      callsMonth.reduce(
+        (total, call) => total + parseInt(call.duration || '0', 10),
+        0,
+      ) / 60,
+    );
+    const minutosMesAnterior = this.calculateMinutesForPeriod(
+      calls14Days,
+      'semana_anterior',
+    );
+    const minutosMesVariacion = this.calculateVariation(
+      minutosMesActual,
+      minutosMesAnterior,
+    );
+
+    // 4. Tiempo ahorrado (minutos × factor) vs semana anterior
+    const tiempoAhorradoActual = Math.round(
+      minutosMesActual * this.TIEMPO_AHORRO_FACTOR,
+    );
+    const tiempoAhorradoAnterior = Math.round(
+      minutosMesAnterior * this.TIEMPO_AHORRO_FACTOR,
+    );
+    const tiempoAhorradoVariacion = this.calculateVariation(
+      tiempoAhorradoActual,
+      tiempoAhorradoAnterior,
+    );
+
+    // 5. Tasa de éxito (porcentaje de llamadas exitosas del último período)
+    const tasaExito =
+      totalLlamadasActual > 0
+        ? Math.round(
+            (llamadasExitosasActual / totalLlamadasActual) * 100 * 10,
+          ) / 10
+        : 0;
 
     return {
-      total_llamadas: totalLlamadas,
-      tiempo_ahorrado: tiempoAhorrado,
-      minutos_utilizados: minutosUtilizados,
+      total_llamadas: {
+        actual: totalLlamadasActual,
+        variacionPorcentual: totalLlamadasVariacion,
+      },
+      total_llamadas_exitosas: {
+        actual: llamadasExitosasActual,
+        variacionPorcentual: llamadasExitosasVariacion,
+      },
+      minutos_ultimo_mes: {
+        actual: minutosMesActual,
+        variacionPorcentual: minutosMesVariacion,
+      },
+      tiempo_ahorrado: {
+        actual: tiempoAhorradoActual,
+        variacionPorcentual: tiempoAhorradoVariacion,
+      },
+      tasa_exito: tasaExito,
     };
+  }
+
+  /**
+   * Calcula la variación porcentual entre dos valores
+   */
+  private calculateVariation(actual: number, anterior: number): number {
+    if (anterior === 0) {
+      return actual > 0 ? 100 : 0;
+    }
+    return Math.round(((actual - anterior) / anterior) * 100 * 10) / 10;
+  }
+
+  /**
+   * Calcula el total de llamadas para un período específico
+   */
+  private calculateCallsForPeriod(
+    calls: TwilioCall[],
+    period: 'semana_actual' | 'semana_anterior',
+    soloExitosas: boolean = false,
+  ): number {
+    const now = new Date();
+    const diasRestar = period === 'semana_actual' ? 6 : 13;
+
+    const startDate = new Date(now);
+    startDate.setUTCDate(startDate.getUTCDate() - diasRestar);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    const endDate = new Date(now);
+    if (period === 'semana_anterior') {
+      endDate.setUTCDate(endDate.getUTCDate() - 7);
+    }
+    endDate.setUTCHours(23, 59, 59, 999);
+
+    return calls.filter((call) => {
+      const callDate = new Date(call.start_time || call.date_created || '');
+      if (callDate < startDate || callDate > endDate) return false;
+
+      if (soloExitosas) {
+        return call.status === 'completed';
+      }
+
+      return true;
+    }).length;
+  }
+
+  /**
+   * Calcula los total de minutos para un período específico
+   */
+  private calculateMinutesForPeriod(
+    calls: TwilioCall[],
+    period: 'semana_actual' | 'semana_anterior',
+  ): number {
+    const now = new Date();
+    const diasRestar = period === 'semana_actual' ? 6 : 13;
+
+    const startDate = new Date(now);
+    startDate.setUTCDate(startDate.getUTCDate() - diasRestar);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    const endDate = new Date(now);
+    if (period === 'semana_anterior') {
+      endDate.setUTCDate(endDate.getUTCDate() - 7);
+    }
+    endDate.setUTCHours(23, 59, 59, 999);
+
+    const totalSegundos = calls
+      .filter((call) => {
+        const callDate = new Date(call.start_time || call.date_created || '');
+        return callDate >= startDate && callDate <= endDate;
+      })
+      .reduce((total, call) => total + parseInt(call.duration || '0', 10), 0);
+
+    return Math.round(totalSegundos / 60);
+  }
+
+  /**
+   * Calcula las llamadas exitosas de los últimos 7 días (simple, para dashboard)
+   */
+  private calculateLlamadasExitosasPorDia(
+    calls: TwilioCall[],
+  ): LlamadaExitosaPorDiaDto[] {
+    const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
+    const hoy = new Date();
+
+    for (let i = 6; i >= 0; i--) {
+      // Calcular la fecha usando UTC para evitar problemas de zona horaria
+      const fecha = new Date(hoy);
+      fecha.setUTCDate(fecha.getUTCDate() - i);
+      fecha.setUTCHours(0, 0, 0, 0);
+
+      // Obtener fecha en formato YYYY-MM-DD (usando UTC para consistencia)
+      const year = fecha.getUTCFullYear();
+      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(fecha.getUTCDate()).padStart(2, '0');
+      const fechaStr = `${year}-${month}-${day}`;
+
+      // Contar llamadas exitosas de ese día
+      const llamadasExitosasDelDia = calls.filter((call) => {
+        if (call.status !== 'completed') return false;
+
+        // Usar start_time si está disponible, sino usar date_created como fallback
+        const fechaLlamada = call.start_time || call.date_created;
+        if (!fechaLlamada) return false;
+
+        const callDate = new Date(fechaLlamada);
+        const callYear = callDate.getUTCFullYear();
+        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
+        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
+        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
+        return callDateStr === fechaStr;
+      });
+
+      ultimos7Dias.push({
+        fecha: fechaStr,
+        total: llamadasExitosasDelDia.length,
+      });
+    }
+
+    return ultimos7Dias;
   }
 
   /**
@@ -432,9 +657,9 @@ export class MetricsService {
   /**
    * Calcula las llamadas de los últimos 7 días
    */
-  private calculateLast7Days(calls: TwilioCall[]): LlamadaPorDiaDto[] {
+  private calculateLast7Days(calls: TwilioCall[]): LlamadaExitosaPorDiaDto[] {
     // Obtener los últimos 7 días
-    const ultimos7Dias: LlamadaPorDiaDto[] = [];
+    const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
     const hoy = new Date();
 
     for (let i = 6; i >= 0; i--) {

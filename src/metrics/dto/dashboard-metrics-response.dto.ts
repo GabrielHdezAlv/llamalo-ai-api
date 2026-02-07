@@ -1,23 +1,51 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { ComparacionDiaAnteriorDto } from './twilio-detailed-metrics.dto';
+
+export class MetricaConComparacionDto {
+  @ApiProperty({
+    example: 150,
+    description: 'Valor actual de la métrica',
+  })
+  actual: number;
+
+  @ApiProperty({
+    example: 15.5,
+    description: 'Variación porcentual respecto a la semana pasada',
+  })
+  variacionPorcentual: number;
+}
 
 export class SummaryDto {
   @ApiProperty({
-    example: 150,
-    description: 'Total de llamadas realizadas',
+    description: 'Total de llamadas realizadas con comparación semanal',
+    type: MetricaConComparacionDto,
   })
-  total_llamadas: number;
+  total_llamadas: MetricaConComparacionDto;
 
   @ApiProperty({
-    example: 375,
-    description: 'Tiempo ahorrado en minutos (minutos_utilizados × 2.5)',
+    description: 'Total de llamadas exitosas con comparación semanal',
+    type: MetricaConComparacionDto,
   })
-  tiempo_ahorrado: number;
+  total_llamadas_exitosas: MetricaConComparacionDto;
 
   @ApiProperty({
-    example: 150,
-    description: 'Minutos totales utilizados en llamadas',
+    description: 'Total de minutos del último mes con comparación semanal',
+    type: MetricaConComparacionDto,
   })
-  minutos_utilizados: number;
+  minutos_ultimo_mes: MetricaConComparacionDto;
+
+  @ApiProperty({
+    description: 'Tiempo ahorrado en minutos con comparación semanal',
+    type: MetricaConComparacionDto,
+  })
+  tiempo_ahorrado: MetricaConComparacionDto;
+
+  @ApiProperty({
+    example: 85.5,
+    description:
+      'Tasa de éxito de las llamadas (porcentaje de llamadas exitosas)',
+  })
+  tasa_exito: number;
 }
 
 export class AgenteDto {
@@ -48,7 +76,7 @@ export class AgenteDto {
   estado: 'activo' | 'inactivo';
 }
 
-export class LlamadaPorDiaDto {
+export class LlamadaExitosaPorDiaDto {
   @ApiProperty({
     example: '2024-01-15',
     description: 'Fecha en formato YYYY-MM-DD',
@@ -57,15 +85,23 @@ export class LlamadaPorDiaDto {
 
   @ApiProperty({
     example: 25,
-    description: 'Total de llamadas en ese día',
+    description: 'Total de llamadas exitosas en ese día',
   })
   total: number;
+
+  @ApiProperty({
+    description:
+      'Comparación con la misma semana del período anterior (solo para endpoint detallado)',
+    required: false,
+    type: ComparacionDiaAnteriorDto,
+  })
+  comparacionSemanaAnterior?: ComparacionDiaAnteriorDto;
 }
 
 export class DashboardMetricsResponseDto {
   @ApiProperty({
     type: SummaryDto,
-    description: 'Resumen de métricas',
+    description: 'Resumen de métricas con comparaciones semanales',
   })
   resumen: SummaryDto;
 
@@ -76,8 +112,8 @@ export class DashboardMetricsResponseDto {
   agentes: AgenteDto[];
 
   @ApiProperty({
-    type: [LlamadaPorDiaDto],
-    description: 'Llamadas de los últimos 7 días',
+    type: [LlamadaExitosaPorDiaDto],
+    description: 'Llamadas exitosas de los últimos 7 días separadas por día',
   })
-  llamadas_ultimos_7_dias: LlamadaPorDiaDto[];
+  llamadas_exitosas_ultimos_7_dias: LlamadaExitosaPorDiaDto[];
 }

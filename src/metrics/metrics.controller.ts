@@ -60,7 +60,7 @@ export class MetricsController {
   @ApiOperation({
     summary: 'Obtener métricas del dashboard',
     description:
-      'Retorna resumen de llamadas, agentes y llamadas de los últimos 7 días. Los datos siempre corresponden a los últimos 7 días.',
+      'Retorna métricas completas del dashboard incluyendo total de llamadas, llamadas exitosas, minutos del último mes, tiempo ahorrado (todos con comparación semanal), tasa de éxito y llamadas exitosas de los últimos 7 días por día. Los datos se obtienen de todas las cuentas Twilio configuradas del usuario.',
   })
   @ApiResponse({
     status: 200,
