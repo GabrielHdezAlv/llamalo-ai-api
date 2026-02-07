@@ -1,9 +1,9 @@
 import { Controller, Get, UseGuards, Query } from '@nestjs/common';
 import {
   ApiTags,
-  ApiBearerAuth,
   ApiOperation,
   ApiResponse,
+  ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
 import { MetricsService } from './metrics.service';
@@ -11,12 +11,49 @@ import { DashboardMetricsResponseDto } from './dto/dashboard-metrics-response.dt
 import { TwilioDetailedMetricsResponseDto } from './dto/twilio-detailed-metrics.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
+import { BadRequestException } from '@nestjs/common';
 
 @ApiTags('metrics')
 @ApiBearerAuth()
 @Controller('metrics')
 export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}
+
+  @Get('test-latency')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary: 'Test endpoint para crear datos de latencia de prueba',
+  })
+  @ApiResponse({ status: 200, description: 'Datos de latencia creados' })
+  async testLatency(@GetUser('uid') userId: string) {
+    try {
+      const twilioAccountId = 1234567890; // ID de prueba
+
+      // Crear varios datos de latencia de prueba
+      const latenciasPrueba = [
+        850, 920, 780, 1100, 650, 890, 750, 980, 720, 810,
+      ];
+
+      for (const latencia of latenciasPrueba) {
+        await this.metricsService.saveLatencyMeasurement(
+          userId,
+          twilioAccountId,
+          latencia,
+        );
+      }
+
+      return {
+        message: 'Datos de latencia de prueba creados',
+        userId,
+        totalMediciones: latenciasPrueba.length,
+        latencias: latenciasPrueba,
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Error creando datos de prueba: ${(error as Error).message}`,
+      );
+    }
+  }
 
   @Get('dashboard')
   @UseGuards(FirebaseAuthGuard)
