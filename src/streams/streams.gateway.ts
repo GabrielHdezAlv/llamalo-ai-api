@@ -1050,6 +1050,10 @@ ${shopifyContextJson}
   }
 
   private async handleFinalTranscript(session: CallSession, text: string) {
+    console.log(
+      `[Latency Debug] handleFinalTranscript llamado - session.userId: ${session.userId}, twilioAccountId: ${session.customParameters?.twilioAccountId}, userSpeakingStartTime: ${session.userSpeakingStartTime}`,
+    );
+
     // Resetear estado de interrupción para permitir nueva respuesta
     if (session.interrupted) {
       console.log(
@@ -1110,6 +1114,17 @@ ${shopifyContextJson}
       }
 
       // Calcular y guardar latencia
+      console.log(
+        `[Latency Debug] Verificando condiciones para guardar latencia:`,
+      );
+      console.log(
+        `[Latency Debug] - userSpeakingStartTime: ${session.userSpeakingStartTime}`,
+      );
+      console.log(`[Latency Debug] - userId: ${session.userId}`);
+      console.log(
+        `[Latency Debug] - twilioAccountId: ${session.customParameters?.twilioAccountId}`,
+      );
+
       if (
         session.userSpeakingStartTime &&
         session.userId &&
@@ -1117,6 +1132,10 @@ ${shopifyContextJson}
       ) {
         const latency = agentResponseStart - session.userSpeakingStartTime;
         session.responseLatencies.push(latency);
+
+        console.log(
+          `[Latency Debug] ✅ Condiciones cumplidas, calculando latencia: ${latency}ms`,
+        );
 
         // Guardar latencia en Firestore
         try {
@@ -1131,6 +1150,10 @@ ${shopifyContextJson}
         } catch (error) {
           console.warn(`[Latency] Error guardando latencia:`, error);
         }
+      } else {
+        console.log(
+          `[Latency Debug] ❌ Condiciones NO cumplidas, no se guardará latencia`,
+        );
       }
 
       session.history.push({ role: 'assistant', content });
