@@ -82,9 +82,21 @@ export class WebScraperProcessor extends BaseProcessor {
       const wordCount = this.countWords(cleanedText);
 
       // Validate content size limits
-      if (cleanedText.length > 100000) {
+      const maxCharacters = parseInt(
+        process.env.MAX_CONTENT_CHARACTERS || '500000',
+      ); // 500K chars default
+      if (cleanedText.length > maxCharacters) {
         throw new Error(
-          'El contenido extraído excede el límite de 100,000 caracteres. Por favor, use una URL más específica o divida el contenido.',
+          `El contenido extraído excede el límite de ${maxCharacters.toLocaleString()} caracteres. Por favor, use una URL más específica o divida el contenido.`,
+        );
+      }
+
+      // Estimate tokens (rough approximation: 1 token ≈ 4 characters)
+      const estimatedTokens = Math.ceil(cleanedText.length / 4);
+      const maxTokens = parseInt(process.env.MAX_TOKENS || '1000000'); // 1M tokens default
+      if (estimatedTokens > maxTokens) {
+        throw new Error(
+          `El contenido es demasiado grande (${estimatedTokens.toLocaleString()} tokens estimados). Por favor, use una URL más específica con menos contenido. Límite recomendado: ~${maxTokens.toLocaleString()} tokens.`,
         );
       }
 

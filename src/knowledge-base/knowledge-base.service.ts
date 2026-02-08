@@ -153,10 +153,34 @@ export class KnowledgeBaseService {
       this.logger.log(`[KnowledgeBaseService] Generating embeddings...`);
       // Generate embeddings
       const chunkTexts = chunks.map((chunk) => chunk.content);
-      const embeddings =
-        await this.embeddingsService.generateBatchEmbeddings(chunkTexts);
+
+      // Process embeddings in batches to handle large content
+      const allEmbeddings: number[][] = [];
+
+      for (let i = 0; i < chunkTexts.length; i += 100) {
+        // Process 100 chunks at a time
+        const batch = chunkTexts.slice(i, i + 100);
+        this.logger.log(
+          `[KnowledgeBaseService] Processing batch ${Math.floor(i / 100) + 1}/${Math.ceil(chunkTexts.length / 100)} (${batch.length} chunks)`,
+        );
+
+        try {
+          const batchEmbeddings =
+            await this.embeddingsService.generateBatchEmbeddings(batch);
+          allEmbeddings.push(...batchEmbeddings);
+        } catch (batchError) {
+          this.logger.error(
+            `[KnowledgeBaseService] Batch ${Math.floor(i / 100) + 1} failed: ${batchError.message}`,
+          );
+          throw new Error(
+            `Error generating embeddings for batch ${Math.floor(i / 100) + 1}: ${batchError.message}`,
+          );
+        }
+      }
+
+      const embeddings = allEmbeddings;
       this.logger.log(
-        `[KnowledgeBaseService] Generated ${embeddings.length} embeddings`,
+        `[KnowledgeBaseService] Generated ${embeddings.length} embeddings in ${Math.ceil(chunkTexts.length / 100)} batches`,
       );
 
       this.logger.log(

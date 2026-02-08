@@ -6,17 +6,21 @@ export interface ProcessedText {
     wordCount: number;
     pageCount?: number;
     size?: number;
+    estimatedTokens?: number;
   };
 }
 
 @Injectable()
 export abstract class BaseProcessor {
   abstract extractText(input: any): Promise<ProcessedText>;
-  
+
   protected countWords(text: string): number {
-    return text.trim().split(/\s+/).filter(word => word.length > 0).length;
+    return text
+      .trim()
+      .split(/\s+/)
+      .filter((word) => word.length > 0).length;
   }
-  
+
   protected cleanText(text: string): string {
     return text
       .replace(/\s+/g, ' ')

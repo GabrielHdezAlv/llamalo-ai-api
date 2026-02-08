@@ -53,11 +53,21 @@ export class PdfProcessor extends BaseProcessor {
             const wordCount = this.countWords(cleanedText);
             const fileSize = fs.statSync(filePath).size;
 
+            // Estimate tokens (rough approximation: 1 token ≈ 4 characters)
+            const estimatedTokens = Math.ceil(cleanedText.length / 4);
+            const maxTokens = parseInt(process.env.MAX_TOKENS || '1000000'); // 1M tokens default
+            if (estimatedTokens > maxTokens) {
+              throw new Error(
+                `El PDF es demasiado grande (${estimatedTokens.toLocaleString()} tokens estimados). Por favor, use un PDF más pequeño. Límite recomendado: ~${maxTokens.toLocaleString()} tokens.`,
+              );
+            }
+
             console.log('[PdfProcessor] PDF processed successfully:', {
               pageCount,
               textLength: cleanedText.length,
               wordCount,
               fileSize,
+              estimatedTokens,
             });
 
             resolve({
@@ -85,7 +95,7 @@ export class PdfProcessor extends BaseProcessor {
         const pdfBuffer = fs.readFileSync(filePath);
         try {
           (pdfParser as any).parseBuffer(pdfBuffer);
-        } catch (parseError) {
+        } catch {
           console.log('[PdfProcessor] parseBuffer failed, trying loadBuffer');
           (pdfParser as any).loadBuffer(pdfBuffer);
         }
