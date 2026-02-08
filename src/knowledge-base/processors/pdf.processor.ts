@@ -81,8 +81,14 @@ export class PdfProcessor extends BaseProcessor {
           }
         });
 
-        // Parse the PDF file
-        (pdfParser as any).loadBuffer(fs.readFileSync(filePath));
+        // Parse the PDF file - try multiple methods
+        const pdfBuffer = fs.readFileSync(filePath);
+        try {
+          (pdfParser as any).parseBuffer(pdfBuffer);
+        } catch (parseError) {
+          console.log('[PdfProcessor] parseBuffer failed, trying loadBuffer');
+          (pdfParser as any).loadBuffer(pdfBuffer);
+        }
       });
     } catch (error) {
       console.error('[PdfProcessor] Unexpected error:', error);
