@@ -1,5 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEnum, IsOptional, IsArray, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsEnum,
+  IsOptional,
+  IsArray,
+  IsBoolean,
+  MaxLength,
+} from 'class-validator';
 
 export enum KnowledgeSourceType {
   PDF = 'pdf',
@@ -14,7 +21,10 @@ export enum KnowledgeSourceStatus {
 }
 
 export class CreateKnowledgeSourceDto {
-  @ApiProperty({ enum: KnowledgeSourceType, description: 'Tipo de fuente de conocimiento' })
+  @ApiProperty({
+    enum: KnowledgeSourceType,
+    description: 'Tipo de fuente de conocimiento',
+  })
   @IsEnum(KnowledgeSourceType)
   type: KnowledgeSourceType;
 
@@ -22,41 +32,69 @@ export class CreateKnowledgeSourceDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ description: 'URL para fuentes tipo web', required: false })
+  @ApiProperty({
+    description: 'URL para fuentes tipo web',
+    required: false,
+    maxLength: 2048,
+  })
   @IsOptional()
   @IsString()
+  @MaxLength(2048, { message: 'La URL no puede exceder los 2048 caracteres' })
   url?: string;
 
-  @ApiProperty({ description: 'Contenido de texto para fuentes tipo text', required: false })
+  @ApiProperty({
+    description: 'Contenido de texto para fuentes tipo text',
+    required: false,
+    maxLength: 50000,
+  })
   @IsOptional()
   @IsString()
+  @MaxLength(50000, {
+    message:
+      'El contenido de texto no puede exceder los 50,000 caracteres (~20 páginas)',
+  })
   content?: string;
 
-  @ApiProperty({ description: 'Etiquetas para categorizar la fuente', required: false })
+  @ApiProperty({
+    description: 'Etiquetas para categorizar la fuente',
+    required: false,
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
 
-  @ApiProperty({ description: 'Si la fuente es pública y puede ser reutilizada', required: false })
+  @ApiProperty({
+    description: 'Si la fuente es pública y puede ser reutilizada',
+    required: false,
+  })
   @IsOptional()
   @IsBoolean()
   isPublic?: boolean;
 }
 
 export class UpdateKnowledgeSourceDto {
-  @ApiProperty({ description: 'Nombre descriptivo de la fuente', required: false })
+  @ApiProperty({
+    description: 'Nombre descriptivo de la fuente',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   name?: string;
 
-  @ApiProperty({ description: 'Etiquetas para categorizar la fuente', required: false })
+  @ApiProperty({
+    description: 'Etiquetas para categorizar la fuente',
+    required: false,
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
 
-  @ApiProperty({ description: 'Si la fuente es pública y puede ser reutilizada', required: false })
+  @ApiProperty({
+    description: 'Si la fuente es pública y puede ser reutilizada',
+    required: false,
+  })
   @IsOptional()
   @IsBoolean()
   isPublic?: boolean;
