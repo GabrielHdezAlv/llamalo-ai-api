@@ -154,14 +154,34 @@ export class KnowledgeBaseService {
       // Generate embeddings
       const chunkTexts = chunks.map((chunk) => chunk.content);
 
-      // Process embeddings in batches to handle large content
+      // Process embeddings in batches with dynamic sizing based on tokens
       const allEmbeddings: number[][] = [];
+      const maxTokensPerBatch = 250000; // Stay under 300K limit with margin
+      let totalTokensUsed = 0;
 
-      for (let i = 0; i < chunkTexts.length; i += 100) {
-        // Process 100 chunks at a time
-        const batch = chunkTexts.slice(i, i + 100);
+      let i = 0;
+      let batchIndex = 0;
+      while (i < chunkTexts.length) {
+        let batchTokens = 0;
+        let batchSize = 0;
+
+        // Calculate optimal batch size based on token estimation
+        while (
+          i + batchSize < chunkTexts.length &&
+          batchTokens < maxTokensPerBatch
+        ) {
+          const estimatedTokens = Math.ceil(
+            chunkTexts[i + batchSize].length / 4,
+          );
+          if (batchTokens + estimatedTokens > maxTokensPerBatch) break;
+          batchTokens += estimatedTokens;
+          batchSize++;
+        }
+
+        totalTokensUsed += batchTokens;
+        const batch = chunkTexts.slice(i, i + batchSize);
         this.logger.log(
-          `[KnowledgeBaseService] Processing batch ${Math.floor(i / 100) + 1}/${Math.ceil(chunkTexts.length / 100)} (${batch.length} chunks)`,
+          `[KnowledgeBaseService] Processing batch ${batchIndex + 1}/${Math.ceil(chunkTexts.length / 100)} (${batch.length} chunks, ~${batchTokens} tokens)`,
         );
 
         try {
@@ -170,17 +190,23 @@ export class KnowledgeBaseService {
           allEmbeddings.push(...batchEmbeddings);
         } catch (batchError) {
           this.logger.error(
-            `[KnowledgeBaseService] Batch ${Math.floor(i / 100) + 1} failed: ${batchError.message}`,
+            `[KnowledgeBaseService] Batch ${batchIndex + 1} failed: ${batchError.message}`,
           );
           throw new Error(
-            `Error generating embeddings for batch ${Math.floor(i / 100) + 1}: ${batchError.message}`,
+            `Error generating embeddings for batch ${batchIndex + 1}: ${batchError.message}`,
           );
         }
+
+        i += batchSize;
+        batchIndex++;
       }
 
       const embeddings = allEmbeddings;
       this.logger.log(
-        `[KnowledgeBaseService] Generated ${embeddings.length} embeddings in ${Math.ceil(chunkTexts.length / 100)} batches`,
+        `[KnowledgeBaseService] Generated ${embeddings.length} embeddings in ${batchIndex} batches`,
+      );
+      this.logger.log(
+        `[KnowledgeBaseService] Total tokens used: ${totalTokensUsed.toLocaleString()}`,
       );
 
       this.logger.log(
