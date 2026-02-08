@@ -49,7 +49,7 @@ export class KnowledgeBaseService {
   ): Promise<KnowledgeSourceDto> {
     try {
       const sourceId = `src_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       const knowledgeSource = {
         id: sourceId,
         userId,
@@ -74,14 +74,16 @@ export class KnowledgeBaseService {
         .set(knowledgeSource);
 
       // Start async processing
-      this.processKnowledgeSource(sourceId, createSourceDto, filePath).catch(
-        (error) => {
-          this.logger.error(
-            `Error processing source ${sourceId}: ${error.message}`,
-          );
-          this.updateSourceStatus(sourceId, KnowledgeSourceStatus.FAILED);
-        },
-      );
+      void this.processKnowledgeSource(
+        sourceId,
+        createSourceDto,
+        filePath,
+      ).catch((error) => {
+        this.logger.error(
+          `Error processing source ${sourceId}: ${error.message}`,
+        );
+        void this.updateSourceStatus(sourceId, KnowledgeSourceStatus.FAILED);
+      });
 
       return this.mapToDto(knowledgeSource);
     } catch (error) {
@@ -98,6 +100,10 @@ export class KnowledgeBaseService {
     filePath?: string,
   ): Promise<void> {
     try {
+      this.logger.log(
+        `[KnowledgeBaseService] Starting processing for source: ${sourceId}`,
+      );
+
       let processedText;
 
       // Extract text based on type
@@ -106,7 +112,13 @@ export class KnowledgeBaseService {
           if (!filePath) {
             throw new Error('File path is required for PDF processing');
           }
+          this.logger.log(
+            `[KnowledgeBaseService] Extracting text from PDF: ${filePath}`,
+          );
           processedText = await this.pdfProcessor.extractText(filePath);
+          this.logger.log(
+            `[KnowledgeBaseService] Text extracted successfully, length: ${processedText.text.length}`,
+          );
           break;
         case KnowledgeSourceType.WEB:
           if (!createSourceDto.url) {
@@ -125,24 +137,38 @@ export class KnowledgeBaseService {
           );
           break;
         default:
-          throw new Error(`Unsupported source type: ${createSourceDto.type}`);
+          throw new Error(
+            `Unsupported source type: ${createSourceDto.type as string}`,
+          );
       }
 
       // Clean text
-      const cleanedText = this.textCleaner.clean(processedText.text);
+      const cleanedText = this.textCleaner.clean(processedText.text as string);
 
-      // Create chunks
+      this.logger.log(`[KnowledgeBaseService] Creating chunks from text...`);
+      // Split text into chunks
       const chunks = this.textChunker.createChunks(cleanedText, sourceId);
+      this.logger.log(`[KnowledgeBaseService] Created ${chunks.length} chunks`);
 
+      this.logger.log(`[KnowledgeBaseService] Generating embeddings...`);
       // Generate embeddings
       const chunkTexts = chunks.map((chunk) => chunk.content);
-      const embeddings = await this.embeddingsService.generateBatchEmbeddings(
-        chunkTexts,
+      const embeddings =
+        await this.embeddingsService.generateBatchEmbeddings(chunkTexts);
+      this.logger.log(
+        `[KnowledgeBaseService] Generated ${embeddings.length} embeddings`,
       );
 
+      this.logger.log(
+        `[KnowledgeBaseService] Storing chunks in vector database...`,
+      );
       // Store in vector database
       await this.vectorStoreService.storeChunks(sourceId, chunks, embeddings);
+      this.logger.log(`[KnowledgeBaseService] Chunks stored successfully`);
 
+      this.logger.log(
+        `[KnowledgeBaseService] Updating source status to COMPLETED...`,
+      );
       // Update source with processing results
       await this.firestore
         .collection('knowledgeSources')
@@ -155,6 +181,9 @@ export class KnowledgeBaseService {
             chunkCount: chunks.length,
           },
         });
+      this.logger.log(
+        `[KnowledgeBaseService] Source status updated to COMPLETED`,
+      );
 
       // Clean up temporary file if it exists
       if (filePath && fs.existsSync(filePath)) {
@@ -327,7 +356,9 @@ export class KnowledgeBaseService {
         .where('agentId', '==', agentId)
         .get();
 
-      const sourceIds = snapshot.docs.map((doc) => doc.data().knowledgeSourceId);
+      const sourceIds = snapshot.docs.map(
+        (doc) => doc.data().knowledgeSourceId,
+      );
 
       if (sourceIds.length === 0) {
         return [];
@@ -341,12 +372,14 @@ export class KnowledgeBaseService {
       return sourceDocs.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
-        addedAt: snapshot.docs.find((link) => 
-          link.data().knowledgeSourceId === doc.id
-        )?.data().addedAt,
+        addedAt: snapshot.docs
+          .find((link) => link.data().knowledgeSourceId === doc.id)
+          ?.data().addedAt,
       }));
     } catch (error) {
-      this.logger.error(`Error getting agent knowledge sources: ${error.message}`);
+      this.logger.error(
+        `Error getting agent knowledge sources: ${error.message}`,
+      );
       throw new BadRequestException(
         `Failed to get agent knowledge sources: ${error.message}`,
       );
@@ -358,13 +391,10 @@ export class KnowledgeBaseService {
     status: KnowledgeSourceStatus,
   ): Promise<void> {
     try {
-      await this.firestore
-        .collection('knowledgeSources')
-        .doc(sourceId)
-        .update({
-          status,
-          updatedAt: new Date(),
-        });
+      await this.firestore.collection('knowledgeSources').doc(sourceId).update({
+        status,
+        updatedAt: new Date(),
+      });
     } catch (error) {
       this.logger.error(`Error updating source status: ${error.message}`);
     }
