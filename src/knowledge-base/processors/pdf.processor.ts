@@ -1,31 +1,91 @@
 import { Injectable } from '@nestjs/common';
 import { BaseProcessor, ProcessedText } from './base.processor';
 import * as fs from 'fs';
+import PDFParser from 'pdf2json';
 
 @Injectable()
 export class PdfProcessor extends BaseProcessor {
   async extractText(filePath: string): Promise<ProcessedText> {
     try {
-      // Dynamic import for pdf-parse
-      const pdfParseModule = await import('pdf-parse');
-      const pdfParse =
-        (pdfParseModule as any).default || (pdfParseModule as any);
+      console.log('[PdfProcessor] Starting PDF extraction for:', filePath);
 
-      const dataBuffer = fs.readFileSync(filePath);
-      const data = await pdfParse(dataBuffer);
+      return new Promise((resolve, reject) => {
+        const pdfParser = new PDFParser();
+        let text = '';
+        let pageCount = 0;
 
-      const cleanedText = this.cleanText(data.text);
-      const wordCount = this.countWords(cleanedText);
+        pdfParser.on('pdfParser_dataError', (errData: any) => {
+          console.error(
+            '[PdfProcessor] PDF parsing error:',
+            errData.parserError,
+          );
+          reject(
+            new Error(`Error parsing PDF: ${errData.parserError || errData}`),
+          );
+        });
 
-      return {
-        text: cleanedText,
-        metadata: {
-          wordCount,
-          pageCount: data.numpages,
-          size: fs.statSync(filePath).size,
-        },
-      };
+        pdfParser.on('pdfParser_dataReady', (pdfData) => {
+          try {
+            console.log('[PdfProcessor] PDF data ready, processing pages...');
+
+            if (pdfData.Pages) {
+              pageCount = pdfData.Pages.length;
+
+              // Extract text from all pages
+              pdfData.Pages.forEach((page) => {
+                if (page.Texts) {
+                  page.Texts.forEach((textItem) => {
+                    if (textItem.R && textItem.R.length > 0) {
+                      textItem.R.forEach((r) => {
+                        if (r.T) {
+                          // Decode hex string and add space
+                          const decodedText = decodeURIComponent(r.T);
+                          text += decodedText + ' ';
+                        }
+                      });
+                    }
+                  });
+                }
+              });
+            }
+
+            const cleanedText = this.cleanText(text.trim());
+            const wordCount = this.countWords(cleanedText);
+            const fileSize = fs.statSync(filePath).size;
+
+            console.log('[PdfProcessor] PDF processed successfully:', {
+              pageCount,
+              textLength: cleanedText.length,
+              wordCount,
+              fileSize,
+            });
+
+            resolve({
+              text: cleanedText,
+              metadata: {
+                wordCount,
+                pageCount,
+                size: fileSize,
+              },
+            });
+          } catch (processingError) {
+            console.error(
+              '[PdfProcessor] Error processing PDF data:',
+              processingError,
+            );
+            reject(
+              new Error(
+                `Error processing PDF data: ${processingError.message}`,
+              ),
+            );
+          }
+        });
+
+        // Parse the PDF file
+        (pdfParser as any).loadBuffer(fs.readFileSync(filePath));
+      });
     } catch (error) {
+      console.error('[PdfProcessor] Unexpected error:', error);
       throw new Error(`Error processing PDF: ${error.message}`);
     }
   }
