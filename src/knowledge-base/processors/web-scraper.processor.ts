@@ -8,7 +8,34 @@ export class WebScraperProcessor extends BaseProcessor {
   async extractText(url: string): Promise<ProcessedText> {
     try {
       console.log(`[WebScraperProcessor] Processing URL: "${url}"`);
-      const response = await axios.get(url, {
+
+      // Clean and validate URL
+      let cleanUrl = url.trim();
+
+      // Fix common URL issues
+      if (cleanUrl.includes('https://https://')) {
+        cleanUrl = cleanUrl.replace('https://https://', 'https://');
+        console.log(
+          `[WebScraperProcessor] Fixed duplicate protocol: "${cleanUrl}"`,
+        );
+      }
+      if (cleanUrl.includes('http://http://')) {
+        cleanUrl = cleanUrl.replace('http://http://', 'http://');
+        console.log(
+          `[WebScraperProcessor] Fixed duplicate protocol: "${cleanUrl}"`,
+        );
+      }
+
+      // Basic URL validation
+      try {
+        new URL(cleanUrl);
+      } catch {
+        throw new Error(
+          `URL inválida: ${cleanUrl}. Asegúrese de que la URL sea válida y comience con http:// o https://`,
+        );
+      }
+
+      const response = await axios.get(cleanUrl, {
         timeout: parseInt(process.env.WEB_SCRAPING_TIMEOUT || '30000'),
         maxContentLength: 5 * 1024 * 1024, // 5MB limit
         maxBodyLength: 5 * 1024 * 1024, // 5MB limit

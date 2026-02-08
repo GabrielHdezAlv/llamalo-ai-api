@@ -6,6 +6,7 @@ import {
   IsArray,
   IsBoolean,
   MaxLength,
+  IsUrl,
 } from 'class-validator';
 
 export enum KnowledgeSourceType {
@@ -39,6 +40,10 @@ export class CreateKnowledgeSourceDto {
   })
   @IsOptional()
   @IsString()
+  @IsUrl(
+    { protocols: ['http', 'https'], require_protocol: true },
+    { message: 'La URL debe ser válida y comenzar con http:// o https://' },
+  )
   @MaxLength(2048, { message: 'La URL no puede exceder los 2048 caracteres' })
   url?: string;
 
