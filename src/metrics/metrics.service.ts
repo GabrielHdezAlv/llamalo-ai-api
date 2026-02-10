@@ -20,6 +20,8 @@ import {
   PaisOrigenDto,
   EvaluacionExitoDto,
   RazonesFinalizacionDto,
+  CallMetricsDto,
+  DailyPeakHour,
 } from './dto/twilio-detailed-metrics.dto';
 
 interface TwilioCall {
@@ -821,6 +823,8 @@ export class MetricsService {
         userId,
         twilioAccountId,
       );
+      const callMetricsByHour =
+        this.calculateCallMetricsByHour(callsLast14Days);
 
       return {
         llamadasExitosasUltimos7Dias,
@@ -832,6 +836,7 @@ export class MetricsService {
         evaluacionExito,
         razonesFinalizacion,
         latenciaMedia,
+        callMetricsByHour,
       };
     } catch (error) {
       if (
@@ -1697,6 +1702,79 @@ export class MetricsService {
       clienteColgo: clienteColgoPercentage,
       errorTecnico: errorTecnicoPercentage,
       tiempoAgotado: tiempoAgotadoPercentage,
+    };
+  }
+
+  /**
+   * Calcula las métricas de llamadas por hora para análisis de hora pico
+   */
+  private calculateCallMetricsByHour(calls: TwilioCall[]): CallMetricsDto {
+    const { startDate: startDate7Days, endDate: endDate7Days } =
+      this.getLast7DaysRange();
+
+    const dailyPeakHours: DailyPeakHour[] = [];
+    const hoy = new Date();
+    let totalCalls = 0;
+
+    // Procesar cada día de los últimos 7 días
+    for (let i = 6; i >= 0; i--) {
+      const fecha = new Date(hoy);
+      fecha.setUTCDate(fecha.getUTCDate() - i);
+      fecha.setUTCHours(0, 0, 0, 0);
+
+      const year = fecha.getUTCFullYear();
+      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(fecha.getUTCDate()).padStart(2, '0');
+      const fechaStr = `${year}-${month}-${day}`;
+
+      // Inicializar array de 24 horas para este día
+      const hourlyCalls = new Array(24).fill(0);
+
+      // Filtrar llamadas de este día y agrupar por hora
+      const callsDelDia = calls.filter((call) => {
+        const fechaLlamada = call.start_time || call.date_created;
+        if (!fechaLlamada) return false;
+
+        const callDate = new Date(fechaLlamada);
+        const callYear = callDate.getUTCFullYear();
+        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
+        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
+        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
+
+        return callDateStr === fechaStr;
+      });
+
+      // Contar llamadas por hora
+      callsDelDia.forEach((call) => {
+        const fechaLlamada = call.start_time || call.date_created;
+        if (fechaLlamada) {
+          const callDate = new Date(fechaLlamada);
+          const hour = callDate.getUTCHours();
+          hourlyCalls[hour]++;
+        }
+      });
+
+      // Encontrar hora pico
+      const maxCalls = Math.max(...hourlyCalls);
+      const peakHour = maxCalls > 0 ? hourlyCalls.indexOf(maxCalls) : 0;
+
+      const dayTotal = callsDelDia.length;
+      totalCalls += dayTotal;
+
+      dailyPeakHours.push({
+        date: fechaStr,
+        peakHour,
+        peakCallCount: maxCalls,
+        totalDayCalls: dayTotal,
+        hourlyCalls,
+      });
+    }
+
+    return {
+      startDate: startDate7Days,
+      endDate: endDate7Days,
+      dailyPeakHours,
+      totalCalls,
     };
   }
 }
