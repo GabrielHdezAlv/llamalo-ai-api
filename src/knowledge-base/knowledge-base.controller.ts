@@ -124,6 +124,33 @@ export class KnowledgeBaseController {
     );
   }
 
+  @Delete('knowledge-base/agents/:agentId/sources/:sourceId')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({ summary: 'Unlink a knowledge source from an agent' })
+  @ApiParam({
+    name: 'agentId',
+    type: Number,
+    description: 'ID of the agent',
+    example: 1738000000000,
+  })
+  @ApiParam({
+    name: 'sourceId',
+    description: 'ID of the knowledge source',
+    example: 'src_1234567890_abc123',
+  })
+  @ApiResponse({ status: 200 })
+  async unlinkSourceFromAgent(
+    @GetUser('uid') userId: string,
+    @Param('agentId', ParseIntPipe) agentId: number,
+    @Param('sourceId') sourceId: string,
+  ) {
+    return this.knowledgeBaseService.unlinkSourceFromAgent(
+      agentId,
+      sourceId,
+      userId,
+    );
+  }
+
   @Get('knowledge-base/agents/:agentId/sources')
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Get knowledge sources linked to an agent' })

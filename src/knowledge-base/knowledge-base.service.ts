@@ -399,6 +399,44 @@ export class KnowledgeBaseService {
     }
   }
 
+  async unlinkSourceFromAgent(
+    agentId: number,
+    sourceId: string,
+    userId: string,
+  ): Promise<void> {
+    try {
+      // Find the link document
+      const snapshot = await this.firestore
+        .collection('agentKnowledgeLinks')
+        .where('agentId', '==', agentId)
+        .where('knowledgeSourceId', '==', sourceId)
+        .where('userId', '==', userId)
+        .get();
+
+      if (snapshot.empty) {
+        throw new NotFoundException(
+          `Link between agent ${agentId} and source ${sourceId} not found`,
+        );
+      }
+
+      // Delete the link document
+      const batch = this.firestore.batch();
+      snapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+
+      await batch.commit();
+      this.logger.log(
+        `Successfully unlinked source ${sourceId} from agent ${agentId}`,
+      );
+    } catch (error) {
+      this.logger.error(`Error unlinking source from agent: ${error.message}`);
+      throw new BadRequestException(
+        `Failed to unlink source from agent: ${error.message}`,
+      );
+    }
+  }
+
   async getAgentKnowledgeSources(agentId: number): Promise<any[]> {
     try {
       const snapshot = await this.firestore
