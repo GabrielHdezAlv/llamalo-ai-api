@@ -4,6 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
+import { v4 as uuidv4 } from 'uuid';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { getFirestore } from '../firebase/firebase.config';
 
@@ -364,24 +365,23 @@ export class UsersService {
         throw new BadRequestException('La imagen no puede superar los 5MB');
       }
 
-      const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg'];
+      const allowedTypes = [
+        'image/png',
+        'image/jpeg',
+        'image/jpg',
+        'image/webp',
+      ];
       if (!allowedTypes.includes(file.mimetype)) {
         throw new BadRequestException(
-          'Formato de imagen no permitido. Use PNG o JPG',
+          'Formato de imagen no permitido. Use PNG, JPG o WebP',
         );
       }
 
       const bucket = this.storage.bucket(process.env.FIREBASE_STORAGE_BUCKET);
       const extension = file.originalname.split('.').pop();
-      const fileName = `profile-images/${userId}.${extension}`;
+      const uniqueId = uuidv4();
+      const fileName = `profile-images/${uniqueId}.${extension}`;
       const fileRef = bucket.file(fileName);
-
-      // Eliminar imagen anterior si existe
-      try {
-        await fileRef.delete();
-      } catch {
-        // Ignorar si no existe
-      }
 
       // Subir nueva imagen
       await fileRef.save(file.buffer, {
@@ -405,6 +405,7 @@ export class UsersService {
         imageUrl,
       };
     } catch (error) {
+      console.error('Error uploading image:', error);
       if (error instanceof BadRequestException) {
         throw error;
       }

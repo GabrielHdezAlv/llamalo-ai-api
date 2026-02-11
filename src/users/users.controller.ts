@@ -85,19 +85,52 @@ export class UsersController {
 
   @Put('profile')
   @UseGuards(FirebaseAuthGuard)
-  @ApiOperation({ summary: 'Actualizar perfil del usuario' })
+  @UseInterceptors(FileInterceptor('image'))
+  @ApiOperation({
+    summary: 'Actualizar perfil del usuario (con imagen opcional)',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Nombre del usuario' },
+        lastname: { type: 'string', description: 'Apellido del usuario' },
+        country: { type: 'string', description: 'Código de país' },
+        marketingConsent: {
+          type: 'boolean',
+          description: 'Consentimiento de marketing',
+        },
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'Imagen de perfil opcional (PNG, JPG o WebP, máx 5MB)',
+        },
+      },
+    },
+  })
   @ApiResponse({ status: 200, type: UpdateProfileResponseDto })
   async updateProfile(
     @GetUser('uid') userId: string,
     @Body() updateDto: UpdateProfileDto,
+    @UploadedFile() file?: UploadFile,
   ) {
+    // Si hay archivo, subirlo primero
+    if (file) {
+      const imageResult = await this.usersService.uploadProfileImage(
+        userId,
+        file,
+      );
+      updateDto.profileImage = imageResult.imageUrl;
+    }
+
     return this.usersService.updateUserProfile(userId, updateDto);
   }
 
   @Post('profile/image')
   @UseGuards(FirebaseAuthGuard)
   @UseInterceptors(FileInterceptor('image'))
-  @ApiOperation({ summary: 'Subir imagen de perfil' })
+  @ApiOperation({ summary: 'Subir imagen de perfil (endpoint alternativo)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -106,7 +139,7 @@ export class UsersController {
         image: {
           type: 'string',
           format: 'binary',
-          description: 'Imagen de perfil (PNG o JPG, máx 5MB)',
+          description: 'Imagen de perfil (PNG, JPG o WebP, máx 5MB)',
         },
       },
     },
