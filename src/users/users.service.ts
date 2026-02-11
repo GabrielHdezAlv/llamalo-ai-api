@@ -297,7 +297,17 @@ export class UsersService {
         throw new NotFoundException('Usuario no encontrado en Firestore');
       }
 
-      // 📦 Solo actualizar los campos que se reciban
+      // � Validar que profileImage no sea una blob URL
+      if (
+        updateDto.profileImage &&
+        updateDto.profileImage.startsWith('blob:')
+      ) {
+        throw new BadRequestException(
+          'Las blob URLs no son válidas. Por favor, suba el archivo de imagen directamente.',
+        );
+      }
+
+      // �📦 Solo actualizar los campos que se reciban
       const updates: Record<string, unknown> = {};
 
       if (updateDto.name) updates.name = updateDto.name;
