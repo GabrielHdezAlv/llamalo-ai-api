@@ -460,9 +460,6 @@ export class CallsController {
       addStreamParameter('userId', userId);
       if (shopDomain) {
         addStreamParameter('shopDomain', shopDomain);
-        console.log(
-          `✅ [Calls] ShopDomain agregado a parámetros de stream: ${shopDomain}`,
-        );
       } else {
         console.warn(
           `⚠️ [Calls] ShopDomain no agregado (no está configurado para usuario ${userId})`,

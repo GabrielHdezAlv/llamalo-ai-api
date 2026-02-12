@@ -330,7 +330,7 @@ export class KnowledgeBaseService {
       });
 
       // Generate query embedding
-      const queryEmbedding = await this.vectorStoreService.generateEmbedding(
+      const queryEmbedding = await this.embeddingsService.generateEmbedding(
         searchDto.query,
       );
 

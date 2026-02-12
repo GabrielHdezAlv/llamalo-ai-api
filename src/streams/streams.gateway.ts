@@ -2065,9 +2065,9 @@ ${shopifyContextJson}
 
     session.currentTTSRequest = this.streamElevenLabsTTS(session, text)
       .then(() => {
-        console.log(
-          `✅ TTS completado para: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
-        );
+        // console.log(
+        //   `✅ TTS completado para: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
+        // );
       })
       .catch((error) => {
         if (!session.interrupted) {
@@ -2083,7 +2083,7 @@ ${shopifyContextJson}
         }
       })
       .finally(() => {
-        console.log(`🏁 Finalizando TTS request`);
+        // console.log(`🏁 Finalizando TTS request`);
         session.currentTTSRequest = undefined;
         if (wasGreetingPending) {
           session.allowInterruptions = true;
@@ -2113,7 +2113,7 @@ ${shopifyContextJson}
     }
 
     // Log del voiceId que se está usando para TTS
-    console.log(`🎙️ [${session.callSid}] Usando Voice ID para TTS: ${voiceId}`);
+    // console.log(`🎙️ [${session.callSid}] Usando Voice ID para TTS: ${voiceId}`);
 
     // Obtener parámetros de voz personalizados del agente o usar valores del entorno como fallback
     const voiceStability = this.getVoiceParameter(
@@ -2142,14 +2142,14 @@ ${shopifyContextJson}
       this.elevenLabsTtsVoiceSpeed,
     );
 
-    console.log(`🎛️ [${session.callSid}] Parámetros de voz finales:`, {
-      stability: voiceStability,
-      similarity: voiceSimilarity,
-      style: voiceStyle,
-      boost: voiceBoost,
-      speed: voiceSpeed,
-      customParameters: session.customParameters,
-    });
+    // console.log(`🎛️ [${session.callSid}] Parámetros de voz finales:`, {
+    //   stability: voiceStability,
+    //   similarity: voiceSimilarity,
+    //   style: voiceStyle,
+    //   boost: voiceBoost,
+    //   speed: voiceSpeed,
+    //   customParameters: session.customParameters,
+    // });
 
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,
@@ -2159,14 +2159,13 @@ ${shopifyContextJson}
     try {
       session.agentSpeaking = true;
 
-      // Logging adicional para debugging
-      console.log(
-        `📋 Payload streamElevenLabsTTS: ${JSON.stringify({
-          text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
-          model_id: this.elevenLabsTtsModelId,
-          output_format: normalizedFormat,
-        })}`,
-      );
+      // console.log(
+      //   `📋 Payload streamElevenLabsTTS: ${JSON.stringify({
+      //     text: text.trim().substring(0, 50) + (text.length > 50 ? '...' : ''),
+      //     model_id: this.elevenLabsTtsModelId,
+      //     output_format: normalizedFormat,
+      //   })}`,
+      // );
 
       const response = await axios.post(
         url,
@@ -2219,18 +2218,6 @@ ${shopifyContextJson}
         }
         throw new Error(`ElevenLabs TTS error: ${errorMessage}`);
       }
-
-      console.log(
-        `✅ Respuesta recibida de ElevenLabs, status: ${response.status}`,
-      );
-      console.log(
-        `📡 Headers de respuesta:`,
-        JSON.stringify(response.headers).substring(0, 300),
-      );
-      const contentType = (response.headers['content-type'] as string) || '';
-      console.log(
-        `📡 Content-Type recibido de ElevenLabs: ${contentType || 'desconocido'}`,
-      );
 
       const audioStream = response.data as Readable;
 
@@ -2388,9 +2375,9 @@ ${shopifyContextJson}
     } finally {
       if (!session.interrupted) {
         session.agentSpeaking = false;
-        console.log(
-          `✅ TTS ElevenLabs completado en ${Date.now() - (session.userSpeakingStartTime || Date.now())}ms`,
-        );
+        // console.log(
+        //   `✅ TTS ElevenLabs completado en ${Date.now() - (session.userSpeakingStartTime || Date.now())}ms`,
+        // );
       }
     }
   }
@@ -2402,9 +2389,9 @@ ${shopifyContextJson}
 
     const greeting = session.pendingGreeting;
 
-    console.log(
-      `👋 Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
-    );
+    // console.log(
+    //   `👋 Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
+    // );
     session.greetingSent = true;
     void this.streamTTSFromText(session, greeting).catch((error) => {
       session.greetingSent = false;
