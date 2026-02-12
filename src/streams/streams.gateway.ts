@@ -1303,6 +1303,31 @@ ${shopifyContextJson}
   ): string {
     const instructions =
       customParameters?.instructions?.trim() || this.defaultInstructions;
+
+    // 🔍 Si no hay instructions pero hay knowledgeContext, usarlo como instrucciones
+    if (
+      (!customParameters?.instructions ||
+        !customParameters.instructions.trim()) &&
+      customParameters?.knowledgeContext?.trim()
+    ) {
+      console.log(
+        `🧠 [Streams] Usando knowledgeContext como instrucciones principales (agentInstruction vacío)`,
+      );
+      return customParameters.knowledgeContext.trim();
+    }
+
+    // 🔍 Si hay ambas, combinarlas
+    if (
+      customParameters?.instructions?.trim() &&
+      customParameters?.knowledgeContext?.trim()
+    ) {
+      const combined = `${customParameters.instructions.trim()}\n\n---\n\nCONTEXTO DE CONOCIMIENTO:\n${customParameters.knowledgeContext.trim()}`;
+      console.log(
+        `🧠 [Streams] Combinando agentInstruction con knowledgeContext`,
+      );
+      return combined;
+    }
+
     return instructions;
   }
 

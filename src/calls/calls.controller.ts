@@ -331,6 +331,18 @@ export class CallsController {
         typeof agentData.agentInstruction === 'string'
           ? agentData.agentInstruction
           : undefined;
+
+      console.log(`🔍 [Calls] agentInstruction encontrado:`, {
+        tieneAgentInstruction: !!agentInstruction,
+        longitud: agentInstruction?.length || 0,
+        valor: agentInstruction
+          ? agentInstruction.substring(0, 100) +
+            (agentInstruction.length > 100 ? '...' : '')
+          : 'undefined',
+        agentDataKeys: Object.keys(agentData),
+        agentInstructionType: typeof agentData.agentInstruction,
+      });
+
       addStreamParameter('instructions', agentInstruction);
 
       // 🔍 Agregar contexto de bases de conocimiento si existe
