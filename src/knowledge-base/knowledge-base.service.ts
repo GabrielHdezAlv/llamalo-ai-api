@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { getFirestore } from '../firebase/firebase.config';
+import { FieldPath } from 'firebase-admin/firestore';
 import {
   CreateKnowledgeSourceDto,
   UpdateKnowledgeSourceDto,
@@ -454,7 +455,7 @@ export class KnowledgeBaseService {
 
       const sourceDocs = await this.firestore
         .collection('knowledgeSources')
-        .where('id', 'in', sourceIds)
+        .where(FieldPath.documentId(), 'in', sourceIds)
         .get();
 
       return sourceDocs.docs.map((doc) => ({
