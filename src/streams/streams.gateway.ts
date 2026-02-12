@@ -342,6 +342,16 @@ export class StreamsGateway {
 
     const instructions = this.resolveInstructions(customParameters);
     const voiceId = this.resolveVoiceId(customParameters);
+
+    console.log(
+      `🔍 [Streams] CustomParameters recibidos para ${callSid}:`,
+      JSON.stringify(customParameters, null, 2),
+    );
+    console.log(`🔍 [Streams] VoiceId resuelto: ${voiceId}`);
+    console.log(
+      `🔍 [Streams] Language resuelto: ${this.resolveLanguage(customParameters)}`,
+    );
+
     if (!voiceId) {
       console.warn(
         `⚠️ [${callSid}] No se recibió voiceId/labsId; se usará fallback de entorno: ${this.elevenLabsTtsVoiceId}`,
@@ -2107,9 +2117,14 @@ ${shopifyContextJson}
       this.elevenLabsTtsVoiceSpeed,
     );
 
-    console.log(
-      `🎛️ [${session.callSid}] Parámetros de voz: stability=${voiceStability}, similarity=${voiceSimilarity}, style=${voiceStyle}, boost=${voiceBoost}, speed=${voiceSpeed}`,
-    );
+    console.log(`🎛️ [${session.callSid}] Parámetros de voz finales:`, {
+      stability: voiceStability,
+      similarity: voiceSimilarity,
+      style: voiceStyle,
+      boost: voiceBoost,
+      speed: voiceSpeed,
+      customParameters: session.customParameters,
+    });
 
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,

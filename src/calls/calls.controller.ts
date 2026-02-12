@@ -252,6 +252,11 @@ export class CallsController {
             : undefined;
 
       // Log para debugging de configuración del agente
+      console.log(
+        `🔍 [Calls] Datos completos del agente para usuario ${userId}:`,
+        JSON.stringify(agentData, null, 2),
+      );
+
       if (typeof agentData.voiceId === 'string') {
         console.log(
           `✅ [Calls] VoiceId encontrado para usuario ${userId}: ${agentData.voiceId}`,
@@ -266,6 +271,12 @@ export class CallsController {
           `⚠️ [Calls] Usuario ${userId} no tiene voiceId configurado en agent. Estructura agent:`,
           Object.keys(agentData),
         );
+        console.warn(`⚠️ [Calls] Valores de voiceId/labsId:`, {
+          voiceId: agentData.voiceId,
+          voiceIdType: typeof agentData.voiceId,
+          labsId: agentData.labsId,
+          labsIdType: typeof agentData.labsId,
+        });
       }
 
       addStreamParameter('agentName', agentName);
@@ -293,6 +304,17 @@ export class CallsController {
             : undefined,
       );
 
+      console.log(`📋 [Calls] Parámetro labsId agregado al stream:`, {
+        voiceId: agentData.voiceId,
+        labsId: agentData.labsId,
+        valorEnviado:
+          typeof agentData.voiceId === 'string'
+            ? agentData.voiceId
+            : typeof agentData.labsId === 'string'
+              ? agentData.labsId
+              : undefined,
+      });
+
       // Obtener language: puede ser string (nueva estructura) u objeto (antigua)
       const languageCode =
         typeof agentData.language === 'string'
@@ -314,30 +336,41 @@ export class CallsController {
         // Agregar cada parámetro de voz como customParameter
         if (typeof params.stability === 'number') {
           addStreamParameter('voiceStability', params.stability.toString());
+          console.log(`✅ [Calls] voiceStability: ${params.stability}`);
         }
         if (typeof params.similarity === 'number') {
           addStreamParameter('voiceSimilarity', params.similarity.toString());
+          console.log(`✅ [Calls] voiceSimilarity: ${params.similarity}`);
         }
         if (typeof params.style === 'number') {
           addStreamParameter('voiceStyle', params.style.toString());
+          console.log(`✅ [Calls] voiceStyle: ${params.style}`);
         }
         if (typeof params.boost === 'boolean') {
           addStreamParameter('voiceBoost', params.boost.toString());
+          console.log(`✅ [Calls] voiceBoost: ${params.boost}`);
         }
         if (typeof params.speed === 'number') {
           addStreamParameter('voiceSpeed', params.speed.toString());
+          console.log(`✅ [Calls] voiceSpeed: ${params.speed}`);
         }
       } else {
         console.warn(
           `⚠️ [Calls] Usuario ${userId} no tiene parámetros de voz configurados`,
         );
+        console.warn(`⚠️ [Calls] Valor de parameters:`, agentData.parameters);
+        console.warn(
+          `⚠️ [Calls] Tipo de parameters:`,
+          typeof agentData.parameters,
+        );
       }
 
       // Obtener credenciales de Twilio basadas en el phoneNumber
       if (twilioArray.length === 0) {
-        console.warn(
-          `⚠️ [Calls] Usuario ${userId} no tiene cuentas de Twilio configuradas`,
-        );
+        console
+          .warn
+          // ...
+          ();
       } else {
         let twilioConfig:
           | { twilioAccountId: number; twilioSid: string; twilioToken: string }
