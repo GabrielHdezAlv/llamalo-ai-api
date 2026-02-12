@@ -1333,6 +1333,31 @@ ${shopifyContextJson}
     return undefined;
   }
 
+  private getVoiceParameter(
+    customParameters: Record<string, string> | undefined,
+    parameterName: string,
+    defaultValue: number | boolean,
+  ): number | boolean {
+    if (!customParameters || !customParameters[parameterName]) {
+      return defaultValue;
+    }
+
+    const value = customParameters[parameterName];
+
+    // Convertir a número si el defaultValue es número
+    if (typeof defaultValue === 'number') {
+      const numValue = Number(value);
+      return isNaN(numValue) ? defaultValue : numValue;
+    }
+
+    // Convertir a booleano si el defaultValue es booleano
+    if (typeof defaultValue === 'boolean') {
+      return value === 'true';
+    }
+
+    return defaultValue;
+  }
+
   private forwardInboundAudio(callSid: string, msg: TwilioMediaIn) {
     const session = this.sessions.get(callSid);
     if (!session) {
@@ -2055,6 +2080,37 @@ ${shopifyContextJson}
     // Log del voiceId que se está usando para TTS
     console.log(`🎙️ [${session.callSid}] Usando Voice ID para TTS: ${voiceId}`);
 
+    // Obtener parámetros de voz personalizados del agente o usar valores del entorno como fallback
+    const voiceStability = this.getVoiceParameter(
+      session.customParameters,
+      'voiceStability',
+      this.elevenLabsTtsStability,
+    );
+    const voiceSimilarity = this.getVoiceParameter(
+      session.customParameters,
+      'voiceSimilarity',
+      this.elevenLabsTtsSimilarity,
+    );
+    const voiceStyle = this.getVoiceParameter(
+      session.customParameters,
+      'voiceStyle',
+      this.elevenLabsTtsStyle,
+    );
+    const voiceBoost = this.getVoiceParameter(
+      session.customParameters,
+      'voiceBoost',
+      this.elevenLabsTtsSpeakerBoost,
+    );
+    const voiceSpeed = this.getVoiceParameter(
+      session.customParameters,
+      'voiceSpeed',
+      this.elevenLabsTtsVoiceSpeed,
+    );
+
+    console.log(
+      `🎛️ [${session.callSid}] Parámetros de voz: stability=${voiceStability}, similarity=${voiceSimilarity}, style=${voiceStyle}, boost=${voiceBoost}, speed=${voiceSpeed}`,
+    );
+
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,
     );
@@ -2078,11 +2134,11 @@ ${shopifyContextJson}
           text: text.trim(),
           model_id: this.elevenLabsTtsModelId,
           voice_settings: {
-            stability: this.elevenLabsTtsStability,
-            similarity_boost: this.elevenLabsTtsSimilarity,
-            style: this.elevenLabsTtsStyle,
-            use_speaker_boost: this.elevenLabsTtsSpeakerBoost,
-            voice_speed: this.elevenLabsTtsVoiceSpeed,
+            stability: voiceStability,
+            similarity_boost: voiceSimilarity,
+            style: voiceStyle,
+            use_speaker_boost: voiceBoost,
+            voice_speed: voiceSpeed,
           },
           // output_format va en la query; en el body mantenemos solo para trazabilidad
           output_format: normalizedFormat,

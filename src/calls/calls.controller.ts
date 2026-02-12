@@ -113,26 +113,28 @@ export class CallsController {
             agent.phoneNumbers && Array.isArray(agent.phoneNumbers)
           ),
           camposAgent: agent.agent
-            ? Object.keys(agent.agent)
+            ? Object.keys(agent.agent as Record<string, unknown>)
             : agent.agents?.[0]
-              ? Object.keys(agent.agents[0])
+              ? Object.keys(agent.agents[0] as Record<string, unknown>)
               : 'no existe',
         },
       );
 
       // Obtener phoneNumbers y twilio array
-      const phoneNumbers = (agent.phoneNumbers as Array<{
-        phoneId?: number;
-        countryCode?: string;
-        number?: string;
-        twilioAccountId?: number;
-      }>) || [];
-      
-      const twilioArray = (agent.twilio as Array<{
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      }>) || [];
+      const phoneNumbers =
+        (agent.phoneNumbers as Array<{
+          phoneId?: number;
+          countryCode?: string;
+          number?: string;
+          twilioAccountId?: number;
+        }>) || [];
+
+      const twilioArray =
+        (agent.twilio as Array<{
+          twilioAccountId: number;
+          twilioSid: string;
+          twilioToken: string;
+        }>) || [];
 
       // Buscar el phoneNumber que coincide con el número de la llamada
       const matchingPhone = phoneNumbers.find((phone) => {
@@ -233,11 +235,11 @@ export class CallsController {
             : undefined;
 
       // Log para debugging de configuración del agente
-      if (agentData.voiceId) {
+      if (typeof agentData.voiceId === 'string') {
         console.log(
           `✅ [Calls] VoiceId encontrado para usuario ${userId}: ${agentData.voiceId}`,
         );
-      } else if (agentData.labsId) {
+      } else if (typeof agentData.labsId === 'string') {
         // Mantener compatibilidad con labsId por si acaso
         console.log(
           `✅ [Calls] LabsId encontrado para usuario ${userId}: ${agentData.labsId}`,
@@ -284,16 +286,50 @@ export class CallsController {
             : undefined;
       addStreamParameter('language', languageCode);
 
+      // Obtener y agregar parámetros de voz personalizados del agente
+      if (agentData.parameters && typeof agentData.parameters === 'object') {
+        const params = agentData.parameters as Record<string, unknown>;
+        console.log(
+          `🎛️ [Calls] Parámetros de voz encontrados para usuario ${userId}:`,
+          params,
+        );
+
+        // Agregar cada parámetro de voz como customParameter
+        if (typeof params.stability === 'number') {
+          addStreamParameter('voiceStability', params.stability.toString());
+        }
+        if (typeof params.similarity === 'number') {
+          addStreamParameter('voiceSimilarity', params.similarity.toString());
+        }
+        if (typeof params.style === 'number') {
+          addStreamParameter('voiceStyle', params.style.toString());
+        }
+        if (typeof params.boost === 'boolean') {
+          addStreamParameter('voiceBoost', params.boost.toString());
+        }
+        if (typeof params.speed === 'number') {
+          addStreamParameter('voiceSpeed', params.speed.toString());
+        }
+      } else {
+        console.warn(
+          `⚠️ [Calls] Usuario ${userId} no tiene parámetros de voz configurados`,
+        );
+      }
+
       // Obtener credenciales de Twilio basadas en el phoneNumber
       if (twilioArray.length === 0) {
-        console.warn(`⚠️ [Calls] Usuario ${userId} no tiene cuentas de Twilio configuradas`);
+        console.warn(
+          `⚠️ [Calls] Usuario ${userId} no tiene cuentas de Twilio configuradas`,
+        );
       } else {
-        let twilioConfig: { twilioAccountId: number; twilioSid: string; twilioToken: string } | undefined;
+        let twilioConfig:
+          | { twilioAccountId: number; twilioSid: string; twilioToken: string }
+          | undefined;
 
         if (matchingPhone && matchingPhone.twilioAccountId) {
           // Buscar la cuenta de Twilio correspondiente al phoneNumber
           twilioConfig = twilioArray.find(
-            (acc) => acc.twilioAccountId === matchingPhone.twilioAccountId
+            (acc) => acc.twilioAccountId === matchingPhone.twilioAccountId,
           );
         }
 
