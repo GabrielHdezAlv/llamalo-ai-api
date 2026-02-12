@@ -322,24 +322,60 @@ export class KnowledgeBaseService {
 
   async searchKnowledge(searchDto: SearchKnowledgeDto): Promise<any> {
     try {
-      // Generate embedding for query
-      const queryEmbedding = await this.embeddingsService.generateEmbedding(
+      console.log(`🔍 [KnowledgeBase] Iniciando búsqueda con:`, {
+        query: searchDto.query,
+        sourceIds: searchDto.sourceIds,
+        sourceIdsCount: searchDto.sourceIds?.length || 0,
+        limit: searchDto.limit,
+      });
+
+      // Generate query embedding
+      const queryEmbedding = await this.vectorStoreService.generateEmbedding(
         searchDto.query,
       );
 
       // Search in vector store
+      console.log(
+        `🔍 [KnowledgeBase] Buscando en vector store con sourceIds:`,
+        searchDto.sourceIds,
+      );
       const results = await this.vectorStoreService.search(
         queryEmbedding,
         searchDto.sourceIds,
         searchDto.limit || 10,
       );
 
+      console.log(`🔍 [KnowledgeBase] Resultados de vector store:`, {
+        resultsCount: results.length,
+        results: results.map((r) => ({
+          sourceId: r.sourceId,
+          contentPreview: r.content.substring(0, 50) + '...',
+        })),
+      });
+
       // Get source names for results
       const sourceIds = [...new Set(results.map((r) => r.sourceId))];
+      console.log(
+        `🔍 [KnowledgeBase] SourceIds únicos para Firestore:`,
+        sourceIds,
+      );
+
+      if (sourceIds.length === 0) {
+        console.warn(
+          `⚠️ [KnowledgeBase] No hay sourceIds para consultar Firestore`,
+        );
+        return { results: [] };
+      }
+
       const sourceDocs = await this.firestore
         .collection('knowledgeSources')
         .where(FieldPath.documentId(), 'in', sourceIds)
         .get();
+
+      console.log(
+        `🔍 [KnowledgeBase] Documentos recuperados de Firestore:`,
+        sourceDocs.docs.length,
+      );
 
       const sourceMap = new Map();
       sourceDocs.docs.forEach((doc) => {

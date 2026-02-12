@@ -31,6 +31,12 @@ export class AgentKnowledgeService {
       );
 
       // Search in knowledge base
+      console.log(`🔍 [AgentKnowledge] Ejecutando búsqueda con sourceIds:`, {
+        sourceIdsCount: sourceIds.length,
+        sourceIds,
+        query,
+      });
+
       const searchResults = await this.knowledgeBaseService.searchKnowledge({
         query,
         sourceIds,
