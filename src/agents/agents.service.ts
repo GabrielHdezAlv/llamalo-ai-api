@@ -90,6 +90,7 @@ Requisitos:
 - Si se proporciona shopDomain, incluye una sección sobre uso de contexto Shopify y menciona el shopDomain de forma segura.
 - **IMPORTANTE**: El contenido debe estar basado en la descripción del usuario (userDescription), no en un agente de soporte genérico.
 - La salida debe ser extensa y cubrir todas las secciones críticas: identidad, personalidad, reglas de conversación, alcance, límites, y finalización.
+- **CRÍTICO**: Reemplaza el marcador [IDIOMA_AGENTE] en la plantilla con el código de idioma proporcionado (${payload.language}) para asegurar que el agente solo hable en ese idioma.
 
 Ejemplo/plantilla de referencia (solo para estructura y formato, no para contenido):
 ${template}
@@ -97,7 +98,8 @@ ${template}
 Instrucciones clave:
 - Si el usuario describe un negocio de coches, el agente debe hablar de coches, no de software LlamaloAI
 - Si el usuario describe atención al cliente de productos, enfócate en esos productos
-- Mantén el estilo conversacional y las reglas de formato, pero personaliza el contenido completamente según la descripción del usuario`;
+- Mantén el estilo conversacional y las reglas de formato, pero personaliza el contenido completamente según la descripción del usuario
+- **REGLA DE IDIOMA**: Asegúrate de reemplazar [IDIOMA_AGENTE] con "${payload.language}" en las reglas de idioma estrictas`;
 
     const userPrompt = `Datos para personalizar:
 - enterpriseName: ${payload.enterpriseName}
