@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { TwilioService } from './twilio.service';
+import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
 import * as admin from 'firebase-admin';
 
 class IncomingDto {
@@ -11,7 +12,10 @@ class IncomingDto {
 
 @Controller('voice')
 export class CallsController {
-  constructor(private readonly twilio: TwilioService) {}
+  constructor(
+    private readonly twilio: TwilioService,
+    private readonly agentKnowledgeService: AgentKnowledgeService,
+  ) {}
 
   // 🔒 Helper para enmascarar números de teléfono
   private maskPhoneNumber(phone?: string): string {
@@ -281,6 +285,40 @@ export class CallsController {
 
       addStreamParameter('agentName', agentName);
 
+      // 🔍 Obtener contexto de bases de conocimiento del agente
+      let knowledgeContext = '';
+      try {
+        const agentId = agentData.agentId as number;
+        if (agentId) {
+          console.log(
+            `🔍 [Calls] Buscando contexto de conocimiento para agente ${agentId}`,
+          );
+          knowledgeContext =
+            await this.agentKnowledgeService.searchAgentKnowledge(
+              agentId,
+              'información relevante del agente', // Query genérico para obtener contexto general
+            );
+
+          if (knowledgeContext) {
+            console.log(
+              `✅ [Calls] Contexto de conocimiento encontrado (longitud: ${knowledgeContext.length})`,
+            );
+          } else {
+            console.log(
+              `⚠️ [Calls] No se encontró contexto de conocimiento para agente ${agentId}`,
+            );
+          }
+        } else {
+          console.warn(
+            `⚠️ [Calls] Agente no tiene agentId válido para buscar conocimiento`,
+          );
+        }
+      } catch (error) {
+        console.error(
+          `❌ [Calls] Error al obtener contexto de conocimiento: ${error.message}`,
+        );
+      }
+
       // Obtener firstInteraction: primero de agentData
       const firstInteraction =
         typeof agentData.firstInteraction === 'string'
@@ -294,6 +332,18 @@ export class CallsController {
           ? agentData.agentInstruction
           : undefined;
       addStreamParameter('instructions', agentInstruction);
+
+      // 🔍 Agregar contexto de bases de conocimiento si existe
+      if (knowledgeContext) {
+        addStreamParameter('knowledgeContext', knowledgeContext);
+        console.log(
+          `✅ [Calls] Contexto de conocimiento agregado al stream (longitud: ${knowledgeContext.length})`,
+        );
+      } else {
+        console.log(
+          `ℹ️ [Calls] No se agregó contexto de conocimiento al stream (vacío o no encontrado)`,
+        );
+      }
 
       addStreamParameter(
         'labsId',
