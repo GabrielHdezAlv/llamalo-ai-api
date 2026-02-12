@@ -2247,6 +2247,7 @@ ${shopifyContextJson}
 
         let firstChunkChecked = false;
         let mp3Chunks: Buffer[] | null = null;
+        const contentType = response.headers['content-type'] || '';
         const forceMp3Buffering = contentType
           .toLowerCase()
           .includes('audio/mpeg');
