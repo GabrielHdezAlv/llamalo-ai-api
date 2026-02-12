@@ -241,12 +241,12 @@ export class CallsController {
         agentData = directAgent;
       }
 
-      console.log(`🔍 [Calls] Estructura usada para usuario ${userId}:`, {
-        tieneAgentsArray: agentsArray.length > 0,
-        tieneLegacyAgent: Object.keys(legacyAgent).length > 0,
-        usandoDirecta: agentData === directAgent,
-        agentDataKeys: Object.keys(agentData),
-      });
+      // console.log(`🔍 [Calls] Estructura usada para usuario ${userId}:`, {
+      //   tieneAgentsArray: agentsArray.length > 0,
+      //   tieneLegacyAgent: Object.keys(legacyAgent).length > 0,
+      //   usandoDirecta: agentData === directAgent,
+      //   agentDataKeys: Object.keys(agentData),
+      // });
 
       const agentName =
         typeof agentData.name === 'string'
@@ -256,10 +256,10 @@ export class CallsController {
             : undefined;
 
       // Log para debugging de configuración del agente
-      console.log(
-        `🔍 [Calls] Datos completos del agente para usuario ${userId}:`,
-        JSON.stringify(agentData, null, 2),
-      );
+      // console.log(
+      //   `🔍 [Calls] Datos completos del agente para usuario ${userId}:`,
+      //   JSON.stringify(agentData, null, 2),
+      // );
 
       if (typeof agentData.voiceId === 'string') {
         console.log(
@@ -332,16 +332,16 @@ export class CallsController {
           ? agentData.agentInstruction
           : undefined;
 
-      console.log(`🔍 [Calls] agentInstruction encontrado:`, {
-        tieneAgentInstruction: !!agentInstruction,
-        longitud: agentInstruction?.length || 0,
-        valor: agentInstruction
-          ? agentInstruction.substring(0, 100) +
-            (agentInstruction.length > 100 ? '...' : '')
-          : 'undefined',
-        agentDataKeys: Object.keys(agentData),
-        agentInstructionType: typeof agentData.agentInstruction,
-      });
+      // console.log(`🔍 [Calls] agentInstruction encontrado:`, {
+      //   tieneAgentInstruction: !!agentInstruction,
+      //   longitud: agentInstruction?.length || 0,
+      //   valor: agentInstruction
+      //     ? agentInstruction.substring(0, 100) +
+      //       (agentInstruction.length > 100 ? '...' : '')
+      //     : 'undefined',
+      //   agentDataKeys: Object.keys(agentData),
+      //   agentInstructionType: typeof agentData.agentInstruction,
+      // });
 
       addStreamParameter('instructions', agentInstruction);
 
@@ -366,16 +366,16 @@ export class CallsController {
             : undefined,
       );
 
-      console.log(`📋 [Calls] Parámetro labsId agregado al stream:`, {
-        voiceId: agentData.voiceId,
-        labsId: agentData.labsId,
-        valorEnviado:
-          typeof agentData.voiceId === 'string'
-            ? agentData.voiceId
-            : typeof agentData.labsId === 'string'
-              ? agentData.labsId
-              : undefined,
-      });
+      // console.log(`📋 [Calls] Parámetro labsId agregado al stream:`, {
+      //   voiceId: agentData.voiceId,
+      //   labsId: agentData.labsId,
+      //   valorEnviado:
+      //     typeof agentData.voiceId === 'string'
+      //       ? agentData.voiceId
+      //       : typeof agentData.labsId === 'string'
+      //         ? agentData.labsId
+      //         : undefined,
+      // });
 
       // Obtener language: puede ser string (nueva estructura) u objeto (antigua)
       const languageCode =
@@ -390,31 +390,31 @@ export class CallsController {
       // Obtener y agregar parámetros de voz personalizados del agente
       if (agentData.parameters && typeof agentData.parameters === 'object') {
         const params = agentData.parameters as Record<string, unknown>;
-        console.log(
-          `🎛️ [Calls] Parámetros de voz encontrados para usuario ${userId}:`,
-          params,
-        );
+        // console.log(
+        //   `🎛️ [Calls] Parámetros de voz encontrados para usuario ${userId}:`,
+        //   params,
+        // );
 
         // Agregar cada parámetro de voz como customParameter
         if (typeof params.stability === 'number') {
           addStreamParameter('voiceStability', params.stability.toString());
-          console.log(`✅ [Calls] voiceStability: ${params.stability}`);
+          // console.log(`✅ [Calls] voiceStability: ${params.stability}`);
         }
         if (typeof params.similarity === 'number') {
           addStreamParameter('voiceSimilarity', params.similarity.toString());
-          console.log(`✅ [Calls] voiceSimilarity: ${params.similarity}`);
+          // console.log(`✅ [Calls] voiceSimilarity: ${params.similarity}`);
         }
         if (typeof params.style === 'number') {
           addStreamParameter('voiceStyle', params.style.toString());
-          console.log(`✅ [Calls] voiceStyle: ${params.style}`);
+          // console.log(`✅ [Calls] voiceStyle: ${params.style}`);
         }
         if (typeof params.boost === 'boolean') {
           addStreamParameter('voiceBoost', params.boost.toString());
-          console.log(`✅ [Calls] voiceBoost: ${params.boost}`);
+          // console.log(`✅ [Calls] voiceBoost: ${params.boost}`);
         }
         if (typeof params.speed === 'number') {
           addStreamParameter('voiceSpeed', params.speed.toString());
-          console.log(`✅ [Calls] voiceSpeed: ${params.speed}`);
+          // console.log(`✅ [Calls] voiceSpeed: ${params.speed}`);
         }
       } else {
         console.warn(

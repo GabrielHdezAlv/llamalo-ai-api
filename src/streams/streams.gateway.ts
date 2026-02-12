@@ -343,11 +343,11 @@ export class StreamsGateway {
     const instructions = this.resolveInstructions(customParameters);
     const voiceId = this.resolveVoiceId(customParameters);
 
-    console.log(
-      `🔍 [Streams] CustomParameters recibidos para ${callSid}:`,
-      JSON.stringify(customParameters, null, 2),
-    );
-    console.log(`🔍 [Streams] VoiceId resuelto: ${voiceId}`);
+    // console.log(
+    //   `🔍 [Streams] CustomParameters recibidos para ${callSid}:`,
+    //   JSON.stringify(customParameters, null, 2),
+    // );
+    // console.log(`🔍 [Streams] VoiceId resuelto: ${voiceId}`);
     console.log(
       `🔍 [Streams] Language resuelto: ${this.resolveLanguage(customParameters)}`,
     );

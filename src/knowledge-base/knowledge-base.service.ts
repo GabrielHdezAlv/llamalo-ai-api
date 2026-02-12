@@ -338,7 +338,7 @@ export class KnowledgeBaseService {
       const sourceIds = [...new Set(results.map((r) => r.sourceId))];
       const sourceDocs = await this.firestore
         .collection('knowledgeSources')
-        .where('id', 'in', sourceIds)
+        .where(FieldPath.documentId(), 'in', sourceIds)
         .get();
 
       const sourceMap = new Map();
