@@ -4,6 +4,7 @@ import axios from 'axios';
 import OpenAI from 'openai';
 import { Readable } from 'stream';
 import { spawn } from 'child_process';
+import * as admin from 'firebase-admin';
 // ffmpeg-static proporciona la ruta binaria para decodificar MP3 a PCM
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -993,7 +994,7 @@ ${shopifyContextJson}
     }
 
     // 🔥 FIX: Corrección dinámica para nombres de empresas
-    const correctedText = this.basicCompanyCorrection(text, session);
+    const correctedText = await this.basicCompanyCorrection(text, session);
 
     session.history.push({ role: 'user', content: correctedText });
     console.log(
@@ -2486,11 +2487,14 @@ ${shopifyContextJson}
    * 🔥 Corrección dinámica para nombres de empresas
    * Se adapta automáticamente a la empresa del usuario
    */
-  private basicCompanyCorrection(text: string, session: CallSession): string {
+  private async basicCompanyCorrection(
+    text: string,
+    session: CallSession,
+  ): Promise<string> {
     let correctedText = text;
 
     // 1. Extraer el nombre de la empresa del usuario
-    const companyName = this.getUserCompanyName(session);
+    const companyName = await this.getUserCompanyName(session);
 
     if (!companyName) {
       // Si no hay nombre de empresa, aplicar correcciones genéricas
@@ -2514,10 +2518,12 @@ ${shopifyContextJson}
   }
 
   /**
-   * Extrae el nombre de la empresa del usuario desde los customParameters
+   * Extrae el nombre de la empresa del usuario desde Firestore o customParameters
    */
-  private getUserCompanyName(session: CallSession): string | null {
-    // Intentar obtener desde diferentes fuentes
+  private async getUserCompanyName(
+    session: CallSession,
+  ): Promise<string | null> {
+    // 1. Primero intentar desde customParameters (más rápido)
     const sources = [
       session.customParameters?.enterpriseName,
       session.customParameters?.companyName,
@@ -2527,10 +2533,70 @@ ${shopifyContextJson}
 
     for (const source of sources) {
       if (source && typeof source === 'string' && source.trim().length > 2) {
-        return source.trim();
+        const name = source.trim();
+
+        // Si es agentName, verificar si parece un nombre de empresa
+        if (source === session.customParameters?.agentName) {
+          // Si contiene "AI", "SaaS", "Tech", etc., probablemente es empresa
+          if (
+            name.toLowerCase().includes('ai') ||
+            name.toLowerCase().includes('saas') ||
+            name.toLowerCase().includes('tech') ||
+            name.toLowerCase().includes('llamalo')
+          ) {
+            console.log(
+              `🔍 [${session.callSid}] Usando agentName como nombre de empresa: "${name}"`,
+            );
+            return name;
+          }
+        } else {
+          // Para otros campos, usar directamente
+          console.log(
+            `🔍 [${session.callSid}] Nombre de empresa encontrado en customParameters: "${name}"`,
+          );
+          return name;
+        }
       }
     }
 
+    // 2. Si no hay nada en customParameters, buscar en Firestore users.enterprise.name
+    try {
+      if (session.userId) {
+        const userDoc = await admin
+          .firestore()
+          .collection('users')
+          .doc(session.userId)
+          .get();
+        const userData = userDoc.data();
+
+        if (userData?.enterprise?.name) {
+          const enterpriseName = userData.enterprise.name;
+          console.log(
+            `🔍 [${session.callSid}] Nombre de empresa encontrado en Firestore: "${enterpriseName}"`,
+          );
+          return enterpriseName;
+        }
+      }
+    } catch (firestoreError) {
+      console.warn(
+        `⚠️ [${session.callSid}] Error buscando empresa en Firestore:`,
+        firestoreError instanceof Error
+          ? firestoreError.message
+          : String(firestoreError),
+      );
+    }
+
+    // 3. Si no hay nada, usar fallback para Llamalo AI (basado en el shopDomain)
+    if (session.customParameters?.shopDomain?.includes('llamalo')) {
+      console.log(
+        `🔍 [${session.callSid}] Usando fallback para Llamalo AI basado en shopDomain`,
+      );
+      return 'Llamalo AI';
+    }
+
+    console.log(
+      `⚠️ [${session.callSid}] No se encontró nombre de empresa en ningún lugar`,
+    );
     return null;
   }
 
