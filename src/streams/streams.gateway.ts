@@ -1074,10 +1074,19 @@ ${shopifyContextJson}
       session.interceptedResponseText = '';
     }
 
-    session.history.push({ role: 'user', content: text });
+    // 🔥 FIX: Corrección dinámica para nombres de empresas
+    const correctedText = this.basicCompanyCorrection(text, session);
+
+    session.history.push({ role: 'user', content: correctedText });
     console.log(
       `🧾 Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
     );
+
+    if (correctedText !== text) {
+      console.log(
+        `🔧 Texto corregido: "${correctedText.substring(0, 120)}${correctedText.length > 120 ? '...' : ''}"`,
+      );
+    }
     try {
       // Consultar datos de Shopify bajo demanda si el usuario necesita información fresca
       // Si falla o hay timeout, se usa el cache existente en session.shopifyContext
@@ -2553,5 +2562,180 @@ ${shopifyContextJson}
       return String(value);
     }
     return '';
+  }
+
+  /**
+   * 🔥 Corrección dinámica para nombres de empresas
+   * Se adapta automáticamente a la empresa del usuario
+   */
+  private basicCompanyCorrection(text: string, session: CallSession): string {
+    let correctedText = text;
+
+    // 1. Extraer el nombre de la empresa del usuario
+    const companyName = this.getUserCompanyName(session);
+
+    if (!companyName) {
+      // Si no hay nombre de empresa, aplicar correcciones genéricas
+      return this.applyGenericCorrections(correctedText);
+    }
+
+    // 2. Generar variaciones fonéticas del nombre de la empresa
+    const companyCorrections = this.generateCompanyCorrections(companyName);
+
+    // 3. Aplicar correcciones específicas de la empresa
+    companyCorrections.forEach((correction) => {
+      if (correction.from.test(correctedText)) {
+        correctedText = correctedText.replace(correction.from, correction.to);
+        console.log(
+          `🔧 Corrección empresa: "${correction.from.source}" → "${correction.to}"`,
+        );
+      }
+    });
+
+    return correctedText;
+  }
+
+  /**
+   * Extrae el nombre de la empresa del usuario desde los customParameters
+   */
+  private getUserCompanyName(session: CallSession): string | null {
+    // Intentar obtener desde diferentes fuentes
+    const sources = [
+      session.customParameters?.enterpriseName,
+      session.customParameters?.companyName,
+      session.customParameters?.businessName,
+      session.customParameters?.agentName, // A veces el agente tiene el nombre de la empresa
+    ];
+
+    for (const source of sources) {
+      if (source && typeof source === 'string' && source.trim().length > 2) {
+        return source.trim();
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Genera variaciones fonéticas para un nombre de empresa específico
+   */
+  private generateCompanyCorrections(
+    companyName: string,
+  ): Array<{ from: RegExp; to: string }> {
+    const corrections: Array<{ from: RegExp; to: string }> = [];
+    const name = companyName.toLowerCase();
+
+    // 1. Variaciones con "AI" → "i", "ahi", "ay"
+    if (name.includes('ai')) {
+      const baseName = name.replace('ai', '').trim();
+      corrections.push(
+        {
+          from: new RegExp(`${this.escapeRegExp(baseName)} i`, 'gi'),
+          to: companyName,
+        },
+        {
+          from: new RegExp(`${this.escapeRegExp(baseName)} ahi`, 'gi'),
+          to: companyName,
+        },
+        {
+          from: new RegExp(`${this.escapeRegExp(baseName)} ay`, 'gi'),
+          to: companyName,
+        },
+      );
+    }
+
+    // 2. Variaciones con espacios → unidos o con "de"
+    if (name.includes(' ')) {
+      const parts = name.split(' ');
+      const joined = parts.join('');
+      const withDe = parts.join(' de ');
+
+      corrections.push(
+        { from: new RegExp(this.escapeRegExp(joined), 'gi'), to: companyName },
+        { from: new RegExp(this.escapeRegExp(withDe), 'gi'), to: companyName },
+      );
+    }
+
+    // 3. Variaciones fonéticas comunes
+    const phoneticVariations = this.generatePhoneticVariations(companyName);
+    phoneticVariations.forEach((variation) => {
+      corrections.push({
+        from: new RegExp(this.escapeRegExp(variation.toLowerCase()), 'gi'),
+        to: companyName,
+      });
+    });
+
+    return corrections;
+  }
+
+  /**
+   * Genera variaciones fonéticas para cualquier nombre de empresa
+   */
+  private generatePhoneticVariations(name: string): string[] {
+    const variations: string[] = [];
+    const lowerName = name.toLowerCase();
+
+    // Variaciones de letras comunes
+    const letterVariations: Record<string, string[]> = {
+      ll: ['l', 'y'],
+      v: ['b'],
+      c: ['k', 's', 'z'],
+      g: ['j'],
+      z: ['s', 'c'],
+    };
+
+    // Aplicar variaciones letra por letra
+    for (const [original, replacements] of Object.entries(letterVariations)) {
+      if (lowerName.includes(original)) {
+        replacements.forEach((replacement) => {
+          variations.push(
+            lowerName.replace(new RegExp(original, 'g'), replacement),
+          );
+        });
+      }
+    }
+
+    // Variaciones específicas para "llamalo"
+    if (lowerName.includes('llamalo')) {
+      variations.push(
+        lowerName.replace('llamalo', 'yamalo'),
+        lowerName.replace('llamalo', 'lamalo'),
+        lowerName.replace('llamalo', 'llamelo'),
+      );
+    }
+
+    return [...new Set(variations)];
+  }
+
+  /**
+   * Aplica correcciones genéricas cuando no hay empresa específica
+   */
+  private applyGenericCorrections(text: string): string {
+    let correctedText = text;
+
+    // Correcciones genéricas comunes
+    const genericCorrections = [
+      { from: /piseverde/gi, to: 'Pisaverde' },
+      { from: /pisa verde/gi, to: 'Pisaverde' },
+      { from: /pisaver de/gi, to: 'Pisaverde' },
+    ];
+
+    genericCorrections.forEach((correction) => {
+      if (correction.from.test(correctedText)) {
+        correctedText = correctedText.replace(correction.from, correction.to);
+        console.log(
+          `🔧 Corrección genérica: "${correction.from.source}" → "${correction.to}"`,
+        );
+      }
+    });
+
+    return correctedText;
+  }
+
+  /**
+   * Escapa caracteres especiales para expresiones regulares
+   */
+  private escapeRegExp(string: string): string {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 }
