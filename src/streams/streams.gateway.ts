@@ -2636,36 +2636,51 @@ ${shopifyContextJson}
     // 1. Variaciones con "AI" → "i", "ahi", "ay"
     if (name.includes('ai')) {
       const baseName = name.replace('ai', '').trim();
-      corrections.push(
-        {
-          from: new RegExp(`${this.escapeRegExp(baseName)} i`, 'gi'),
-          to: companyName,
-        },
-        {
-          from: new RegExp(`${this.escapeRegExp(baseName)} ahi`, 'gi'),
-          to: companyName,
-        },
-        {
-          from: new RegExp(`${this.escapeRegExp(baseName)} ay`, 'gi'),
-          to: companyName,
-        },
-        {
-          from: new RegExp(`${this.escapeRegExp(baseName)} ahí`, 'gi'),
-          to: companyName,
-        }, // CON TILDE
-        {
-          from: new RegExp(`${this.escapeRegExp(baseName)}[\\s-]+i`, 'gi'),
-          to: companyName,
-        }, // CON ESPACIO/GUION
-        {
-          from: new RegExp(`${this.escapeRegExp(baseName)}[\\s-]+ahi`, 'gi'),
-          to: companyName,
-        }, // CON ESPACIO/GUION
-        {
-          from: new RegExp(`${this.escapeRegExp(baseName)}[\\s-]+ahí`, 'gi'),
-          to: companyName,
-        }, // CON ESPACIO/GUION Y TILDE
-      );
+
+      // Generar variaciones del baseName (con/sin tildes, fonéticas)
+      const baseNameVariations = this.generateBaseNameVariations(baseName);
+
+      baseNameVariations.forEach((baseVariation) => {
+        corrections.push(
+          {
+            from: new RegExp(`${this.escapeRegExp(baseVariation)} i`, 'gi'),
+            to: companyName,
+          },
+          {
+            from: new RegExp(`${this.escapeRegExp(baseVariation)} ahi`, 'gi'),
+            to: companyName,
+          },
+          {
+            from: new RegExp(`${this.escapeRegExp(baseVariation)} ay`, 'gi'),
+            to: companyName,
+          },
+          {
+            from: new RegExp(`${this.escapeRegExp(baseVariation)} ahí`, 'gi'),
+            to: companyName,
+          }, // CON TILDE
+          {
+            from: new RegExp(
+              `${this.escapeRegExp(baseVariation)}[\\s-]+i`,
+              'gi',
+            ),
+            to: companyName,
+          }, // CON ESPACIO/GUION
+          {
+            from: new RegExp(
+              `${this.escapeRegExp(baseVariation)}[\\s-]+ahi`,
+              'gi',
+            ),
+            to: companyName,
+          }, // CON ESPACIO/GUION
+          {
+            from: new RegExp(
+              `${this.escapeRegExp(baseVariation)}[\\s-]+ahí`,
+              'gi',
+            ),
+            to: companyName,
+          }, // CON ESPACIO/GUION Y TILDE
+        );
+      });
     }
 
     // 2. Variaciones con espacios → unidos o con "de"
@@ -2719,15 +2734,59 @@ ${shopifyContextJson}
       }
     }
 
-    // Variaciones específicas para "llamalo"
-    if (lowerName.includes('llamalo')) {
-      variations.push(
-        lowerName.replace('llamalo', 'yamalo'),
-        lowerName.replace('llamalo', 'lamalo'),
-        lowerName.replace('llamalo', 'llamelo'),
-        lowerName.replace('llamalo', 'llámalo'), // CON TILDE
-        lowerName.replace('llamalo', 'yámalo'), // CON TILDE
-      );
+    return [...new Set(variations)];
+  }
+
+  /**
+   * Genera variaciones del baseName para cualquier empresa (con/sin tildes, fonéticas)
+   */
+  private generateBaseNameVariations(baseName: string): string[] {
+    const variations: string[] = [];
+    const lowerBaseName = baseName.toLowerCase();
+
+    // 1. Variación original
+    variations.push(lowerBaseName);
+
+    // 2. Variaciones fonéticas básicas
+    const phoneticVariations = this.generatePhoneticVariations(baseName);
+    variations.push(...phoneticVariations);
+
+    // 3. Variaciones con tildes (comunes en español)
+    const accentVariations = this.generateAccentVariations(lowerBaseName);
+    variations.push(...accentVariations);
+
+    // 4. Eliminar duplicados
+    return [...new Set(variations)];
+  }
+
+  /**
+   * Genera variaciones con tildes para texto en español
+   */
+  private generateAccentVariations(text: string): string[] {
+    const variations: string[] = [];
+
+    // Mapa de caracteres sin tilde → con tilde
+    const accentMap: Record<string, string[]> = {
+      a: ['á'],
+      e: ['é'],
+      i: ['í'],
+      o: ['ó'],
+      u: ['ú'],
+    };
+
+    // Para cada vocal, generar variación con tilde
+    for (const [noAccent, withAccents] of Object.entries(accentMap)) {
+      if (text.includes(noAccent)) {
+        withAccents.forEach((accent) => {
+          // Reemplazar todas las ocurrencias
+          const withAccent = text.replace(new RegExp(noAccent, 'g'), accent);
+          variations.push(withAccent);
+
+          // También variación mixta (solo algunas con tilde)
+          const mixed = text.replace(noAccent, accent);
+          variations.push(mixed);
+        });
+      }
     }
 
     return [...new Set(variations)];
