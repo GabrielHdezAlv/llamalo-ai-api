@@ -30,30 +30,48 @@ export class VectorStoreService {
       this.vectorStore.set(sourceId, chunks);
       this.embeddings.set(sourceId, chunkEmbeddings);
 
-      // Store in Firestore for persistence
-      const batch = this.firestore.batch();
-
-      chunks.forEach((chunk, index) => {
-        const chunkRef = this.firestore
-          .collection('vectorChunks')
-          .doc(`${sourceId}_${chunk.id}`);
-
-        const chunkData = {
-          sourceId,
-          chunkId: chunk.id,
-          content: chunk.content,
-          embedding: chunkEmbeddings[index],
-          metadata: chunk.metadata,
-          createdAt: new Date(),
-        };
-
-        batch.set(chunkRef, chunkData);
-      });
-
-      await batch.commit();
+      // Store in Firestore for persistence - process in batches
+      const batchSize = 10; // Firestore limit is ~500 operations per batch
+      const totalBatches = Math.ceil(chunks.length / batchSize);
 
       this.logger.log(
-        `Stored ${chunks.length} chunks for source ${sourceId} in Firestore`,
+        `🔄 Storing ${chunks.length} chunks in ${totalBatches} batches...`,
+      );
+
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        const startIndex = batchIndex * batchSize;
+        const endIndex = Math.min(startIndex + batchSize, chunks.length);
+        const batchChunks = chunks.slice(startIndex, endIndex);
+        const batchEmbeddings = chunkEmbeddings.slice(startIndex, endIndex);
+
+        const batch = this.firestore.batch();
+
+        batchChunks.forEach((chunk, index) => {
+          const chunkRef = this.firestore
+            .collection('vectorChunks')
+            .doc(`${sourceId}_${chunk.id}`);
+
+          const chunkData = {
+            sourceId,
+            chunkId: chunk.id,
+            content: chunk.content,
+            embedding: batchEmbeddings[index],
+            metadata: chunk.metadata,
+            createdAt: new Date(),
+          };
+
+          batch.set(chunkRef, chunkData);
+        });
+
+        await batch.commit();
+
+        this.logger.log(
+          `✅ Batch ${batchIndex + 1}/${totalBatches} completed (${batchChunks.length} chunks)`,
+        );
+      }
+
+      this.logger.log(
+        `✅ Successfully stored ${chunks.length} chunks for source ${sourceId} in Firestore`,
       );
     } catch (error) {
       this.logger.error(`Error storing chunks: ${error.message}`);
