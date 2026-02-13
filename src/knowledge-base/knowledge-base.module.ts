@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { KnowledgeBaseController } from './knowledge-base.controller';
+import { MigrationController } from './migration.controller';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { EmbeddingsService } from './embeddings/embeddings.service';
 import { VectorStoreService } from './embeddings/vector-store.service';
@@ -16,7 +17,7 @@ import { extname } from 'path';
       storage: diskStorage({
         destination: './uploads/knowledge-base',
         filename: (req, file, cb) => {
-          const randomName = Date.now() + '-' + Math.round(Math.random() * 1E9);
+          const randomName = Date.now() + '-' + Math.round(Math.random() * 1e9);
           cb(null, `${randomName}${extname(file.originalname)}`);
         },
       }),
@@ -32,7 +33,7 @@ import { extname } from 'path';
       },
     }),
   ],
-  controllers: [KnowledgeBaseController],
+  controllers: [KnowledgeBaseController, MigrationController],
   providers: [
     KnowledgeBaseService,
     EmbeddingsService,
@@ -41,10 +42,6 @@ import { extname } from 'path';
     WebScraperProcessor,
     TextProcessor,
   ],
-  exports: [
-    KnowledgeBaseService,
-    EmbeddingsService,
-    VectorStoreService,
-  ],
+  exports: [KnowledgeBaseService, EmbeddingsService, VectorStoreService],
 })
 export class KnowledgeBaseModule {}

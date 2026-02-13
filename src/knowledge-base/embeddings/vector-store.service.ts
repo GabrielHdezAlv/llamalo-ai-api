@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { getFirestore } from '../../firebase/firebase.config';
 import { TextChunk } from '../utils/chunker';
+import { EmbeddingsService } from './embeddings.service';
 
 export interface VectorSearchResult {
   chunkId: string;
@@ -16,6 +17,8 @@ export class VectorStoreService {
   private readonly firestore = getFirestore();
   private readonly vectorStore = new Map<string, TextChunk[]>();
   private readonly embeddings = new Map<string, number[][]>();
+
+  constructor(private readonly embeddingsService: EmbeddingsService) {}
 
   async storeChunks(
     sourceId: string,
