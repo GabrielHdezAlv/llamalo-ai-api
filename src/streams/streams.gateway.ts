@@ -2493,6 +2493,9 @@ ${shopifyContextJson}
   ): Promise<string> {
     let correctedText = text;
 
+    // DEBUG: Log del texto original
+    console.log(`🔍 [${session.callSid}] DEBUG - Texto original: "${text}"`);
+
     // 1. Extraer el nombre de la empresa del usuario
     const companyName = await this.getUserCompanyName(session);
 
@@ -2501,8 +2504,18 @@ ${shopifyContextJson}
       return this.applyGenericCorrections(correctedText);
     }
 
+    // DEBUG: Log del nombre de empresa encontrado
+    console.log(
+      `🔍 [${session.callSid}] DEBUG - Empresa detectada: "${companyName}"`,
+    );
+
     // 2. Generar variaciones fonéticas del nombre de la empresa
     const companyCorrections = this.generateCompanyCorrections(companyName);
+
+    // DEBUG: Log de las correcciones generadas
+    console.log(
+      `🔍 [${session.callSid}] DEBUG - Correcciones generadas: ${companyCorrections.length}`,
+    );
 
     // 3. Aplicar correcciones específicas de la empresa
     companyCorrections.forEach((correction) => {
@@ -2513,6 +2526,17 @@ ${shopifyContextJson}
         );
       }
     });
+
+    // DEBUG: Log del resultado final
+    if (correctedText !== text) {
+      console.log(
+        `🔍 [${session.callSid}] DEBUG - Texto corregido: "${correctedText}"`,
+      );
+    } else {
+      console.log(
+        `🔍 [${session.callSid}] DEBUG - No se aplicaron correcciones`,
+      );
+    }
 
     return correctedText;
   }
@@ -2625,6 +2649,22 @@ ${shopifyContextJson}
           from: new RegExp(`${this.escapeRegExp(baseName)} ay`, 'gi'),
           to: companyName,
         },
+        {
+          from: new RegExp(`${this.escapeRegExp(baseName)} ahí`, 'gi'),
+          to: companyName,
+        }, // CON TILDE
+        {
+          from: new RegExp(`${this.escapeRegExp(baseName)}[\\s-]+i`, 'gi'),
+          to: companyName,
+        }, // CON ESPACIO/GUION
+        {
+          from: new RegExp(`${this.escapeRegExp(baseName)}[\\s-]+ahi`, 'gi'),
+          to: companyName,
+        }, // CON ESPACIO/GUION
+        {
+          from: new RegExp(`${this.escapeRegExp(baseName)}[\\s-]+ahí`, 'gi'),
+          to: companyName,
+        }, // CON ESPACIO/GUION Y TILDE
       );
     }
 
@@ -2685,6 +2725,8 @@ ${shopifyContextJson}
         lowerName.replace('llamalo', 'yamalo'),
         lowerName.replace('llamalo', 'lamalo'),
         lowerName.replace('llamalo', 'llamelo'),
+        lowerName.replace('llamalo', 'llámalo'), // CON TILDE
+        lowerName.replace('llamalo', 'yámalo'), // CON TILDE
       );
     }
 
