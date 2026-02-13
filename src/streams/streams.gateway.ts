@@ -1170,6 +1170,19 @@ ${shopifyContextJson}
       console.log(
         `💬 Respuesta LLM: "${content.substring(0, 120)}${content.length > 120 ? '...' : ''}"`,
       );
+
+      // 🔥 FIX: Generar TTS desde la respuesta del LLM de OpenAI
+      // Marcar que el agente está hablando para manejar interrupciones
+      session.agentSpeaking = true;
+      session.interrupted = false;
+      session.allowInterruptions = true; // Permitir interrupciones en respuestas normales
+
+      // Generar TTS con la respuesta correcta del LLM
+      console.log(
+        `🔊 [${session.callSid}] Generando TTS desde respuesta LLM: "${content.substring(0, 50)}..."`,
+      );
+      void this.streamTTSFromText(session, content);
+
       // El TTS se maneja a través de ConversationText en tiempo real, no aquí
       session.agentSpeaking = false;
       session.interceptedResponseText = '';
@@ -1843,50 +1856,13 @@ ${shopifyContextJson}
           if (text) {
             // Procesar incluso si agentSpeaking es false (podría ser el greeting)
             if (role === 'assistant' || role === 'agent' || !role) {
-              // Detectar marcador de finalización [END_CALL]
-              const shouldHangup = text.includes('[END_CALL]');
-              // Limpiar el marcador del texto antes de procesarlo
-              const cleanText = text.replace(/\[END_CALL\]/gi, '').trim();
-
-              if (shouldHangup) {
-                console.log(
-                  `👋 [${session.callSid}] Marcador [END_CALL] detectado en despedida`,
-                );
-              }
-
-              if (!session.agentSpeaking) {
-                // Si no está hablando pero hay texto del agente, podría ser el greeting
-                session.agentSpeaking = true; // Marcar como hablando para procesar
-                // IMPORTANTE: Resetear interrupted cuando el agente empieza a hablar
-                session.interrupted = false;
-                // Durante el greeting, deshabilitar barge-in
-                session.allowInterruptions = false;
-              } else {
-                // Si ya está hablando, resetear interrupted si estaba interrumpido
-                // (puede pasar si el usuario interrumpió pero el agente continúa)
-                if (session.interrupted) {
-                  console.log(
-                    `🔄 Reseteando interrupted=false porque el agente continúa hablando`,
-                  );
-                  session.interrupted = false;
-                }
-              }
-
-              // Acumular texto de respuesta del agente (con texto limpio)
-              session.interceptedResponseText += cleanText;
-              // Generar TTS en tiempo real para cada fragmento (con texto limpio)
-              void this.streamTTSFromText(session, cleanText);
-
-              // Si debe colgar, programar el colgado después de que termine el TTS
-              if (shouldHangup) {
-                // Esperar 3 segundos para que el TTS termine y haya un pequeño silencio
-                setTimeout(() => {
-                  console.log(
-                    `📞 [${session.callSid}] Ejecutando colgado programado por despedida`,
-                  );
-                  void this.hangupCall(session);
-                }, 3000);
-              }
+              // 🔥 FIX: Ignorar ConversationText de Deepgram cuando role=assistant
+              // Deepgram solo debe transcribir, no generar respuestas
+              // Las respuestas del agente vienen del LLM de OpenAI
+              console.log(
+                `⚠️ [${session.callSid}] Ignorando ConversationText de Deepgram (role: ${role}) - Deepgram solo debe transcribir`,
+              );
+              return; // 🚫 No procesar respuestas de Deepgram
             } else if (role === 'user') {
               // Procesar texto del usuario como transcript final
               console.log(
