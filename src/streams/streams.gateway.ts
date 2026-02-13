@@ -461,17 +461,6 @@ export class StreamsGateway {
           `⚠️ [${session.callSid}] Respuesta de pedidos Shopify inválida o vacía (userId: ${userId}, shopDomain: ${shopDomain})`,
         );
         // Continuar sin pedidos (no es crítico)
-      } else {
-        // DEBUG: Log de pedidos recibidos de Shopify
-        console.log(
-          `🔍 [DEBUG-${session.callSid}] Pedidos recibidos de Shopify API (${ordersResponse.orders.length}):`,
-          ordersResponse.orders.map((o) => ({
-            orderName: o.orderName,
-            totalPrice: o.totalPrice,
-            currency: o.currency,
-            createdAt: o.createdAt,
-          })),
-        );
       }
 
       // Filtrar productos destacados (buscar campo featured o usar primeros 10)
@@ -492,16 +481,6 @@ export class StreamsGateway {
               new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
           )
           .slice(0, 10);
-
-        // DEBUG: Log de pedidos después de ordenar y filtrar
-        console.log(
-          `🔍 [DEBUG-${session.callSid}] Pedidos después de ordenar y filtrar (${recentOrders.length}):`,
-          recentOrders.map((o) => ({
-            orderName: o.orderName,
-            totalPrice: o.totalPrice,
-            createdAt: o.createdAt,
-          })),
-        );
       }
 
       // Actualizar el contexto de Shopify en la sesión
@@ -516,16 +495,6 @@ export class StreamsGateway {
             storeResponse.store.name || shopDomain || 'tienda desconocida';
           console.log(
             `✅ [${session.callSid}] Contexto Shopify cargado: tienda "${storeName}", ${featuredProducts.length} productos destacados, ${recentOrders.length} pedidos recientes (userId: ${userId}, shopDomain: ${shopDomain})`,
-          );
-
-          // DEBUG: Log de pedidos guardados en session.shopifyContext
-          console.log(
-            `🔍 [DEBUG-${session.callSid}] Pedidos guardados en session.shopifyContext.orders:`,
-            session.shopifyContext.orders?.map((o) => ({
-              orderName: o.orderName,
-              totalPrice: o.totalPrice,
-              createdAt: o.createdAt,
-            })),
           );
         } catch (contextError) {
           console.error(
@@ -574,18 +543,6 @@ export class StreamsGateway {
     const userId = session.userId;
     const shopDomain = session.shopifyContext.shopDomain;
 
-    // DEBUG: Ver estado del contexto ANTES de cualquier operación
-    console.log(
-      `🔍 [DEBUG-${session.callSid}] queryShopifyDataIfNeeded llamado:`,
-      {
-        userText: userText.substring(0, 50),
-        hasContext: !!session.shopifyContext,
-        hasStore: !!session.shopifyContext?.store,
-        productsCount: session.shopifyContext?.featuredProducts?.length || 0,
-        ordersCount: session.shopifyContext?.orders?.length || 0,
-      },
-    );
-
     try {
       // Heurística simple para detectar qué tipo de datos necesita el usuario
       const textLower = userText.toLowerCase();
@@ -600,9 +557,6 @@ export class StreamsGateway {
 
       // Si no hay indicios claros, no hacer consulta (usar cache)
       if (!needsProducts && !needsStoreInfo) {
-        console.log(
-          `🔍 [DEBUG-${session.callSid}] No se detectó necesidad de consultar Shopify, usando cache existente`,
-        );
         return null;
       }
 
@@ -744,18 +698,6 @@ export class StreamsGateway {
     try {
       const shopifyContext = session.shopifyContext;
 
-      // DEBUG CRÍTICO: Ver qué hay en el contexto cuando se llama esta función
-      console.log(
-        `🔍 [DEBUG-${session.callSid}] enrichInstructionsWithShopify llamado:`,
-        {
-          hasContext: !!shopifyContext,
-          hasStore: !!shopifyContext?.store,
-          productsCount: shopifyContext?.featuredProducts?.length || 0,
-          ordersCount: shopifyContext?.orders?.length || 0,
-          orders: shopifyContext?.orders?.map((o) => o.orderName) || [],
-        },
-      );
-
       // Si no hay contexto de Shopify o no tiene datos, retornar instrucciones originales
       if (
         !shopifyContext ||
@@ -790,24 +732,6 @@ export class StreamsGateway {
 
         if (shopifyContext.orders && shopifyContext.orders.length > 0) {
           shopifyData.pedidosRecientes = shopifyContext.orders;
-
-          // DEBUG: Log de pedidos que se incluirán en el JSON para el LLM
-          console.log(
-            `🔍 [DEBUG-${session.callSid}] Pedidos que se incluirán en JSON para LLM (${shopifyContext.orders.length}):`,
-            shopifyContext.orders.map((o) => ({
-              orderName: o.orderName,
-              totalPrice: o.totalPrice,
-              currency: o.currency,
-              customer: o.customer
-                ? `${o.customer.firstName} ${o.customer.lastName}`
-                : 'N/A',
-            })),
-          );
-        } else {
-          // DEBUG: Log si NO hay pedidos
-          console.warn(
-            `⚠️ [DEBUG-${session.callSid}] NO hay pedidos para incluir en JSON (orders: ${shopifyContext.orders?.length || 0})`,
-          );
         }
       } catch (dataError) {
         console.warn(
@@ -822,12 +746,6 @@ export class StreamsGateway {
       let shopifyContextJson: string;
       try {
         shopifyContextJson = JSON.stringify(shopifyData, null, 2);
-
-        // DEBUG: Log del JSON completo que se enviará (solo primeros 500 caracteres para no saturar)
-        console.log(
-          `🔍 [DEBUG-${session.callSid}] JSON serializado para LLM (primeros 800 chars):`,
-          shopifyContextJson.substring(0, 800) + '...',
-        );
       } catch (jsonError) {
         // JSON.stringify puede fallar con objetos circulares o datos inválidos
         console.error(
