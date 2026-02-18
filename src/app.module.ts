@@ -11,6 +11,7 @@ import { CallsModule } from './calls/calls.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { ShopifyModule } from './shopify/shopify.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
+import { TestCallModule } from './test-call/test-call.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
     MetricsModule,
     ShopifyModule,
     KnowledgeBaseModule,
+    TestCallModule,
   ],
   controllers: [],
   providers: [],

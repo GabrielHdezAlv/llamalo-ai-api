@@ -5,6 +5,7 @@ import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializad
 import * as bodyParser from 'body-parser';
 import * as WebSocket from 'ws';
 import { StreamsGateway } from './streams/streams.gateway';
+import { TestCallGateway } from './test-call/test-call.gateway';
 import { configureLogging } from './utils/logging';
 
 async function bootstrap() {
@@ -133,6 +134,56 @@ async function bootstrap() {
   });
 
   console.log('🚀 WebSocket Server configurado en /voice/stream');
+
+  // 🧪 WebSocket Server para pruebas de llamada (sin Twilio)
+  const testWss = new WebSocket.Server({
+    server,
+    path: '/voice/test-stream',
+  });
+
+  testWss.on('connection', (testWs: WebSocket) => {
+    console.log('🧪 Nueva conexión WebSocket de prueba establecida');
+
+    const testCallGateway = app.get(TestCallGateway);
+
+    const client = {
+      send: (data: string | Buffer) => {
+        if (testWs.readyState === WebSocket.OPEN) {
+          testWs.send(data);
+        }
+      },
+      close: () => testWs.close(),
+    };
+
+    const messageHandler = (callback: (data: Buffer) => void) => {
+      testWs.on('message', (rawData: WebSocket.Data) => {
+        let buffer: Buffer;
+        if (rawData instanceof Buffer) {
+          buffer = rawData;
+        } else if (typeof rawData === 'string') {
+          buffer = Buffer.from(rawData, 'utf8');
+        } else if (rawData instanceof ArrayBuffer) {
+          buffer = Buffer.from(rawData);
+        } else {
+          buffer = Buffer.from(JSON.stringify(rawData), 'utf8');
+        }
+        callback(buffer);
+      });
+    };
+
+    testCallGateway.handleConnection(client, messageHandler);
+
+    testWs.on('close', () => {
+      console.log('🔌 Conexión WebSocket de prueba cerrada');
+      testCallGateway.handleDisconnect(client);
+    });
+
+    testWs.on('error', (error) => {
+      console.error('❌ Error en WebSocket de prueba:', error);
+    });
+  });
+
+  console.log('🧪 WebSocket Server de prueba configurado en /voice/test-stream');
 }
 
 void bootstrap();
