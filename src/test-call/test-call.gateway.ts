@@ -63,6 +63,11 @@ interface TestCallSession {
   sessionTimeout?: NodeJS.Timeout;
   keepAliveTimer?: NodeJS.Timeout;
   shopifyContext?: ShopifyContext;
+  // Debounce de transcripciones para agrupar fragmentos de una misma frase
+  pendingTranscript: string;
+  transcriptDebounceTimer?: NodeJS.Timeout;
+  // Lock para evitar llamadas LLM concurrentes
+  llmProcessing: boolean;
 }
 
 interface RateLimitEntry {
@@ -266,6 +271,8 @@ export class TestCallGateway {
       shopifyContext: config.shopifyDomain
         ? { shopDomain: config.shopifyDomain }
         : undefined,
+      pendingTranscript: '',
+      llmProcessing: false,
     };
 
     this.sessions.set(sessionId, session);
@@ -453,7 +460,7 @@ export class TestCallGateway {
               role: 'user',
               text,
             });
-            void this.handleFinalTranscript(session, text);
+            this.enqueueTranscript(session, text);
           }
           break;
         }
@@ -523,12 +530,44 @@ export class TestCallGateway {
     }
   }
 
+  // ── Debounce de transcripciones ─────────────────────────────────────────
+
+  private readonly TRANSCRIPT_DEBOUNCE_MS = 400;
+
+  private enqueueTranscript(session: TestCallSession, text: string): void {
+    session.pendingTranscript += (session.pendingTranscript ? ' ' : '') + text;
+
+    if (session.transcriptDebounceTimer) {
+      clearTimeout(session.transcriptDebounceTimer);
+    }
+
+    session.transcriptDebounceTimer = setTimeout(() => {
+      session.transcriptDebounceTimer = undefined;
+      const fullText = session.pendingTranscript.trim();
+      session.pendingTranscript = '';
+
+      if (fullText) {
+        void this.handleFinalTranscript(session, fullText);
+      }
+    }, this.TRANSCRIPT_DEBOUNCE_MS);
+  }
+
   // ── LLM ────────────────────────────────────────────────────────────────────
 
   private async handleFinalTranscript(
     session: TestCallSession,
     text: string,
   ): Promise<void> {
+    if (session.llmProcessing) {
+      console.log(
+        `⏳ [TestCall] LLM ocupado, encolando: "${text.substring(0, 60)}"`,
+      );
+      session.pendingTranscript += (session.pendingTranscript ? ' ' : '') + text;
+      return;
+    }
+
+    session.llmProcessing = true;
+
     if (session.interrupted) {
       session.interrupted = false;
       session.agentSpeaking = false;
@@ -574,6 +613,17 @@ export class TestCallGateway {
       await this.streamTTSFromText(session, content);
     } catch (err) {
       console.error(`❌ [TestCall] Error LLM:`, err);
+    } finally {
+      session.llmProcessing = false;
+
+      const queued = session.pendingTranscript.trim();
+      if (queued) {
+        session.pendingTranscript = '';
+        console.log(
+          `🔄 [TestCall] Procesando texto encolado: "${queued.substring(0, 60)}"`,
+        );
+        void this.handleFinalTranscript(session, queued);
+      }
     }
   }
 
@@ -854,6 +904,10 @@ export class TestCallGateway {
   private cleanupSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+
+    if (session.transcriptDebounceTimer) {
+      clearTimeout(session.transcriptDebounceTimer);
+    }
 
     if (session.sessionTimeout) {
       clearTimeout(session.sessionTimeout);
