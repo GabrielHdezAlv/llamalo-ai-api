@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializador global de Firebase
 import * as bodyParser from 'body-parser';
 import * as WebSocket from 'ws';
+import { parse as parseUrl } from 'url';
 import { StreamsGateway } from './streams/streams.gateway';
 import { TestCallGateway } from './test-call/test-call.gateway';
 import { configureLogging } from './utils/logging';
@@ -52,26 +53,39 @@ async function bootstrap() {
   const server = await app.listen(port, '0.0.0.0');
   console.log(`✅ LlamaloAI backend corriendo en el puerto ${port}`);
 
-  // 🚀 Configurar WebSocket Server
-  const wss = new WebSocket.Server({
-    server,
-    path: '/voice/stream',
+  // 🚀 WebSocket Servers (noServer mode para evitar conflictos entre múltiples servidores)
+  const wss = new WebSocket.Server({ noServer: true });
+  const testWss = new WebSocket.Server({ noServer: true });
+
+  // Un único handler de upgrade que enruta al servidor correcto según la ruta
+  server.on('upgrade', (request, socket, head) => {
+    const { pathname } = parseUrl(request.url || '/');
+
+    if (pathname === '/voice/stream') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else if (pathname === '/voice/test-stream') {
+      testWss.handleUpgrade(request, socket, head, (ws) => {
+        testWss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
   });
 
+  // 📞 Llamadas reales (Twilio Media Streams)
   wss.on('connection', (ws: WebSocket, req) => {
     console.log('🛰️ Nueva conexión WebSocket establecida');
-    // 🔒 No loggear dirección IP completa por privacidad
     const remoteAddress = req.socket.remoteAddress;
     const maskedIp = remoteAddress
       ? remoteAddress.split('.').slice(0, 2).join('.') + '.***.***'
       : 'desconocida';
     console.log('📡 Cliente conectado desde:', maskedIp);
 
-    // Buffer para almacenar mensajes tempranos
     const earlyMessages: Buffer[] = [];
     let handlerRegistered = false;
 
-    // Registrar listener INMEDIATAMENTE para capturar TODOS los mensajes
     ws.on('message', (data: WebSocket.Data) => {
       let buffer: Buffer;
       if (data instanceof Buffer) {
@@ -84,40 +98,31 @@ async function bootstrap() {
         buffer = Buffer.from(JSON.stringify(data), 'utf8');
       }
 
-      // Si el handler ya está registrado, procesarlo directamente
       if (handlerRegistered && messageHandler) {
         messageHandler(buffer);
       } else {
-        // Sino, guardarlo en el buffer
         earlyMessages.push(buffer);
       }
     });
 
-    // Obtener instancia del StreamsGateway
     const streamsGateway = app.get(StreamsGateway);
-
     let messageHandler: ((data: Buffer) => void) | null = null;
 
-    // Crear un objeto cliente compatible con StreamsGateway
     const client = {
       send: (data: string) => ws.send(data),
       on: (event: string, callback: (data: Buffer) => void) => {
         if (event === 'message') {
-          // Guardar el callback
           messageHandler = callback;
           handlerRegistered = true;
-
-          // Procesar mensajes acumulados
           for (const msg of earlyMessages) {
             callback(msg);
           }
-          earlyMessages.length = 0; // Limpiar el buffer
+          earlyMessages.length = 0;
         }
       },
       close: () => ws.close(),
     };
 
-    // Delegar el manejo de la conexión al StreamsGateway
     try {
       streamsGateway.handleConnection(client);
     } catch (error) {
@@ -135,12 +140,7 @@ async function bootstrap() {
 
   console.log('🚀 WebSocket Server configurado en /voice/stream');
 
-  // 🧪 WebSocket Server para pruebas de llamada (sin Twilio)
-  const testWss = new WebSocket.Server({
-    server,
-    path: '/voice/test-stream',
-  });
-
+  // 🧪 Pruebas de llamada (sin Twilio, directo desde navegador)
   testWss.on('connection', (testWs: WebSocket) => {
     console.log('🧪 Nueva conexión WebSocket de prueba establecida');
 
@@ -155,7 +155,7 @@ async function bootstrap() {
       close: () => testWs.close(),
     };
 
-    const messageHandler = (callback: (data: Buffer) => void) => {
+    const onMessage = (callback: (data: Buffer) => void) => {
       testWs.on('message', (rawData: WebSocket.Data) => {
         let buffer: Buffer;
         if (rawData instanceof Buffer) {
@@ -171,7 +171,7 @@ async function bootstrap() {
       });
     };
 
-    testCallGateway.handleConnection(client, messageHandler);
+    testCallGateway.handleConnection(client, onMessage);
 
     testWs.on('close', () => {
       console.log('🔌 Conexión WebSocket de prueba cerrada');
