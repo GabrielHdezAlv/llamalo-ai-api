@@ -1,4 +1,4 @@
-import { WebSocketGateway } from '@nestjs/websockets';
+import { Injectable } from '@nestjs/common';
 import WebSocket, { RawData } from 'ws';
 import axios from 'axios';
 import OpenAI from 'openai';
@@ -111,13 +111,7 @@ interface CallSession {
   shopifyContext?: ShopifyContext;
 }
 
-@WebSocketGateway({
-  path: '/voice/stream',
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
-})
+@Injectable()
 export class StreamsGateway {
   // Proveedor STT/TTS
   // Forzamos Deepgram como único proveedor STT; ElevenLabs se usa solo para TTS
