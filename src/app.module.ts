@@ -12,6 +12,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { ShopifyModule } from './shopify/shopify.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 import { TestCallModule } from './test-call/test-call.module';
+import { SupportChatModule } from './support-chat/support-chat.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { TestCallModule } from './test-call/test-call.module';
     ShopifyModule,
     KnowledgeBaseModule,
     TestCallModule,
+    SupportChatModule,
   ],
   controllers: [],
   providers: [],

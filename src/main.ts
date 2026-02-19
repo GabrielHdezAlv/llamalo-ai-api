@@ -7,6 +7,7 @@ import * as WebSocket from 'ws';
 import { parse as parseUrl } from 'url';
 import { StreamsGateway } from './streams/streams.gateway';
 import { TestCallGateway } from './test-call/test-call.gateway';
+import { SupportChatGateway } from './support-chat/support-chat.gateway';
 import { configureLogging } from './utils/logging';
 
 async function bootstrap() {
@@ -56,6 +57,7 @@ async function bootstrap() {
   // 🚀 WebSocket Servers (noServer mode para evitar conflictos entre múltiples servidores)
   const wss = new WebSocket.Server({ noServer: true });
   const testWss = new WebSocket.Server({ noServer: true });
+  const supportWss = new WebSocket.Server({ noServer: true });
 
   // Un único handler de upgrade que enruta al servidor correcto según la ruta
   server.on('upgrade', (request, socket, head) => {
@@ -68,6 +70,10 @@ async function bootstrap() {
     } else if (pathname === '/voice/test-stream') {
       testWss.handleUpgrade(request, socket, head, (ws) => {
         testWss.emit('connection', ws, request);
+      });
+    } else if (pathname === '/support/chat') {
+      supportWss.handleUpgrade(request, socket, head, (ws) => {
+        supportWss.emit('connection', ws, request);
       });
     } else {
       socket.destroy();
@@ -184,6 +190,51 @@ async function bootstrap() {
   });
 
   console.log('🧪 WebSocket Server de prueba configurado en /voice/test-stream');
+
+  // 💬 Chat de soporte (texto en tiempo real)
+  supportWss.on('connection', (supportWs: WebSocket) => {
+    console.log('💬 Nueva conexión WebSocket de soporte establecida');
+
+    const supportChatGateway = app.get(SupportChatGateway);
+
+    const client = {
+      send: (data: string | Buffer) => {
+        if (supportWs.readyState === WebSocket.OPEN) {
+          supportWs.send(data);
+        }
+      },
+      close: () => supportWs.close(),
+    };
+
+    const onMessage = (callback: (data: Buffer) => void) => {
+      supportWs.on('message', (rawData: WebSocket.Data) => {
+        let buffer: Buffer;
+        if (rawData instanceof Buffer) {
+          buffer = rawData;
+        } else if (typeof rawData === 'string') {
+          buffer = Buffer.from(rawData, 'utf8');
+        } else if (rawData instanceof ArrayBuffer) {
+          buffer = Buffer.from(rawData);
+        } else {
+          buffer = Buffer.from(JSON.stringify(rawData), 'utf8');
+        }
+        callback(buffer);
+      });
+    };
+
+    supportChatGateway.handleConnection(client, onMessage);
+
+    supportWs.on('close', () => {
+      console.log('🔌 Conexión WebSocket de soporte cerrada');
+      supportChatGateway.handleDisconnect(client);
+    });
+
+    supportWs.on('error', (error) => {
+      console.error('❌ Error en WebSocket de soporte:', error);
+    });
+  });
+
+  console.log('💬 WebSocket Server de soporte configurado en /support/chat');
 }
 
 void bootstrap();
