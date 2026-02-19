@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import { Readable } from 'stream';
 import * as admin from 'firebase-admin';
 import { SupportChatService } from './support-chat.service';
-import type { SupportAgentConfigDto } from './dto/support-chat.dto';
+import type { SupportAgentConfigResponseDto } from './dto/support-chat.dto';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ interface SupportVoiceSession {
   sessionId: string;
   userId: string;
   client: SupportChatClient;
-  config: SupportAgentConfigDto;
+  config: SupportAgentConfigResponseDto;
   deepgramSocket?: WebSocket;
   readyForAudio: boolean;
   queuedAudio: Buffer[];
@@ -531,9 +531,9 @@ export class SupportChatGateway {
       this.sendJson(session.client, { type: 'agent.thinking' });
 
       const completion = await this.openai.chat.completions.create({
-        model: session.config.model,
-        temperature: session.config.temperature,
-        max_tokens: session.config.maxTokens,
+        model: session.config.model ?? 'gpt-4o-mini',
+        temperature: 0.7,
+        max_tokens: 500,
         messages: [
           { role: 'system', content: systemPrompt },
           ...session.history,
@@ -579,7 +579,7 @@ export class SupportChatGateway {
     session: SupportVoiceSession,
     userQuery: string,
   ): Promise<string> {
-    let prompt = session.config.instructions;
+    let prompt = session.config.agentInstruction;
 
     if (session.knowledgeSourceIds.length > 0) {
       try {
@@ -603,15 +603,9 @@ export class SupportChatGateway {
       }
     }
 
-    if (session.config.contactEmail || session.config.contactWhatsapp) {
+    if (session.config.contactEmail) {
       prompt +=
-        '\n\nSi el usuario necesita hablar con un humano, proporciona esta información:';
-      if (session.config.contactEmail) {
-        prompt += `\n- Email: ${session.config.contactEmail}`;
-      }
-      if (session.config.contactWhatsapp) {
-        prompt += `\n- WhatsApp: ${session.config.contactWhatsapp}`;
-      }
+        `\n\nSi el usuario necesita hablar con un humano, proporciona este contacto: Email: ${session.config.contactEmail}`;
     }
 
     return prompt;
@@ -668,7 +662,7 @@ export class SupportChatGateway {
     }
 
     const voiceId = session.config.voiceId || this.defaultVoiceId;
-    const params = session.config.voiceParameters;
+    const params = session.config.parameters;
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${this.ttsOutputFormat}`;
 
     session.agentSpeaking = true;
@@ -764,10 +758,10 @@ export class SupportChatGateway {
   // ── Greeting ───────────────────────────────────────────────────────────────
 
   private maybeSendGreeting(session: SupportVoiceSession): void {
-    if (session.greetingSent || !session.config.greeting?.trim()) return;
+    if (session.greetingSent || !session.config.firstInteraction?.trim()) return;
 
     session.greetingSent = true;
-    const greeting = session.config.greeting.trim().slice(0, 500);
+    const greeting = session.config.firstInteraction.trim().slice(0, 500);
 
     session.agentSpeaking = true;
     session.allowInterruptions = false;

@@ -10,25 +10,36 @@ import {
   CreateKnowledgeSourceDto,
   KnowledgeSourceDto,
 } from '../knowledge-base/dto/knowledge-source.dto';
+import { SetAgentConfigDto } from '../agents/dto/set-agent-config.dto';
 import {
+  SupportAgentConfigResponseDto,
   UpdateSupportAgentConfigDto,
-  SupportAgentConfigDto,
   CreateSupportSourceDto,
 } from './dto/support-chat.dto';
 
 const SUPPORT_USER_ID = '__support_agent__';
 const CONFIG_DOC_PATH = 'supportAgentConfig/default';
 
-const DEFAULT_CONFIG: SupportAgentConfigDto = {
-  instructions:
-    'Eres el asistente de soporte de LlamaloAI. Ayuda a los usuarios a resolver dudas sobre la plataforma, solucionar problemas técnicos y, si es necesario, ponles en contacto con el equipo.',
+const DEFAULT_CONFIG: SupportAgentConfigResponseDto = {
   name: 'Asistente LlamaloAI',
-  greeting: '¡Hola! Soy el asistente de LlamaloAI. ¿En qué puedo ayudarte?',
-  model: 'gpt-4o-mini',
-  temperature: 0.7,
-  maxTokens: 500,
   language: 'es',
+  type: 'inbound',
   voiceId: process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP',
+  firstInteraction:
+    '¡Hola! Soy el asistente de LlamaloAI. ¿En qué puedo ayudarte?',
+  agentInstruction:
+    'Eres el asistente de soporte de LlamaloAI. Ayuda a los usuarios a resolver dudas sobre la plataforma, solucionar problemas técnicos y, si es necesario, ponles en contacto con el equipo.',
+  phoneNumbers: { countryCode: '+0', number: 0 },
+  label: 'Agente de soporte',
+  state: 'Activo',
+  parameters: {
+    stability: 0.72,
+    similarity: 0.8,
+    style: 0.05,
+    boost: true,
+    speed: 1,
+  },
+  model: 'gpt-4o-mini',
   enabled: true,
   updatedAt: new Date(),
 };
@@ -38,7 +49,7 @@ export class SupportChatService {
   private readonly logger = new Logger(SupportChatService.name);
   private readonly firestore = getFirestore();
 
-  private cachedConfig: SupportAgentConfigDto | null = null;
+  private cachedConfig: SupportAgentConfigResponseDto | null = null;
   private configCachedAt = 0;
   private readonly CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -46,9 +57,9 @@ export class SupportChatService {
     private readonly knowledgeBaseService: KnowledgeBaseService,
   ) {}
 
-  // ── Configuración ─────────────────────────────────────────────────────────
+  // ── Configuración (misma forma que edición de agente + enabled, updatedAt) ─
 
-  async getConfig(): Promise<SupportAgentConfigDto> {
+  async getConfig(): Promise<SupportAgentConfigResponseDto> {
     const now = Date.now();
     if (
       this.cachedConfig &&
@@ -68,21 +79,7 @@ export class SupportChatService {
       }
 
       const data = doc.data()!;
-      this.cachedConfig = {
-        instructions: data.instructions ?? DEFAULT_CONFIG.instructions,
-        name: data.name ?? DEFAULT_CONFIG.name,
-        greeting: data.greeting ?? DEFAULT_CONFIG.greeting,
-        model: data.model ?? DEFAULT_CONFIG.model,
-        temperature: data.temperature ?? DEFAULT_CONFIG.temperature,
-        maxTokens: data.maxTokens ?? DEFAULT_CONFIG.maxTokens,
-        language: data.language ?? DEFAULT_CONFIG.language,
-        voiceId: data.voiceId ?? DEFAULT_CONFIG.voiceId,
-        voiceParameters: data.voiceParameters ?? DEFAULT_CONFIG.voiceParameters,
-        contactEmail: data.contactEmail,
-        contactWhatsapp: data.contactWhatsapp,
-        enabled: data.enabled ?? true,
-        updatedAt: data.updatedAt?.toDate?.() ?? data.updatedAt ?? new Date(),
-      };
+      this.cachedConfig = this.mapDocToConfig(data);
       this.configCachedAt = now;
       return this.cachedConfig;
     } catch (error) {
@@ -93,37 +90,23 @@ export class SupportChatService {
 
   async updateConfig(
     dto: UpdateSupportAgentConfigDto,
-  ): Promise<SupportAgentConfigDto> {
+  ): Promise<SupportAgentConfigResponseDto> {
     try {
       const updateData: Record<string, unknown> = {
+        ...dto,
         updatedAt: new Date(),
       };
-
-      if (dto.instructions !== undefined)
-        updateData.instructions = dto.instructions;
-      if (dto.name !== undefined) updateData.name = dto.name;
-      if (dto.greeting !== undefined) updateData.greeting = dto.greeting;
-      if (dto.model !== undefined) updateData.model = dto.model;
-      if (dto.temperature !== undefined)
-        updateData.temperature = dto.temperature;
-      if (dto.maxTokens !== undefined) updateData.maxTokens = dto.maxTokens;
-      if (dto.contactEmail !== undefined)
-        updateData.contactEmail = dto.contactEmail;
-      if (dto.contactWhatsapp !== undefined)
-        updateData.contactWhatsapp = dto.contactWhatsapp;
-      if (dto.language !== undefined) updateData.language = dto.language;
-      if (dto.voiceId !== undefined) updateData.voiceId = dto.voiceId;
-      if (dto.voiceParameters !== undefined)
-        updateData.voiceParameters = dto.voiceParameters;
-      if (dto.enabled !== undefined) updateData.enabled = dto.enabled;
+      const payload = Object.fromEntries(
+        Object.entries(updateData).filter(([, v]) => v !== undefined),
+      ) as Record<string, unknown>;
 
       const docRef = this.firestore.doc(CONFIG_DOC_PATH);
       const doc = await docRef.get();
 
       if (!doc.exists) {
-        await docRef.set({ ...DEFAULT_CONFIG, ...updateData });
+        await docRef.set({ ...DEFAULT_CONFIG, ...payload });
       } else {
-        await docRef.update(updateData);
+        await docRef.update(payload);
       }
 
       this.cachedConfig = null;
@@ -134,6 +117,33 @@ export class SupportChatService {
       this.logger.error(`Error actualizando config: ${error.message}`);
       throw new BadRequestException('No se pudo actualizar la configuración');
     }
+  }
+
+  private mapDocToConfig(data: Record<string, unknown>): SupportAgentConfigResponseDto {
+    return {
+      name: (data.name as string) ?? DEFAULT_CONFIG.name,
+      language: (data.language as string) ?? DEFAULT_CONFIG.language,
+      type: (data.type as 'inbound' | 'outbound') ?? DEFAULT_CONFIG.type,
+      voiceId: (data.voiceId as string) ?? DEFAULT_CONFIG.voiceId,
+      firstInteraction:
+        (data.firstInteraction as string) ?? DEFAULT_CONFIG.firstInteraction,
+      agentInstruction:
+        (data.agentInstruction as string) ?? DEFAULT_CONFIG.agentInstruction,
+      phoneNumbers: (data.phoneNumbers as SetAgentConfigDto['phoneNumbers']) ?? DEFAULT_CONFIG.phoneNumbers,
+      label: (data.label as string) ?? DEFAULT_CONFIG.label,
+      state: (data.state as 'Activo' | 'Inactivo') ?? DEFAULT_CONFIG.state,
+      parameters: (data.parameters as SetAgentConfigDto['parameters']) ?? DEFAULT_CONFIG.parameters,
+      twilioAccountId: data.twilioAccountId as number | undefined,
+      shopifyDomain: data.shopifyDomain as string | undefined,
+      knowledgeSourceIds: data.knowledgeSourceIds as string[] | undefined,
+      contactEmail: data.contactEmail as string | undefined,
+      model: (data.model as string) ?? DEFAULT_CONFIG.model,
+      enabled: (data.enabled as boolean) ?? true,
+      updatedAt:
+        (data.updatedAt as { toDate?: () => Date })?.toDate?.() ??
+        (data.updatedAt as Date) ??
+        new Date(),
+    };
   }
 
   // ── Fuentes de conocimiento ───────────────────────────────────────────────

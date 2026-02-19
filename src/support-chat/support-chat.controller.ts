@@ -21,10 +21,10 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SupportChatService } from './support-chat.service';
 import {
-  UpdateSupportAgentConfigDto,
-  SupportAgentConfigDto,
+  SupportAgentConfigResponseDto,
   CreateSupportSourceDto,
 } from './dto/support-chat.dto';
+import { SetAgentConfigDto } from '../agents/dto/set-agent-config.dto';
 import { KnowledgeSourceDto } from '../knowledge-base/dto/knowledge-source.dto';
 import type { Express } from 'express';
 
@@ -33,21 +33,25 @@ import type { Express } from 'express';
 export class SupportChatController {
   constructor(private readonly supportChatService: SupportChatService) {}
 
-  // ── Configuración ─────────────────────────────────────────────────────────
+  // ── Configuración (mismo DTO que edición de agente + contactEmail, model) ───
 
   @Get('config')
-  @ApiOperation({ summary: 'Obtener configuración del agente de soporte' })
-  @ApiResponse({ status: 200, type: SupportAgentConfigDto })
-  async getConfig(): Promise<SupportAgentConfigDto> {
+  @ApiOperation({ summary: 'Obtener configuración del agente de soporte (Xenon)' })
+  @ApiResponse({ status: 200, type: SupportAgentConfigResponseDto })
+  async getConfig(): Promise<SupportAgentConfigResponseDto> {
     return this.supportChatService.getConfig();
   }
 
   @Put('config')
-  @ApiOperation({ summary: 'Actualizar configuración del agente de soporte' })
-  @ApiResponse({ status: 200, type: SupportAgentConfigDto })
+  @ApiOperation({
+    summary: 'Actualizar configuración del agente de soporte',
+    description:
+      'Mismo body que la edición de un agente (SetAgentConfigDto) más contactEmail y model opcionales.',
+  })
+  @ApiResponse({ status: 200, type: SupportAgentConfigResponseDto })
   async updateConfig(
-    @Body() dto: UpdateSupportAgentConfigDto,
-  ): Promise<SupportAgentConfigDto> {
+    @Body() dto: SetAgentConfigDto,
+  ): Promise<SupportAgentConfigResponseDto> {
     return this.supportChatService.updateConfig(dto);
   }
 

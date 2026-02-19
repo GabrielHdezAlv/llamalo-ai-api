@@ -206,4 +206,22 @@ export class SetAgentConfigDto {
   @IsArray()
   @IsString({ each: true })
   knowledgeSourceIds?: string[];
+
+  @ApiProperty({
+    description: 'Email de contacto (p. ej. agente de soporte Xenon)',
+    required: false,
+    example: 'soporte@llamalo.ai',
+  })
+  @IsOptional()
+  @IsString()
+  contactEmail?: string;
+
+  @ApiProperty({
+    description: 'Modelo de OpenAI a usar (p. ej. gpt-4o-mini)',
+    required: false,
+    example: 'gpt-4o-mini',
+  })
+  @IsOptional()
+  @IsString()
+  model?: string;
 }
