@@ -141,21 +141,24 @@ export class VectorStoreService {
       this.vectorStore.delete(sourceId);
       this.embeddings.delete(sourceId);
 
-      // Delete from Firestore
+      // Delete from Firestore in batches (límite 500 ops por transacción)
       const snapshot = await this.firestore
         .collection('vectorChunks')
         .where('sourceId', '==', sourceId)
         .get();
 
-      const batch = this.firestore.batch();
-      snapshot.docs.forEach((doc) => {
-        batch.delete(doc.ref);
-      });
+      const docs = snapshot.docs;
+      const BATCH_SIZE = 500;
 
-      await batch.commit();
+      for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+        const batch = this.firestore.batch();
+        const chunk = docs.slice(i, i + BATCH_SIZE);
+        chunk.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
+      }
 
       this.logger.log(
-        `Deleted source ${sourceId} from vector store and Firestore`,
+        `Deleted source ${sourceId} from vector store and Firestore (${docs.length} chunks)`,
       );
     } catch (error) {
       this.logger.error(`Error deleting source: ${error.message}`);
