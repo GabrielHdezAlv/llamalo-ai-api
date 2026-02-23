@@ -279,7 +279,7 @@ export class ShopifyController {
           'SHOPIFY_API_SECRET no configurada',
         );
       }
-      const queryRecord = query as Record<
+      const queryRecord = query as unknown as Record<
         string,
         string | string[] | undefined
       >;
