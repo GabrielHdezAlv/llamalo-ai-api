@@ -281,6 +281,56 @@ export class ShopifyService {
   }
 
   /**
+   * Valida que el HMAC del callback OAuth de Shopify coincida con el firmado por nosotros.
+   * Excluye el parámetro hmac, ordena el resto alfabéticamente y firma con HMAC-SHA256 usando el client secret.
+   * @see https://shopify.dev/docs/apps/build/authentication-authorization/get-access-tokens/auth-code-grant/implement-auth-code-grants-manually
+   */
+  validateShopifyHmac(
+    query: Record<string, string | string[] | undefined>,
+    secret: string,
+  ): boolean {
+    const receivedHmac =
+      typeof query.hmac === 'string'
+        ? query.hmac
+        : Array.isArray(query.hmac)
+          ? query.hmac[0]
+          : undefined;
+    if (!receivedHmac || !secret) return false;
+
+    const params = { ...query };
+    delete params.hmac;
+
+    const message = Object.keys(params)
+      .sort()
+      .map((key) => {
+        const raw = params[key];
+        const value =
+          raw === undefined
+            ? ''
+            : Array.isArray(raw)
+              ? raw[0]
+              : String(raw);
+        return `${key}=${value}`;
+      })
+      .join('&');
+
+    const computed = crypto
+      .createHmac('sha256', secret)
+      .update(message)
+      .digest('hex');
+
+    if (receivedHmac.length !== computed.length) return false;
+    try {
+      const receivedBuf = Buffer.from(receivedHmac, 'hex');
+      const computedBuf = Buffer.from(computed, 'hex');
+      if (receivedBuf.length !== computedBuf.length) return false;
+      return crypto.timingSafeEqual(receivedBuf, computedBuf);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Elimina una sesión OAuth después de usarla
    */
   async deleteOAuthSession(sessionId: string): Promise<void> {

@@ -255,6 +255,45 @@ export class ShopifyController {
         );
       }
 
+      // Validar HMAC firmado por Shopify (antes del intercambio de token)
+      const apiSecret = process.env.SHOPIFY_API_SECRET;
+      if (!query.hmac) {
+        if (redirectBase) {
+          return redirectToFrontend(redirectBase, {
+            shopify: 'error',
+            code: '401',
+            message: 'HMAC requerido',
+          });
+        }
+        throw new UnauthorizedException('HMAC requerido');
+      }
+      if (!apiSecret) {
+        if (redirectBase) {
+          return redirectToFrontend(redirectBase, {
+            shopify: 'error',
+            code: '401',
+            message: 'Configuración de app inválida',
+          });
+        }
+        throw new UnauthorizedException(
+          'SHOPIFY_API_SECRET no configurada',
+        );
+      }
+      const queryRecord = query as Record<
+        string,
+        string | string[] | undefined
+      >;
+      if (!this.shopifyService.validateShopifyHmac(queryRecord, apiSecret)) {
+        if (redirectBase) {
+          return redirectToFrontend(redirectBase, {
+            shopify: 'error',
+            code: '401',
+            message: 'HMAC inválido',
+          });
+        }
+        throw new UnauthorizedException('HMAC inválido');
+      }
+
       // Intercambiar código por access_token
       const tokenResponse = await this.shopifyService.exchangeCodeForToken(
         query.shop,
