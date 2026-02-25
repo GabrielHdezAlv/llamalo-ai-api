@@ -653,13 +653,71 @@ export class ShopifyService {
   ): AxiosInstance {
     const normalizedShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
-    return axios.create({
+    const client = axios.create({
       baseURL: `https://${normalizedShop}/admin/api/${this.apiVersion}`,
       headers: {
         'X-Shopify-Access-Token': accessToken,
         'Content-Type': 'application/json',
       },
     });
+
+    // Interceptor para manejar rate limits (429 Too Many Requests)
+    client.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        // Si no es error de axios, no tiene respuesta, o no es 429, rechazar directo
+        if (
+          !axios.isAxiosError(error) ||
+          !error.response ||
+          error.response.status !== 429 ||
+          !error.config
+        ) {
+          return Promise.reject(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        }
+
+        const config = error.config as typeof error.config & {
+          __retryCount?: number;
+        };
+
+        config.__retryCount = config.__retryCount || 0;
+
+        // Límite estricto de 3 reintentos
+        if (config.__retryCount >= 3) {
+          console.error(
+            `[Shopify API] Max retries (3) alcanzado por rate limit (429) en la tienda: ${normalizedShop}`,
+          );
+          return Promise.reject(error);
+        }
+
+        config.__retryCount++;
+
+        let delay = 0;
+        const retryAfter = error.response.headers['retry-after'];
+
+        if (retryAfter && !isNaN(parseInt(String(retryAfter), 10))) {
+          // Shopify manda el Retry-After en segundos
+          delay = parseInt(String(retryAfter), 10) * 1000;
+        } else {
+          // Backoff exponencial manual si no hay header: 500ms, 1000ms, 2000ms
+          const backoffDelays = [500, 1000, 2000];
+          delay = backoffDelays[config.__retryCount - 1];
+        }
+
+        console.warn(
+          `[Shopify API] 429 Rate Limit en ${normalizedShop}. Reintento ${config.__retryCount}/3 en ${delay}ms...`,
+        );
+
+        // Espera no bloqueante
+        await new Promise((resolve) => setTimeout(resolve, delay));
+
+        // Re-lanzar la petición original
+        return client.request(config);
+      },
+    );
+
+    return client;
   }
 
   /**
