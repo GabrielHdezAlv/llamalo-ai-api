@@ -13,6 +13,7 @@ import { ShopifyModule } from './shopify/shopify.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 import { TestCallModule } from './test-call/test-call.module';
 import { SupportChatModule } from './support-chat/support-chat.module';
+import { CryptoModule } from './crypto/crypto.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { SupportChatModule } from './support-chat/support-chat.module';
       isGlobal: true,
     }),
     ScheduleModule.forRoot(),
+    CryptoModule,
     CallsModule,
     AuthModule,
     UsersModule,

@@ -8,6 +8,7 @@ import axios, { AxiosInstance } from 'axios';
 import { getFirestore } from '../firebase/firebase.config';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
+import { CryptoService } from '../crypto/crypto.service';
 
 interface ShopifyTokenResponse {
   access_token: string;
@@ -156,6 +157,8 @@ export interface ShopifyMasterDataResponse {
 export class ShopifyService {
   private readonly firestore = getFirestore();
   private readonly apiVersion = '2026-01';
+
+  constructor(private readonly cryptoService: CryptoService) {}
 
   /**
    * Scopes de Shopify por defecto (sin read_customers por cumplimiento GDPR)
@@ -497,13 +500,14 @@ export class ShopifyService {
         .get();
 
       const now = admin.firestore.Timestamp.now();
+      const encryptedToken = this.cryptoService.encrypt(accessToken);
 
       if (!existingStoreQuery.empty) {
         // Actualizar documento existente
         const existingDoc = existingStoreQuery.docs[0];
         await existingDoc.ref.update({
           shopName: finalShopName,
-          accessToken: accessToken,
+          accessToken: encryptedToken,
           scopes: scopesArray,
           status: 'active',
           updatedAt: now,
@@ -515,7 +519,7 @@ export class ShopifyService {
           id: newStoreRef.id,
           shopDomain: normalizedShop,
           shopName: finalShopName,
-          accessToken: accessToken,
+          accessToken: encryptedToken,
           scopes: scopesArray,
           ownerUserId: userId,
           status: 'active',
@@ -628,7 +632,8 @@ export class ShopifyService {
         );
       }
 
-      return storeData.accessToken;
+      // Descifrar el token de acceso
+      return this.cryptoService.decrypt(storeData.accessToken);
     } catch (error) {
       if (error instanceof UnauthorizedException) {
         throw error;
