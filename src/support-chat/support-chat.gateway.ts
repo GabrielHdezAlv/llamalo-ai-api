@@ -196,7 +196,8 @@ export class SupportChatGateway {
     if (this.sessions.size >= this.MAX_CONCURRENT) {
       this.sendJson(client, {
         type: 'error',
-        message: 'Demasiadas conversaciones activas. Inténtalo en unos minutos.',
+        message:
+          'Demasiadas conversaciones activas. Inténtalo en unos minutos.',
       });
       client.close();
       return null;
@@ -217,8 +218,7 @@ export class SupportChatGateway {
       this.endSession(existingSessionId, 'replaced');
     }
 
-    const knowledgeSourceIds =
-      await this.supportChatService.getSourceIds();
+    const knowledgeSourceIds = await this.supportChatService.getSourceIds();
 
     const sessionId = `support_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = Date.now();
@@ -297,7 +297,9 @@ export class SupportChatGateway {
 
   private connectDeepgramSTT(session: SupportVoiceSession): void {
     if (!this.deepgramApiKey) {
-      this.logger.error('❌ [SupportVoice] DG_VOICE_AGENT_API_KEY no configurado');
+      this.logger.error(
+        '❌ [SupportVoice] DG_VOICE_AGENT_API_KEY no configurado',
+      );
       this.endSession(session.sessionId, 'error');
       return;
     }
@@ -429,15 +431,16 @@ export class SupportChatGateway {
 
         case 'Error': {
           const errDesc =
-            typeof message.description === 'string'
-              ? message.description
-              : '';
+            typeof message.description === 'string' ? message.description : '';
           this.logger.error(`❌ [SupportVoice] Deepgram error: ${errDesc}`);
           break;
         }
       }
     } catch (error) {
-      this.logger.error('❌ [SupportVoice] Error parsing Deepgram message:', error);
+      this.logger.error(
+        '❌ [SupportVoice] Error parsing Deepgram message:',
+        error,
+      );
     }
   }
 
@@ -512,7 +515,8 @@ export class SupportChatGateway {
     text: string,
   ): Promise<void> {
     if (session.llmProcessing) {
-      session.pendingTranscript += (session.pendingTranscript ? ' ' : '') + text;
+      session.pendingTranscript +=
+        (session.pendingTranscript ? ' ' : '') + text;
       return;
     }
 
@@ -604,8 +608,7 @@ export class SupportChatGateway {
     }
 
     if (session.config.contactEmail) {
-      prompt +=
-        `\n\nSi el usuario necesita hablar con un humano, proporciona este contacto: Email: ${session.config.contactEmail}`;
+      prompt += `\n\nSi el usuario necesita hablar con un humano, proporciona este contacto: Email: ${session.config.contactEmail}`;
     }
 
     return prompt;
@@ -698,9 +701,7 @@ export class SupportChatGateway {
         chunks.push(chunk);
       }
       const errorBody = Buffer.concat(chunks).toString('utf-8');
-      throw new Error(
-        `ElevenLabs TTS error ${response.status}: ${errorBody}`,
-      );
+      throw new Error(`ElevenLabs TTS error ${response.status}: ${errorBody}`);
     }
 
     const audioStream = response.data as Readable;
@@ -758,7 +759,8 @@ export class SupportChatGateway {
   // ── Greeting ───────────────────────────────────────────────────────────────
 
   private maybeSendGreeting(session: SupportVoiceSession): void {
-    if (session.greetingSent || !session.config.firstInteraction?.trim()) return;
+    if (session.greetingSent || !session.config.firstInteraction?.trim())
+      return;
 
     session.greetingSent = true;
     const greeting = session.config.firstInteraction.trim().slice(0, 500);

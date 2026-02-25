@@ -1,6 +1,10 @@
 import {
   Controller,
   Get,
+  Post,
+  Headers,
+  HttpCode,
+  HttpStatus,
   Query,
   Res,
   Req,
@@ -275,9 +279,7 @@ export class ShopifyController {
             message: 'Configuración de app inválida',
           });
         }
-        throw new UnauthorizedException(
-          'SHOPIFY_API_SECRET no configurada',
-        );
+        throw new UnauthorizedException('SHOPIFY_API_SECRET no configurada');
       }
       const queryRecord = query as unknown as Record<
         string,
@@ -501,5 +503,64 @@ export class ShopifyController {
     }
 
     return this.shopifyService.getMasterData(userId, shop);
+  }
+
+  @Post('webhooks')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Webhook receiver para Shopify',
+    description: 'Recibe eventos asíncronos de Shopify, como app/uninstalled.',
+  })
+  handleWebhook(
+    @Req() req: Request & { rawBody?: Buffer },
+    @Headers('x-shopify-topic') topic: string,
+    @Headers('x-shopify-shop-domain') shopDomain: string,
+    @Headers('x-shopify-hmac-sha256') hmac: string,
+  ) {
+    if (!topic || !shopDomain || !hmac) {
+      throw new BadRequestException('Faltan headers obligatorios de Shopify');
+    }
+
+    // Validar HMAC
+    const apiSecret = process.env.SHOPIFY_API_SECRET;
+    if (!apiSecret) {
+      console.error('SHOPIFY_API_SECRET no está configurado');
+      throw new UnauthorizedException('Configuración inválida');
+    }
+
+    if (!req.rawBody) {
+      console.error(
+        'El req.rawBody no está disponible. ¿Está configurado el middleware en main.ts?',
+      );
+      throw new BadRequestException(
+        'No se puede validar el webhook (falta rawBody)',
+      );
+    }
+
+    const isValid = this.shopifyService.validateShopifyWebhookHmac(
+      req.rawBody,
+      hmac,
+      apiSecret,
+    );
+
+    if (!isValid) {
+      console.error(`HMAC inválido para el webhook ${topic} de ${shopDomain}`);
+      throw new UnauthorizedException('HMAC inválido');
+    }
+
+    // Manejar topics específicos
+    if (topic === 'app/uninstalled') {
+      // Procesar en background para responder rápido a Shopify (timeout = 5s)
+      this.shopifyService.handleAppUninstalled(shopDomain).catch((err) => {
+        console.error(
+          `Error procesando webhook app/uninstalled para ${shopDomain}:`,
+          err,
+        );
+      });
+    } else {
+      console.log(`Webhook recibido: ${topic} para la tienda ${shopDomain}`);
+    }
+
+    return { success: true };
   }
 }

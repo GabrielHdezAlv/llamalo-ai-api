@@ -84,7 +84,10 @@ export class TwilioController {
       'Valida las credenciales de Twilio, verifica que el número existe en la cuenta de Twilio y lo agrega a los números del usuario si no existe ya.',
   })
   @ApiResponse({ status: 201, type: CreatePhoneResponseDto })
-  @ApiResponse({ status: 400, description: 'Credenciales inválidas o número ya existe' })
+  @ApiResponse({
+    status: 400,
+    description: 'Credenciales inválidas o número ya existe',
+  })
   async createPhoneNumber(
     @GetUser('uid') userId: string,
     @Body() createPhoneDto: CreatePhoneDto,

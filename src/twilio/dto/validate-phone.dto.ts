@@ -20,7 +20,8 @@ export class ValidatePhoneDto {
 
   @ApiProperty({
     example: 1,
-    description: 'ID de la cuenta de Twilio a usar (opcional, usa la primera cuenta si no se especifica)',
+    description:
+      'ID de la cuenta de Twilio a usar (opcional, usa la primera cuenta si no se especifica)',
     required: false,
   })
   @IsOptional()

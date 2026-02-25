@@ -12,9 +12,7 @@ export class TwilioService {
   private firestore = getFirestore();
 
   // 🔧 Normalizar twilio: convierte estructura antigua (objeto) a nueva (array)
-  private normalizeTwilioArray(
-    twilioData: unknown,
-  ): Array<{
+  private normalizeTwilioArray(twilioData: unknown): Array<{
     twilioAccountId: number;
     twilioSid: string;
     twilioToken: string;
@@ -71,7 +69,9 @@ export class TwilioService {
       const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
       const isInUse = twilioArray.some(
-        (account) => account.twilioSid === twilioSid || account.twilioToken === twilioToken
+        (account) =>
+          account.twilioSid === twilioSid ||
+          account.twilioToken === twilioToken,
       );
 
       if (isInUse) {
@@ -116,7 +116,7 @@ export class TwilioService {
       // Si se proporciona twilioAccountId, actualizar esa cuenta
       if (config.twilioAccountId !== undefined) {
         const accountIndex = twilioArray.findIndex(
-          (acc) => acc.twilioAccountId === config.twilioAccountId
+          (acc) => acc.twilioAccountId === config.twilioAccountId,
         );
 
         if (accountIndex === -1) {
@@ -127,9 +127,10 @@ export class TwilioService {
 
         // Verificar que las nuevas credenciales no estén en uso por otra cuenta del mismo usuario
         const otherAccount = twilioArray.find(
-          (acc, idx) => 
-            idx !== accountIndex && 
-            (acc.twilioSid === config.twilioSid || acc.twilioToken === config.twilioToken)
+          (acc, idx) =>
+            idx !== accountIndex &&
+            (acc.twilioSid === config.twilioSid ||
+              acc.twilioToken === config.twilioToken),
         );
 
         if (otherAccount) {
@@ -150,7 +151,9 @@ export class TwilioService {
 
         // Verificar que las credenciales no estén en uso por otra cuenta del mismo usuario
         const existingAccount = twilioArray.find(
-          (acc) => acc.twilioSid === config.twilioSid || acc.twilioToken === config.twilioToken
+          (acc) =>
+            acc.twilioSid === config.twilioSid ||
+            acc.twilioToken === config.twilioToken,
         );
 
         if (existingAccount) {
@@ -208,7 +211,9 @@ export class TwilioService {
         twilioArray.map(async (account) => {
           let inboundMinutes = {};
           try {
-            const auth = Buffer.from(`${account.twilioSid}:${account.twilioToken}`).toString('base64');
+            const auth = Buffer.from(
+              `${account.twilioSid}:${account.twilioToken}`,
+            ).toString('base64');
             const response = await axios.get<{
               usage_records: Array<{
                 category: string;
@@ -253,7 +258,7 @@ export class TwilioService {
             twilioToken: account.twilioToken,
             inboundMinutes,
           };
-        })
+        }),
       );
 
       return {
@@ -433,11 +438,15 @@ export class TwilioService {
       }
 
       // Si se proporciona twilioAccountId, usar esa cuenta
-      let twilioConfig: { twilioAccountId: number; twilioSid: string; twilioToken: string };
-      
+      let twilioConfig: {
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      };
+
       if (twilioAccountId !== undefined) {
         const account = twilioArray.find(
-          (acc) => acc.twilioAccountId === twilioAccountId
+          (acc) => acc.twilioAccountId === twilioAccountId,
         );
         if (!account) {
           throw new NotFoundException(
@@ -623,7 +632,7 @@ export class TwilioService {
       const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
       const matchingAccount = twilioArray.find(
-        (acc) => acc.twilioSid === twilioSid && acc.twilioToken === twilioToken
+        (acc) => acc.twilioSid === twilioSid && acc.twilioToken === twilioToken,
       );
 
       if (!matchingAccount) {
@@ -640,7 +649,9 @@ export class TwilioService {
       const normalizedNumber = number.replace(/\s|-|\(|\)/g, '');
       const normalizedPhone = `${normalizedCountryCode}${normalizedNumber}`;
 
-      const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
+      const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString(
+        'base64',
+      );
       let allPhoneNumbers: string[] = [];
       let nextPageUri: string | null = null;
 

@@ -53,9 +53,7 @@ export class SupportChatService {
   private configCachedAt = 0;
   private readonly CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
 
-  constructor(
-    private readonly knowledgeBaseService: KnowledgeBaseService,
-  ) {}
+  constructor(private readonly knowledgeBaseService: KnowledgeBaseService) {}
 
   // ── Configuración (misma forma que edición de agente + enabled, updatedAt) ─
 
@@ -119,7 +117,9 @@ export class SupportChatService {
     }
   }
 
-  private mapDocToConfig(data: Record<string, unknown>): SupportAgentConfigResponseDto {
+  private mapDocToConfig(
+    data: Record<string, unknown>,
+  ): SupportAgentConfigResponseDto {
     return {
       name: (data.name as string) ?? DEFAULT_CONFIG.name,
       language: (data.language as string) ?? DEFAULT_CONFIG.language,
@@ -129,10 +129,14 @@ export class SupportChatService {
         (data.firstInteraction as string) ?? DEFAULT_CONFIG.firstInteraction,
       agentInstruction:
         (data.agentInstruction as string) ?? DEFAULT_CONFIG.agentInstruction,
-      phoneNumbers: (data.phoneNumbers as SetAgentConfigDto['phoneNumbers']) ?? DEFAULT_CONFIG.phoneNumbers,
+      phoneNumbers:
+        (data.phoneNumbers as SetAgentConfigDto['phoneNumbers']) ??
+        DEFAULT_CONFIG.phoneNumbers,
       label: (data.label as string) ?? DEFAULT_CONFIG.label,
       state: (data.state as 'Activo' | 'Inactivo') ?? DEFAULT_CONFIG.state,
-      parameters: (data.parameters as SetAgentConfigDto['parameters']) ?? DEFAULT_CONFIG.parameters,
+      parameters:
+        (data.parameters as SetAgentConfigDto['parameters']) ??
+        DEFAULT_CONFIG.parameters,
       twilioAccountId: data.twilioAccountId as number | undefined,
       shopifyDomain: data.shopifyDomain as string | undefined,
       knowledgeSourceIds: data.knowledgeSourceIds as string[] | undefined,
@@ -184,9 +188,7 @@ export class SupportChatService {
 
   async getSourceIds(): Promise<string[]> {
     const sources = await this.getSources();
-    return sources
-      .filter((s) => s.status === 'completed')
-      .map((s) => s.id);
+    return sources.filter((s) => s.status === 'completed').map((s) => s.id);
   }
 
   async searchKnowledge(query: string, limit = 5) {

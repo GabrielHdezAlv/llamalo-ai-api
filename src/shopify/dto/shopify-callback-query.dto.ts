@@ -29,8 +29,7 @@ export class ShopifyCallbackQueryDto {
   state: string;
 
   @ApiProperty({
-    example:
-      '700e2dadb827fcc8609e9d5ce208b2e9cdaab9df07390d2cbca10d7c328fc4bf',
+    example: '700e2dadb827fcc8609e9d5ce208b2e9cdaab9df07390d2cbca10d7c328fc4bf',
     description:
       'HMAC firmado por Shopify para verificar autenticidad del callback',
     required: false,

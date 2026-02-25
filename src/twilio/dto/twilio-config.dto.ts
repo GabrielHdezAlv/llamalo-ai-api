@@ -4,7 +4,8 @@ import { IsNotEmpty, IsString, IsOptional, IsNumber } from 'class-validator';
 export class TwilioConfigDto {
   @ApiProperty({
     example: 1,
-    description: 'ID de la cuenta de Twilio (opcional para crear nueva, requerido para actualizar)',
+    description:
+      'ID de la cuenta de Twilio (opcional para crear nueva, requerido para actualizar)',
     required: false,
   })
   @IsOptional()

@@ -49,7 +49,9 @@ export class TextChunker {
         });
 
         // Start new chunk with overlap
-        const overlapWords = currentChunk.split(/\s+/).slice(-Math.floor(this.chunkOverlap / 10));
+        const overlapWords = currentChunk
+          .split(/\s+/)
+          .slice(-Math.floor(this.chunkOverlap / 10));
         currentChunk = overlapWords.join(' ');
         positionStart = text.indexOf(currentChunk, positionStart);
         chunkIndex++;

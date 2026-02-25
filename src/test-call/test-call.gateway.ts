@@ -474,9 +474,7 @@ export class TestCallGateway {
 
         case 'Error': {
           const errDesc =
-            typeof message.description === 'string'
-              ? message.description
-              : '';
+            typeof message.description === 'string' ? message.description : '';
           console.error(`❌ [TestCall] Deepgram error: ${errDesc}`);
           break;
         }
@@ -505,10 +503,7 @@ export class TestCallGateway {
       try {
         socket.send(chunk, { binary: true });
       } catch (err) {
-        console.error(
-          `❌ [TestCall] Error enviando audio a Deepgram:`,
-          err,
-        );
+        console.error(`❌ [TestCall] Error enviando audio a Deepgram:`, err);
       }
     }
   }
@@ -562,7 +557,8 @@ export class TestCallGateway {
       console.log(
         `⏳ [TestCall] LLM ocupado, encolando: "${text.substring(0, 60)}"`,
       );
-      session.pendingTranscript += (session.pendingTranscript ? ' ' : '') + text;
+      session.pendingTranscript +=
+        (session.pendingTranscript ? ' ' : '') + text;
       return;
     }
 
@@ -594,9 +590,7 @@ export class TestCallGateway {
       if (!content) return;
 
       session.history.push({ role: 'assistant', content });
-      console.log(
-        `💬 [TestCall] Respuesta LLM: "${content.substring(0, 80)}"`,
-      );
+      console.log(`💬 [TestCall] Respuesta LLM: "${content.substring(0, 80)}"`);
 
       this.sendJson(session.client, {
         type: 'transcript',
@@ -744,9 +738,7 @@ export class TestCallGateway {
         chunks.push(chunk);
       }
       const errorBody = Buffer.concat(chunks).toString('utf-8');
-      throw new Error(
-        `ElevenLabs TTS error ${response.status}: ${errorBody}`,
-      );
+      throw new Error(`ElevenLabs TTS error ${response.status}: ${errorBody}`);
     }
 
     const audioStream = response.data as Readable;
@@ -832,9 +824,7 @@ export class TestCallGateway {
 
   // ── Shopify ────────────────────────────────────────────────────────────────
 
-  private async loadShopifyContext(
-    session: TestCallSession,
-  ): Promise<void> {
+  private async loadShopifyContext(session: TestCallSession): Promise<void> {
     if (!session.userId || !session.shopifyContext?.shopDomain) return;
 
     const { userId } = session;
@@ -859,8 +849,10 @@ export class TestCallGateway {
       if (session.shopifyContext) {
         if (storeRes?.store) session.shopifyContext.store = storeRes.store;
         if (productsRes?.products) {
-          session.shopifyContext.featuredProducts =
-            productsRes.products.slice(0, 10);
+          session.shopifyContext.featuredProducts = productsRes.products.slice(
+            0,
+            10,
+          );
         }
         if (ordersRes?.orders) {
           session.shopifyContext.orders = ordersRes.orders

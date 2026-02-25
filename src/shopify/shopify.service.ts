@@ -571,6 +571,16 @@ export class ShopifyService {
         },
         { merge: true },
       );
+
+      // Registrar el webhook app/uninstalled de forma asíncrona (sin bloquear)
+      this.registerUninstallWebhook(normalizedShop, accessToken).catch(
+        (err) => {
+          console.error(
+            `Error al registrar webhook de desinstalación para ${normalizedShop}:`,
+            err,
+          );
+        },
+      );
     } catch (error) {
       if (
         error instanceof BadRequestException ||
@@ -926,6 +936,159 @@ export class ShopifyService {
     return {
       orders: foundOrder ? [foundOrder] : [],
     };
+  }
+
+  /**
+   * Registra el webhook de desinstalación en Shopify
+   */
+  private async registerUninstallWebhook(
+    shop: string,
+    accessToken: string,
+  ): Promise<void> {
+    try {
+      const baseUrl =
+        process.env.NODE_ENV === 'production'
+          ? process.env.APP_URL || 'https://llamaloiabackend-5294.onrender.com'
+          : process.env.NGROK_URL || 'http://localhost:3000'; // Requiere una URL pública
+
+      const webhookUrl = `${baseUrl}/shopify/webhooks`;
+
+      await axios.post(
+        `https://${shop}/admin/api/2026-01/webhooks.json`,
+        {
+          webhook: {
+            topic: 'app/uninstalled',
+            address: webhookUrl,
+            format: 'json',
+          },
+        },
+        {
+          headers: {
+            'X-Shopify-Access-Token': accessToken,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      console.log(`✅ Webhook app/uninstalled registrado en ${shop}`);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        // Ignorar si el webhook ya existe (Shopify devuelve 422 con un error específico)
+        const responseData = error.response.data;
+        if (
+          error.response.status === 422 &&
+          responseData?.errors?.address?.includes('has already been taken')
+        ) {
+          console.log(
+            `ℹ️ Webhook app/uninstalled ya estaba registrado en ${shop}`,
+          );
+          return;
+        }
+        console.error(
+          `Error al registrar webhook en ${shop}:`,
+          JSON.stringify(responseData),
+        );
+      } else {
+        console.error(
+          `Error inesperado al registrar webhook en ${shop}:`,
+          (error as Error).message,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Maneja el webhook de app/uninstalled
+   * Se ejecuta cuando el cliente desinstala la aplicación desde el panel de Shopify
+   */
+  async handleAppUninstalled(shop: string): Promise<void> {
+    try {
+      const normalizedShop = shop
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '');
+
+      console.log(
+        `Procesando desinstalación para la tienda: ${normalizedShop}`,
+      );
+
+      // Buscar la tienda por dominio (cualquier usuario que la haya conectado)
+      const storeQuery = await this.firestore
+        .collection('shopifyStores')
+        .where('shopDomain', '==', normalizedShop)
+        .get();
+
+      if (storeQuery.empty) {
+        console.log(
+          `Webhook app/uninstalled: No se encontró la tienda ${normalizedShop}`,
+        );
+        return;
+      }
+
+      const now = admin.firestore.Timestamp.now();
+
+      // Procesar cada documento (normalmente habrá uno)
+      for (const storeDoc of storeQuery.docs) {
+        const storeData = storeDoc.data();
+        const ownerUserId = storeData.ownerUserId as string;
+
+        // 1. Revocar la tienda en shopifyStores (y borrar accessToken por seguridad)
+        await storeDoc.ref.update({
+          status: 'revoked',
+          accessToken: admin.firestore.FieldValue.delete(),
+          updatedAt: now,
+        });
+
+        // 2. Actualizar las integraciones del usuario
+        if (ownerUserId) {
+          const userDocRef = this.firestore
+            .collection('users')
+            .doc(ownerUserId);
+          const userSnapshot = await userDocRef.get();
+
+          if (userSnapshot.exists) {
+            const userData = userSnapshot.data() as Record<string, unknown>;
+            const integrations =
+              (userData?.integrations as Record<string, unknown>) || {};
+
+            const shopifyArray: Array<{
+              connected: boolean;
+              shopDomain: string;
+            }> = Array.isArray(integrations.shopify)
+              ? integrations.shopify
+              : [];
+
+            // Filtrar la tienda
+            const updatedShopifyArray = shopifyArray.filter(
+              (store) => store.shopDomain !== normalizedShop,
+            );
+
+            if (updatedShopifyArray.length === 0) {
+              // Si no quedan tiendas, eliminar el nodo shopify
+              delete integrations.shopify;
+              await userDocRef.set({ integrations }, { merge: true });
+            } else {
+              // Si quedan otras, actualizar el array
+              await userDocRef.set(
+                {
+                  integrations: {
+                    shopify: updatedShopifyArray,
+                  },
+                },
+                { merge: true },
+              );
+            }
+          }
+        }
+      }
+
+      console.log(
+        `✅ Tienda ${normalizedShop} revocada exitosamente tras desinstalación.`,
+      );
+    } catch (error) {
+      console.error(`Error procesando app/uninstalled para ${shop}:`, error);
+      // No relanzamos para que Shopify reciba el 200 OK y no intente reenviar el webhook constantemente si falla nuestra BD
+    }
   }
 
   /**

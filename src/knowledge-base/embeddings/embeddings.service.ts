@@ -28,28 +28,32 @@ export class EmbeddingsService {
 
   async generateBatchEmbeddings(texts: string[]): Promise<number[][]> {
     const embeddings: number[][] = [];
-    
+
     // Process in batches to avoid rate limits
     const batchSize = 100;
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
-      
+
       try {
         const response = await this.openai.embeddings.create({
           model: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
           input: batch,
         });
 
-        const batchEmbeddings = response.data.map(item => item.embedding);
+        const batchEmbeddings = response.data.map((item) => item.embedding);
         embeddings.push(...batchEmbeddings);
-        
+
         // Add delay to avoid rate limits
         if (i + batchSize < texts.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       } catch (error) {
-        this.logger.error(`Error generating batch embeddings: ${error.message}`);
-        throw new Error(`Failed to generate batch embeddings: ${error.message}`);
+        this.logger.error(
+          `Error generating batch embeddings: ${error.message}`,
+        );
+        throw new Error(
+          `Failed to generate batch embeddings: ${error.message}`,
+        );
       }
     }
 

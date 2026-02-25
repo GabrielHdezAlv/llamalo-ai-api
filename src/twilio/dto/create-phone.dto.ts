@@ -36,7 +36,8 @@ export class CreatePhoneDto {
 
   @ApiProperty({
     example: 1,
-    description: 'ID de la cuenta de Twilio a usar (opcional, se detecta automáticamente por credenciales)',
+    description:
+      'ID de la cuenta de Twilio a usar (opcional, se detecta automáticamente por credenciales)',
     required: false,
   })
   @IsOptional()
