@@ -1062,6 +1062,44 @@ export class ShopifyService {
   }
 
   /**
+   * Verifica de manera atómica si un webhook ya fue procesado.
+   * Evita condiciones de carrera en ráfagas de reintentos usando create().
+   * Devuelve true si el webhook YA fue procesado, false si es nuevo.
+   */
+  async verifyWebhookIdempotency(
+    webhookId: string,
+    topic: string,
+    shopDomain: string,
+  ): Promise<boolean> {
+    if (!webhookId) return false;
+
+    try {
+      await this.firestore
+        .collection('webhookEvents')
+        .doc(webhookId)
+        .create({
+          topic,
+          shopDomain,
+          processedAt: admin.firestore.FieldValue.serverTimestamp(),
+          // TTL de 30 días para auto-limpieza
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        });
+      return false; // No existía, seguro para procesar
+    } catch (error: any) {
+      // El código 6 en Firebase gRPC es ALREADY_EXISTS
+      if (error.code === 6) {
+        return true; // Ya existe, ignorar
+      }
+      // Cualquier otro error de Firestore lo loggeamos pero dejamos pasar para no romper el flujo
+      console.warn(
+        `[Shopify Webhook] Error no crítico verificando idempotencia para ${webhookId}:`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
    * Maneja el webhook de app/uninstalled
    * Se ejecuta cuando el cliente desinstala la aplicación desde el panel de Shopify
    */

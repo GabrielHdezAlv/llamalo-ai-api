@@ -511,13 +511,14 @@ export class ShopifyController {
     summary: 'Webhook receiver para Shopify',
     description: 'Recibe eventos asíncronos de Shopify, como app/uninstalled.',
   })
-  handleWebhook(
+  async handleWebhook(
     @Req() req: Request & { rawBody?: Buffer },
     @Headers('x-shopify-topic') topic: string,
     @Headers('x-shopify-shop-domain') shopDomain: string,
     @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-webhook-id') webhookId: string,
   ) {
-    if (!topic || !shopDomain || !hmac) {
+    if (!topic || !shopDomain || !hmac || !webhookId) {
       throw new BadRequestException('Faltan headers obligatorios de Shopify');
     }
 
@@ -548,6 +549,20 @@ export class ShopifyController {
       throw new UnauthorizedException('HMAC inválido');
     }
 
+    // Idempotencia: ¿Ya hemos procesado este webhook?
+    const isDuplicate = await this.shopifyService.verifyWebhookIdempotency(
+      webhookId,
+      topic,
+      shopDomain,
+    );
+
+    if (isDuplicate) {
+      console.log(
+        `[Idempotencia] Ignorando webhook duplicado: ${webhookId} (${topic})`,
+      );
+      return { success: true, message: 'Webhook already processed' }; // Retornar 200 INMEDIATO
+    }
+
     // Manejar topics específicos
     if (topic === 'app/uninstalled') {
       // Procesar en background para responder rápido a Shopify (timeout = 5s)
@@ -558,7 +573,9 @@ export class ShopifyController {
         );
       });
     } else {
-      console.log(`Webhook recibido: ${topic} para la tienda ${shopDomain}`);
+      console.log(
+        `Webhook recibido y aceptado: ${topic} para la tienda ${shopDomain}`,
+      );
     }
 
     return { success: true };
