@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { getFirebaseApp } from './firebase/firebase.config'; // 👈 Inicializador global de Firebase
+import type { IncomingMessage } from 'http';
 import * as bodyParser from 'body-parser';
 import * as WebSocket from 'ws';
 import { parse as parseUrl } from 'url';
@@ -22,7 +23,22 @@ async function bootstrap() {
 
   // 🧠 Body parser (Twilio usa x-www-form-urlencoded)
   app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
-  app.use(bodyParser.json({ limit: '2mb' }));
+  // Raw body para webhooks Shopify: guardar buf en req.rawBody ANTES de parsear JSON (solo en /shopify/webhooks)
+  app.use(
+    bodyParser.json({
+      limit: '2mb',
+      verify: (req: IncomingMessage, _res, buf: Buffer, encoding: string) => {
+        void encoding; // firma de body-parser exige 4º parámetro
+        const r = req as IncomingMessage & {
+          originalUrl?: string;
+          rawBody?: Buffer;
+        };
+        if (r.originalUrl?.startsWith('/shopify/webhooks')) {
+          r.rawBody = buf;
+        }
+      },
+    }),
+  );
 
   // ✅ CORS — permite peticiones desde tu frontend
   app.enableCors({
@@ -189,7 +205,9 @@ async function bootstrap() {
     });
   });
 
-  console.log('🧪 WebSocket Server de prueba configurado en /voice/test-stream');
+  console.log(
+    '🧪 WebSocket Server de prueba configurado en /voice/test-stream',
+  );
 
   // 💬 Chat de soporte (texto en tiempo real)
   supportWss.on('connection', (supportWs: WebSocket) => {

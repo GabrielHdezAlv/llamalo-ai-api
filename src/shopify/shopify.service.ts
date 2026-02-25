@@ -305,11 +305,7 @@ export class ShopifyService {
       .map((key) => {
         const raw = params[key];
         const value =
-          raw === undefined
-            ? ''
-            : Array.isArray(raw)
-              ? raw[0]
-              : String(raw);
+          raw === undefined ? '' : Array.isArray(raw) ? raw[0] : String(raw);
         return `${key}=${value}`;
       })
       .join('&');
@@ -323,6 +319,35 @@ export class ShopifyService {
     try {
       const receivedBuf = Buffer.from(receivedHmac, 'hex');
       const computedBuf = Buffer.from(computed, 'hex');
+      if (receivedBuf.length !== computedBuf.length) return false;
+      return crypto.timingSafeEqual(receivedBuf, computedBuf);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Valida el HMAC de un webhook de Shopify.
+   * Mensaje = raw body; firma en header X-Shopify-Hmac-Sha256 (base64).
+   * Reutilizable para cualquier endpoint que reciba webhooks.
+   * @see https://shopify.dev/docs/apps/build/webhooks/subscribe/https
+   */
+  validateShopifyWebhookHmac(
+    rawBody: Buffer | string,
+    signatureHeader: string | undefined,
+    secret: string,
+  ): boolean {
+    if (!signatureHeader || !secret) return false;
+    const bodyBuffer = Buffer.isBuffer(rawBody)
+      ? rawBody
+      : Buffer.from(rawBody, 'utf8');
+    const computed = crypto
+      .createHmac('sha256', secret)
+      .update(bodyBuffer)
+      .digest('base64');
+    try {
+      const receivedBuf = Buffer.from(signatureHeader, 'base64');
+      const computedBuf = Buffer.from(computed, 'base64');
       if (receivedBuf.length !== computedBuf.length) return false;
       return crypto.timingSafeEqual(receivedBuf, computedBuf);
     } catch {
@@ -857,28 +882,23 @@ export class ShopifyService {
     shop: string,
     email: string,
   ): Promise<NormalizedOrdersResponse> {
-    try {
-      // Obtener todos los pedidos
-      const allOrders = await this.getOrders(userId, shop);
+    // Obtener todos los pedidos
+    const allOrders = await this.getOrders(userId, shop);
 
-      // Filtrar por email (case-insensitive)
-      const filteredOrders = allOrders.orders.filter(
-        (order) => order.customer?.email?.toLowerCase() === email.toLowerCase(),
-      );
+    // Filtrar por email (case-insensitive)
+    const filteredOrders = allOrders.orders.filter(
+      (order) => order.customer?.email?.toLowerCase() === email.toLowerCase(),
+    );
 
-      // Ordenar por fecha de creación (más reciente primero)
-      filteredOrders.sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
+    // Ordenar por fecha de creación (más reciente primero)
+    filteredOrders.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
 
-      return {
-        orders: filteredOrders,
-      };
-    } catch (error) {
-      // Re-lanzar errores de getOrders
-      throw error;
-    }
+    return {
+      orders: filteredOrders,
+    };
   }
 
   /**
@@ -890,27 +910,22 @@ export class ShopifyService {
     shop: string,
     orderName: string,
   ): Promise<NormalizedOrdersResponse> {
-    try {
-      // Normalizar el número de pedido (agregar # si no lo tiene)
-      const normalizedOrderName = orderName.startsWith('#')
-        ? orderName
-        : `#${orderName}`;
+    // Normalizar el número de pedido (agregar # si no lo tiene)
+    const normalizedOrderName = orderName.startsWith('#')
+      ? orderName
+      : `#${orderName}`;
 
-      // Obtener todos los pedidos
-      const allOrders = await this.getOrders(userId, shop);
+    // Obtener todos los pedidos
+    const allOrders = await this.getOrders(userId, shop);
 
-      // Buscar el pedido específico
-      const foundOrder = allOrders.orders.find(
-        (order) => order.orderName === normalizedOrderName,
-      );
+    // Buscar el pedido específico
+    const foundOrder = allOrders.orders.find(
+      (order) => order.orderName === normalizedOrderName,
+    );
 
-      return {
-        orders: foundOrder ? [foundOrder] : [],
-      };
-    } catch (error) {
-      // Re-lanzar errores de getOrders
-      throw error;
-    }
+    return {
+      orders: foundOrder ? [foundOrder] : [],
+    };
   }
 
   /**

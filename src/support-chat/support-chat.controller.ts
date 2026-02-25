@@ -36,7 +36,9 @@ export class SupportChatController {
   // ── Configuración (mismo DTO que edición de agente + contactEmail, model) ───
 
   @Get('config')
-  @ApiOperation({ summary: 'Obtener configuración del agente de soporte (Xenon)' })
+  @ApiOperation({
+    summary: 'Obtener configuración del agente de soporte (Xenon)',
+  })
   @ApiResponse({ status: 200, type: SupportAgentConfigResponseDto })
   async getConfig(): Promise<SupportAgentConfigResponseDto> {
     return this.supportChatService.getConfig();
@@ -102,12 +104,13 @@ export class SupportChatController {
       'Permite probar cómo responde la búsqueda vectorial contra las fuentes del agente de soporte.',
   })
   @ApiQuery({ name: 'q', description: 'Consulta de búsqueda' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Límite de resultados (default: 5)' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Límite de resultados (default: 5)',
+  })
   @ApiResponse({ status: 200 })
-  async search(
-    @Query('q') query: string,
-    @Query('limit') limit?: string,
-  ) {
+  async search(@Query('q') query: string, @Query('limit') limit?: string) {
     return this.supportChatService.searchKnowledge(
       query,
       limit ? parseInt(limit, 10) : 5,
