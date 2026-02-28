@@ -1,0 +1,38 @@
+# TÉRMINOS DE SERVICIO DE LLAMALO AI (Optimizado para Agente de Voz)
+*Esta es la información oficial para responder a usuarios que preguntan sobre reglas, límites, responsabilidades o legalidad del servicio.*
+
+## 1. Información General y Qué Somos
+- **¿Qué es Llamalo AI?** Somos una plataforma de software (SaaS) que permite a las empresas crear y configurar agentes de voz con Inteligencia Artificial.
+- **¿Qué NO somos?** No somos una operadora de telecomunicaciones (usamos Twilio), no somos un call center con humanos, y no damos asesoramiento legal, financiero ni médico.
+- **Empresa:** Llamalo AI (constituida en España). Todo se rige por las leyes de España y la Unión Europea.
+- **Soporte:** Para dudas técnicas o de cuenta, escribir a support@llamalo.ai. Para temas legales, a legal@llamalo.ai.
+
+## 2. Obligaciones y Responsabilidades del Cliente
+Si un cliente te pregunta "¿quién es responsable de lo que dice mi agente?":
+- **El cliente es el ÚNICO responsable:** La empresa que nos contrata es la responsable de las conversaciones de su agente y de cumplir la ley (GDPR, protección de consumidores, etc.).
+- **Transparencia obligatoria:** El cliente siempre debe informar a sus usuarios de que están hablando con una Inteligencia Artificial, nunca con un humano real.
+- **Listas de exclusión (Spam):** El cliente NO puede usar nuestros agentes para llamar a números en la Lista Robinson (España), DNC (EE.UU.) o personas que hayan pedido no ser contactadas.
+
+## 3. Lo que está TOTALMENTE PROHIBIDO (Política de Uso Aceptable)
+Si te preguntan "puedo hacer X", comprueba esta lista. Queda rotundamente prohibido usar la plataforma para:
+- Suplantar la identidad de una persona real o empresa.
+- Hacer Spam telefónico o estafas ("vishing").
+- Decirle a la IA que mienta y niegue ser una Inteligencia Artificial.
+- Intentar manipular psicológicamente o engañar a los clientes.
+- Llamar a menores de edad (salvo casos súper excepcionales aprobados por escrito por Llamalo AI, con consentimiento de los padres).
+- Promover el odio, la discriminación, la violencia o cometer fraudes.
+- **Castigo:** Incumplir esto supone cancelar la cuenta inmediatamente, sin devolver el dinero, y avisar a las autoridades si es un delito.
+
+## 4. Precios, Planes y Cancelación
+- Las suscripciones se renuevan automáticamente.
+- **Para cancelar:** Se puede hacer desde el panel o escribiendo a support@llamalo.ai. El servicio se mantiene hasta el final del mes ya pagado.
+- Si el cliente gasta más minutos de los que incluye su plan, se le cobrarán cargos adicionales según las tarifas de llamalo.ai/pricing.
+- Llamalo AI no guarda los datos completos de las tarjetas, se usan proveedores de pago externos seguros.
+
+## 5. Propiedad y Disponibilidad
+- **Propiedad del cliente:** El cliente es dueño absoluto de toda la información (bases de conocimiento, prompts) que sube. Nosotros JAMÁS usamos esos datos para entrenar IAs ni los vendemos a nadie.
+- **Propiedad de Llamalo AI:** Nosotros somos dueños de la plataforma, el código y la marca.
+- **Disponibilidad y fallos:** Hacemos todo lo posible para que funcione siempre, pero si hay una caída del servicio, la indemnización máxima que podríamos pagar es lo equivalente a los últimos 3 meses de suscripción del cliente.
+
+---
+**INSTRUCCIÓN PARA EL AGENTE:** Si un cliente tiene un caso de uso muy particular (ej: "Quiero vender seguros médicos en USA") o una duda legal muy concreta sobre su sector, recuérdale que él es responsable del cumplimiento normativo y dile que para confirmaciones oficiales puede escribir a legal@llamalo.ai. No des consejos legales.

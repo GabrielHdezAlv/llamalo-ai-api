@@ -5,6 +5,8 @@ import OpenAI from 'openai';
 import { Readable } from 'stream';
 import { spawn } from 'child_process';
 import * as admin from 'firebase-admin';
+import * as fs from 'fs';
+import * as path from 'path';
 // ffmpeg-static proporciona la ruta binaria para decodificar MP3 a PCM
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -174,7 +176,7 @@ export class StreamsGateway {
   // LLM
   private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
   private readonly llmTemperature = Number(
-    process.env.OPENAI_TEMPERATURE ?? 0.4,
+    process.env.OPENAI_TEMPERATURE ?? 0.2, // 0.2 para respuestas de voz más directas y deterministas
   );
   private readonly llmMaxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 200);
 
@@ -211,6 +213,23 @@ export class StreamsGateway {
   private usingElevenLabs(session?: CallSession): boolean {
     const provider = session?.sttProvider || this.sttProvider;
     return provider === 'elevenlabs';
+  }
+
+  /**
+   * Helper para leer archivos estáticos (prompts, conocimiento).
+   * Devuelve string vacío si el archivo no existe o hay error.
+   */
+  private readStaticFile(filePath: string): string {
+    try {
+      const absolutePath = path.resolve(process.cwd(), filePath);
+      if (fs.existsSync(absolutePath)) {
+        return fs.readFileSync(absolutePath, 'utf8');
+      }
+      return '';
+    } catch (error) {
+      console.warn(`⚠️ Error leyendo archivo estático ${filePath}:`, error);
+      return '';
+    }
   }
 
   handleConnection(client: WebSocketClient) {
@@ -758,44 +777,47 @@ export class StreamsGateway {
       try {
         shopifyContextJson = JSON.stringify(shopifyData, null, 2);
       } catch (jsonError) {
-        // JSON.stringify puede fallar con objetos circulares o datos inválidos
         console.error(
           `❌ [${session.callSid}] Error serializando datos Shopify a JSON:`,
           jsonError instanceof Error ? jsonError.message : String(jsonError),
         );
-        // Retornar instrucciones base si no se puede serializar
         return baseInstructions;
       }
 
-      // Enriquecer las instrucciones agregando el contexto de Shopify
+      // 1. Cargar reglas de voz
+      const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
+      
+      // 2. Cargar conocimiento de empresa (ej. Xenon)
+      // Se carga siempre si el archivo existe. Si quieres condicionarlo, puedes hacerlo aquí
+      const privacyPolicy = this.readStaticFile('src/knowledge/xenon/privacy_policy.txt');
+      const terms = this.readStaticFile('src/knowledge/xenon/terms_and_conditions.txt');
+      
+      let companyKnowledge = '';
+      if (privacyPolicy || terms) {
+        companyKnowledge = `\n============================================================\n## 🏢 CONOCIMIENTO DE LA EMPRESA 🏢\n============================================================\n`;
+        if (privacyPolicy) companyKnowledge += `\n### Políticas de Privacidad:\n${privacyPolicy}\n`;
+        if (terms) companyKnowledge += `\n### Términos y Condiciones:\n${terms}\n`;
+      }
+
+      // 3. Cargar plantilla de Shopify
+      let shopifyPromptTemplate = this.readStaticFile('src/prompts/shopify-context.md');
+      
+      // Fallback por si falla la lectura
+      if (!shopifyPromptTemplate) {
+        shopifyPromptTemplate = `\nContexto Shopify:\n\`\`\`json\n{{SHOPIFY_CONTEXT_JSON}}\n\`\`\`\n`;
+      }
+      
+      // Reemplazar la variable por el JSON real
+      const finalShopifyContext = shopifyPromptTemplate.replace('{{SHOPIFY_CONTEXT_JSON}}', shopifyContextJson);
+
+      // Ensamblar el prompt final
       try {
-        const enrichedInstructions = `${baseInstructions}
-
-============================================================
-## ⭐ CONTEXTO DE LA TIENDA SHOPIFY ⭐
-============================================================
-
-🚨 **IMPORTANTE**: Este es el JSON que DEBES consultar cuando el usuario pregunte sobre pedidos, productos o información de la tienda.
-
-**Datos disponibles:**
-- \`tienda\`: Información general de la tienda
-- \`productosDestacados\`: Los 10 productos más importantes
-- \`pedidosRecientes\`: Los últimos 10 pedidos (⭐ REVISA ESTE CAMPO PARA PREGUNTAS DE PEDIDOS)
-
-**JSON con datos reales:**
-
-\`\`\`json
-${shopifyContextJson}
-\`\`\`
-
-**Instrucciones de uso:**
-1. Para preguntas sobre PEDIDOS → Busca el campo "pedidosRecientes" en este JSON
-2. Para preguntas sobre PRODUCTOS → Busca el campo "productosDestacados" en este JSON
-3. Para preguntas sobre la TIENDA → Busca el campo "tienda" en este JSON
-4. NUNCA digas "no tengo acceso" si el dato está en este JSON
-5. SIEMPRE usa los datos reales de este JSON, NO inventes información
-
-============================================================`;
+        const enrichedInstructions = [
+          baseInstructions,
+          voiceRules ? `\n${voiceRules}\n` : '',
+          companyKnowledge,
+          finalShopifyContext
+        ].filter(Boolean).join('\n');
 
         return enrichedInstructions;
       } catch (stringError) {
@@ -1043,7 +1065,9 @@ ${shopifyContextJson}
       }
 
       const agentResponseStart = Date.now(); // Marcar inicio de respuesta del agente
-      const completion = await this.openai.chat.completions.create({
+      
+      // Llamada a OpenAI en modo STREAM
+      const stream = await this.openai.chat.completions.create({
         model: this.llmModel,
         temperature: this.llmTemperature,
         max_tokens: this.llmMaxTokens,
@@ -1051,28 +1075,13 @@ ${shopifyContextJson}
           { role: 'system', content: enrichedInstructions },
           ...session.history,
         ],
+        stream: true,
       });
 
-      const content = completion.choices[0]?.message?.content?.trim() || '';
-      if (!content) {
-        console.warn(
-          `⚠️ [${session.callSid}] Respuesta LLM vacía para texto: "${text}"`,
-        );
-        return;
-      }
-
-      // Calcular y guardar latencia
+      // Calcular y guardar latencia (Tiempo hasta el primer token)
       console.log(
         `[Latency Debug] Verificando condiciones para guardar latencia:`,
       );
-      console.log(
-        `[Latency Debug] - userSpeakingStartTime: ${session.userSpeakingStartTime}`,
-      );
-      console.log(`[Latency Debug] - userId: ${session.userId}`);
-      console.log(
-        `[Latency Debug] - twilioAccountId: ${session.customParameters?.twilioAccountId}`,
-      );
-
       if (
         session.userSpeakingStartTime &&
         session.userId &&
@@ -1082,7 +1091,7 @@ ${shopifyContextJson}
         session.responseLatencies.push(latency);
 
         console.log(
-          `[Latency Debug] ✅ Condiciones cumplidas, calculando latencia: ${latency}ms`,
+          `[Latency Debug] ✅ Condiciones cumplidas, calculando latencia al primer token: ${latency}ms`,
         );
 
         // Guardar latencia en Firestore
@@ -1092,37 +1101,83 @@ ${shopifyContextJson}
             parseInt(session.customParameters.twilioAccountId),
             latency,
           );
-          console.log(
-            `[Latency] Guardada: ${latency}ms para usuario ${session.userId}`,
-          );
         } catch (error) {
           console.warn(`[Latency] Error guardando latencia:`, error);
         }
-      } else {
+      }
+
+      // Procesar el stream de OpenAI token a token
+      session.agentSpeaking = true;
+      session.interrupted = false;
+      session.allowInterruptions = true;
+
+      let fullResponse = '';
+      let sentenceBuffer = '';
+      const sentenceEnders = new Set(['.', '!', '?', '\n']); // Caracteres que marcan el fin de una frase para enviar a TTS
+      const pauseEnders = new Set([',', ':', ';']); // Pausas menores que también podemos enviar si la frase se alarga
+
+      // Cola de promesas para garantizar que las frases se envíen a ElevenLabs y se reproduzcan en orden
+      let ttsQueue = Promise.resolve();
+
+      for await (const chunk of stream) {
+        if (session.interrupted) {
+          console.log(`🛑 [${session.callSid}] Generación LLM interrumpida por el usuario.`);
+          break; // Salir del bucle si el usuario interrumpe
+        }
+
+        const token = chunk.choices[0]?.delta?.content || '';
+        if (token) {
+          fullResponse += token;
+          sentenceBuffer += token;
+
+          // Si el token contiene un fin de frase o la frase es suficientemente larga y encontramos una pausa
+          const lastChar = token.slice(-1);
+          const isSentenceEnd = sentenceEnders.has(lastChar);
+          const isPauseEnd = pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8; // Enviar en comas si la frase ya tiene >8 palabras
+
+          if (isSentenceEnd || isPauseEnd) {
+            const sentenceToSend = sentenceBuffer.trim();
+            if (sentenceToSend) {
+              // Encolar la frase para mantener el orden de reproducción secuencial
+              const currentSentence = sentenceToSend;
+              ttsQueue = ttsQueue.then(async () => {
+                if (!session.interrupted) {
+                  // console.log(`🔊 [${session.callSid}] Enviando chunk a TTS: "${currentSentence}"`);
+                  await this.streamTTSFromText(session, currentSentence);
+                }
+              });
+            }
+            sentenceBuffer = ''; // Reiniciar el buffer de la frase actual
+          }
+        }
+      }
+
+      // Enviar cualquier texto restante en el buffer que no haya terminado en puntuación
+      if (!session.interrupted && sentenceBuffer.trim()) {
+        const remainingText = sentenceBuffer.trim();
+        ttsQueue = ttsQueue.then(async () => {
+          if (!session.interrupted) {
+            // console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
+            await this.streamTTSFromText(session, remainingText);
+          }
+        });
+      }
+
+      // Esperar a que todos los audios terminen de generarse/enviarse
+      await ttsQueue;
+
+      // Actualizar el historial completo una vez terminado
+      if (fullResponse.trim()) {
+        session.history.push({ role: 'assistant', content: fullResponse.trim() });
         console.log(
-          `[Latency Debug] ❌ Condiciones NO cumplidas, no se guardará latencia`,
+          `💬 Respuesta LLM (Stream Completo): "${fullResponse.substring(0, 120)}${fullResponse.length > 120 ? '...' : ''}"`,
         );
       }
 
-      session.history.push({ role: 'assistant', content });
-      console.log(
-        `💬 Respuesta LLM: "${content.substring(0, 120)}${content.length > 120 ? '...' : ''}"`,
-      );
-
-      // 🔥 FIX: Generar TTS desde la respuesta del LLM de OpenAI
-      // Marcar que el agente está hablando para manejar interrupciones
-      session.agentSpeaking = true;
-      session.interrupted = false;
-      session.allowInterruptions = true; // Permitir interrupciones en respuestas normales
-
-      // Generar TTS con la respuesta correcta del LLM
-      console.log(
-        `🔊 [${session.callSid}] Generando TTS desde respuesta LLM: "${content.substring(0, 50)}..."`,
-      );
-      void this.streamTTSFromText(session, content);
-
-      // El TTS se maneja a través de ConversationText en tiempo real, no aquí
-      session.agentSpeaking = false;
+      // Marcar que el agente terminó de hablar solo si no fue interrumpido por otro proceso
+      if (!session.interrupted) {
+        session.agentSpeaking = false;
+      }
       session.interceptedResponseText = '';
     } catch (err) {
       console.error(
@@ -1737,10 +1792,10 @@ ${shopifyContextJson}
           break;
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
-          // Si el agente está hablando, interrumpir completamente
+          // Si el agente está hablando, interrumpir completamente (Barge-in instantáneo)
           if (session.agentSpeaking && session.allowInterruptions !== false) {
             console.log(
-              `🛑 Usuario interrumpió al agente - deteniendo completamente`,
+              `🛑 [${session.callSid}] ¡Barge-in detectado! Usuario interrumpió al agente - deteniendo instantáneamente`,
             );
             session.interrupted = true;
             session.agentSpeaking = false;
@@ -1756,7 +1811,7 @@ ${shopifyContextJson}
               session.currentTTSRequest = undefined;
             }
 
-            // Limpiar texto interceptado para evitar que continúe hablando
+            // Limpiar texto interceptado
             session.interceptedResponseText = '';
 
             // Detener el envío de audio buffered
@@ -1767,6 +1822,19 @@ ${shopifyContextJson}
 
             // Limpiar buffer de audio saliente
             session.outboundBuffer = Buffer.alloc(0);
+
+            // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
+            if (session.streamSid) {
+              session.client.send(
+                JSON.stringify({
+                  event: 'clear',
+                  streamSid: session.streamSid,
+                }),
+              );
+              console.log(
+                `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
+              );
+            }
 
             console.log(
               `🧹 Estado del agente limpiado completamente por interrupción`,

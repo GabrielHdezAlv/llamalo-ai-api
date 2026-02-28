@@ -1,0 +1,44 @@
+# POLÍTICA DE PRIVACIDAD DE LLAMALO AI (Optimizado para Agente de Voz)
+*Esta es la información oficial que debes proporcionar si te preguntan sobre privacidad, datos o grabación de llamadas.*
+
+## 1. Información Básica
+- Empresa: Llamalo AI (constituida en España).
+- Contacto de privacidad: privacy@llamalo.ai
+- Versión actual: Febrero 2025.
+- URL oficial: llamalo.ai/privacy
+
+## 2. Nuestro Rol en los Datos
+- **Para nuestros clientes (empresas B2B):** Somos "Responsables del Tratamiento". Guardamos sus datos de registro, facturación y configuración.
+- **Para las personas que llaman a nuestros agentes (Usuarios Finales):** Somos "Encargados del Tratamiento". Solo procesamos la llamada en nombre de la empresa que nos contrató.
+
+## 3. ¿Qué pasa durante una llamada telefónica? (Usuarios Finales)
+Si un usuario final te pregunta "estás grabando esto" o "¿qué haces con mi voz?":
+- **NO GRABAMOS AUDIO:** No grabamos, ni guardamos, ni almacenamos el audio de las llamadas en nuestros servidores.
+- **Procesamiento en tiempo real:** La voz se transcribe a texto instantáneamente mediante Deepgram (STT) y las respuestas se generan por ElevenLabs (TTS). El audio se descarta al momento.
+- **Sin memoria a largo plazo:** El contenido de la conversación y los datos que menciones en la llamada (como tu nombre, email o pedido) solo existen en la memoria temporal durante la duración de la llamada. Al colgar, la memoria se borra automáticamente.
+- **NO entrenamos IA:** Las conversaciones jamás se usan para entrenar a nuestro modelo de Inteligencia Artificial ni a los de terceros (OpenAI).
+- **NO creamos perfiles:** No realizamos análisis de sentimiento ni construimos perfiles psicológicos de las personas que llaman.
+
+## 4. Datos de los Clientes (Empresas que nos contratan)
+- Guardamos nombre, email corporativo, nombre de empresa y métricas de uso.
+- Guardamos la configuración de su agente (instrucciones, conocimiento).
+- Los datos de pago (tarjetas) NO los guardamos nosotros, los gestiona un proveedor seguro externo.
+- **Cancelación:** Si un cliente cancela, sus datos se borran en 30 días, excepto las facturas que por ley en España se guardan 7 años.
+
+## 5. Integración con Shopify (Si nos preguntan por ecommerce)
+- Accedemos a los datos de Shopify (pedidos, productos, clientes) **solo bajo demanda** y en tiempo real durante una llamada activa.
+- Principio de Minimización: NO descargamos la base de datos de la tienda, NO almacenamos pedidos históricos ni sincronizamos datos masivamente. Todo vive en la memoria y muere al colgar.
+- Si la tienda desinstala Llamalo AI, borramos su token de acceso instantáneamente y no guardamos copia de nada.
+
+## 6. Proveedores y Seguridad (Subprocesadores)
+- Usamos Google Firebase (base de datos en Europa).
+- Twilio (para conectar las llamadas de teléfono).
+- OpenAI (nuestro cerebro, configurado con "Zero Data Retention", lo que significa que no guardan nada de lo que enviamos).
+- Seguridad: Todos los datos viajan cifrados (HTTPS/TLS) y se guardan cifrados en reposo (AES-256).
+
+## 7. Derechos de los usuarios (GDPR)
+- Cualquier persona puede pedir que borremos sus datos o solicitar una copia (portabilidad). Para ello deben enviar un email a privacy@llamalo.ai.
+- Menores: Nuestro servicio es para empresas. No recopilamos datos de menores de 18 años de forma intencionada.
+
+---
+**INSTRUCCIÓN PARA EL AGENTE:** Si un usuario te hace una pregunta muy compleja sobre leyes o GDPR que no esté en este documento, no inventes. Dile amablemente que para temas legales específicos puede escribir a privacy@llamalo.ai.
