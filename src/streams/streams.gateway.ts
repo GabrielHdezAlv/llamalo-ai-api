@@ -418,10 +418,26 @@ export class StreamsGateway {
     });
 
     try {
+      // 🔍 Buscar cliente por teléfono para filtrar pedidos (Minimización Premium)
+      const callerPhone = session.customParameters?.callerPhone;
+      let customerId: number | undefined;
+
+      if (callerPhone) {
+        console.log(
+          `🔍 [${session.callSid}] Buscando cliente por teléfono: ${callerPhone}`,
+        );
+        customerId =
+          (await this.shopifyService.searchCustomerByPhone(
+            userId,
+            shopDomain,
+            callerPhone,
+          )) || undefined;
+      }
+
       const loadPromise = Promise.all([
         this.shopifyService.getStoreInfo(userId, shopDomain),
         this.shopifyService.getProducts(userId, shopDomain),
-        this.shopifyService.getOrders(userId, shopDomain),
+        this.shopifyService.getOrders(userId, shopDomain, customerId),
       ]);
 
       const [storeResponse, productsResponse, ordersResponse] =

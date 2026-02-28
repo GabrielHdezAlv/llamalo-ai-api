@@ -456,8 +456,11 @@ export class CallsController {
         }
       }
 
-      // Agregar userId y shopDomain como customParameters para Shopify
+      // Agregar userId, shopDomain y callerPhone como customParameters para Shopify
       addStreamParameter('userId', userId);
+      if (body.From) {
+        addStreamParameter('callerPhone', body.From);
+      }
       if (shopDomain) {
         addStreamParameter('shopDomain', shopDomain);
       } else {

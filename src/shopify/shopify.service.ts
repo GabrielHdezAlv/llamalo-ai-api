@@ -179,10 +179,11 @@ export class ShopifyService {
       return customScopes;
     }
 
-    // Scopes por defecto (sin read_customers para cumplimiento GDPR)
+    // Scopes por defecto (con read_customers para búsqueda de caller)
     return [
       'read_products',
       'read_orders',
+      'read_customers',
       'read_fulfillments',
       'read_shipping',
     ].join(',');
@@ -860,17 +861,23 @@ export class ShopifyService {
   }
 
   /**
-   * Obtiene la lista de pedidos normalizados
+   * Obtiene la lista de pedidos normalizados, opcionalmente filtrando por un ID de cliente
    */
   async getOrders(
     userId: string,
     shop: string,
+    customerId?: number,
   ): Promise<NormalizedOrdersResponse> {
     try {
       const accessToken = await this.getAccessToken(userId, shop);
       const client = this.createShopifyClient(shop, accessToken);
 
-      const response = await client.get<ShopifyOrdersResponse>('/orders.json');
+      // Si tenemos customerId, filtramos directamente en la query de Shopify para mayor minimización
+      const endpoint = customerId
+        ? `/orders.json?customer_id=${customerId}&limit=10`
+        : '/orders.json?limit=10';
+
+      const response = await client.get<ShopifyOrdersResponse>(endpoint);
       const rawOrders = response.data.orders as Array<Record<string, unknown>>;
 
       // Transformar cada pedido al formato normalizado
@@ -999,6 +1006,64 @@ export class ShopifyService {
     return {
       orders: foundOrder ? [foundOrder] : [],
     };
+  }
+
+  /**
+   * Busca un cliente por su número de teléfono.
+   * Shopify requiere que el número esté en formato E.164 o similar para ser efectivo.
+   */
+  async searchCustomerByPhone(
+    userId: string,
+    shop: string,
+    phone: string,
+  ): Promise<number | null> {
+    try {
+      const accessToken = await this.getAccessToken(userId, shop);
+      const client = this.createShopifyClient(shop, accessToken);
+
+      // Normalizar el teléfono (eliminar espacios, guiones, etc.)
+      const normalizedPhone = phone.replace(/\s|-|\(|\)/g, '').trim();
+      if (!normalizedPhone) return null;
+
+      // Shopify permite buscar por teléfono. Probamos con y sin el símbolo '+'
+      // En la API de búsqueda de Shopify, se usa query=phone:+34...
+      const searchQueries = [
+        `phone:${normalizedPhone}`,
+        `phone:${normalizedPhone.replace('+', '')}`,
+      ];
+
+      for (const query of searchQueries) {
+        try {
+          const response = await client.get<{
+            customers: Array<{ id: number }>;
+          }>(`/customers/search.json?query=${encodeURIComponent(query)}`);
+
+          if (response.data.customers && response.data.customers.length > 0) {
+            console.log(
+              `✅ [Shopify] Cliente encontrado con query "${query}": ${response.data.customers[0].id}`,
+            );
+            return response.data.customers[0].id;
+          }
+        } catch (searchError) {
+          // Si una búsqueda falla, probamos la siguiente
+          console.warn(
+            `⚠️ [Shopify] Falló búsqueda con query "${query}":`,
+            (searchError as Error).message,
+          );
+        }
+      }
+
+      console.log(
+        `ℹ️ [Shopify] No se encontró cliente para el teléfono: ${phone}`,
+      );
+      return null;
+    } catch (error) {
+      console.warn(
+        `[Shopify] Error buscando cliente por teléfono ${phone}:`,
+        (error as Error).message,
+      );
+      return null;
+    }
   }
 
   /**
