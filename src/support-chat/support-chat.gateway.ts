@@ -529,17 +529,28 @@ export class SupportChatGateway {
 
     session.llmProcessing = true;
 
-    if (session.interrupted) {
-      session.interrupted = false;
-      session.agentSpeaking = false;
+    // Si el usuario habla, forzamos la interrupción del audio que esté sonando
+    session.interrupted = true;
+    session.agentSpeaking = false;
+    
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
     }
+    session.currentTTSRequest = undefined;
+    this.sendJson(session.client, { type: 'clear_audio' });
+
+    // Ahora empezamos a procesar el nuevo mensaje
+    session.interrupted = false;
 
     session.history.push({ role: 'user', content: text });
 
     try {
+      this.logger.log(`🤖 [SupportVoice] Construyendo prompt para: "${text}"`);
       const systemPrompt = await this.buildSystemPrompt(session, text);
 
       this.sendJson(session.client, { type: 'agent.thinking' });
+      this.logger.log(`🤖 [SupportVoice] Llamando a OpenAI en modo stream...`);
 
       const stream = await this.openai.chat.completions.create({
         model: session.config.model ?? 'gpt-4o-mini',
@@ -858,13 +869,17 @@ export class SupportChatGateway {
     session.greetingSent = true;
     const greeting = session.config.firstInteraction.trim().slice(0, 500);
 
+    // No metemos el saludo en el historial para evitar bucles o repeticiones extrañas
+    // session.history.push({ role: 'assistant', content: greeting });
+
     session.agentSpeaking = true;
-    session.allowInterruptions = false;
+    session.allowInterruptions = true; // Permitir que el usuario corte el saludo inicial
 
     this.sendJson(session.client, {
       type: 'transcript',
       role: 'assistant',
       text: greeting,
+      isFinal: true
     });
     this.sendJson(session.client, { type: 'agent.speaking' });
 
