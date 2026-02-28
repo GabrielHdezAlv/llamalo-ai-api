@@ -4,6 +4,8 @@ import axios from 'axios';
 import OpenAI from 'openai';
 import { Readable } from 'stream';
 import * as admin from 'firebase-admin';
+import * as fs from 'fs';
+import * as path from 'path';
 import { SupportChatService } from './support-chat.service';
 import type { SupportAgentConfigResponseDto } from './dto/support-chat.dto';
 
@@ -394,13 +396,18 @@ export class SupportChatGateway {
 
         case 'UserStartedSpeaking':
           if (session.agentSpeaking && session.allowInterruptions) {
+            this.logger.log(`🛑 [SupportVoice] Interrupción detectada (Barge-in), silenciando agente`);
             session.interrupted = true;
             session.agentSpeaking = false;
+            
             if (session.ttsCancelStream) {
               session.ttsCancelStream();
               session.ttsCancelStream = undefined;
             }
             session.currentTTSRequest = undefined;
+
+            // Enviar instrucción al frontend para que vacíe su buffer de audio inmediatamente
+            this.sendJson(session.client, { type: 'clear_audio' });
           }
           break;
 
@@ -534,34 +541,97 @@ export class SupportChatGateway {
 
       this.sendJson(session.client, { type: 'agent.thinking' });
 
-      const completion = await this.openai.chat.completions.create({
+      const stream = await this.openai.chat.completions.create({
         model: session.config.model ?? 'gpt-4o-mini',
-        temperature: 0.7,
+        temperature: 0.2, // Bajamos la temperatura para respuestas más rápidas y directas
         max_tokens: 500,
         messages: [
           { role: 'system', content: systemPrompt },
           ...session.history,
         ],
-      });
-
-      const content = completion.choices[0]?.message?.content?.trim() || '';
-      if (!content) return;
-
-      session.history.push({ role: 'assistant', content: content });
-
-      this.sendJson(session.client, {
-        type: 'transcript',
-        role: 'assistant',
-        text: content,
+        stream: true,
       });
 
       session.agentSpeaking = true;
       session.interrupted = false;
       session.allowInterruptions = true;
-
       this.sendJson(session.client, { type: 'agent.speaking' });
 
-      await this.streamTTSFromText(session, content);
+      let fullResponse = '';
+      let sentenceBuffer = '';
+      const sentenceEnders = new Set(['.', '!', '?', '\n']); // Caracteres de fin de frase
+      const pauseEnders = new Set([',', ':', ';']); // Pausas menores
+
+      let ttsQueue = Promise.resolve();
+      let firstChunkReceived = false;
+
+      for await (const chunk of stream) {
+        if (session.interrupted) {
+          this.logger.log(`🛑 [SupportVoice] Generación LLM interrumpida por el usuario.`);
+          break;
+        }
+
+        const token = chunk.choices[0]?.delta?.content || '';
+        if (token) {
+          fullResponse += token;
+          sentenceBuffer += token;
+
+          // Enviar el texto completo al frontend progresivamente (para el chat visual)
+          if (!firstChunkReceived) {
+            firstChunkReceived = true;
+            this.sendJson(session.client, {
+              type: 'transcript.start',
+              role: 'assistant',
+            });
+          }
+          this.sendJson(session.client, {
+            type: 'transcript.delta',
+            text: token,
+          });
+
+          // Lógica de chunking para el TTS
+          const lastChar = token.slice(-1);
+          const isSentenceEnd = sentenceEnders.has(lastChar);
+          const isPauseEnd = pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8;
+
+          if (isSentenceEnd || isPauseEnd) {
+            const sentenceToSend = sentenceBuffer.trim();
+            if (sentenceToSend) {
+              const currentSentence = sentenceToSend;
+              ttsQueue = ttsQueue.then(async () => {
+                if (!session.interrupted) {
+                  await this.streamTTSFromText(session, currentSentence);
+                }
+              });
+            }
+            sentenceBuffer = '';
+          }
+        }
+      }
+
+      // Enviar cualquier texto sobrante al TTS
+      if (!session.interrupted && sentenceBuffer.trim()) {
+        const remainingText = sentenceBuffer.trim();
+        ttsQueue = ttsQueue.then(async () => {
+          if (!session.interrupted) {
+            await this.streamTTSFromText(session, remainingText);
+          }
+        });
+      }
+
+      // Esperar a que el audio termine
+      await ttsQueue;
+
+      // Finalizar el mensaje en el frontend
+      if (fullResponse.trim()) {
+        session.history.push({ role: 'assistant', content: fullResponse.trim() });
+        this.sendJson(session.client, {
+          type: 'transcript',
+          role: 'assistant',
+          text: fullResponse.trim(),
+          isFinal: true
+        });
+      }
     } catch (err) {
       this.logger.error(`❌ [SupportVoice] Error LLM:`, err);
       this.sendJson(session.client, {
@@ -579,11 +649,34 @@ export class SupportChatGateway {
     }
   }
 
+  /**
+   * Helper para leer archivos estáticos (prompts, conocimiento).
+   * Devuelve string vacío si el archivo no existe o hay error.
+   */
+  private readStaticFile(filePath: string): string {
+    try {
+      const absolutePath = path.resolve(process.cwd(), filePath);
+      if (fs.existsSync(absolutePath)) {
+        return fs.readFileSync(absolutePath, 'utf8');
+      }
+      return '';
+    } catch (error) {
+      this.logger.warn(`⚠️ Error leyendo archivo estático ${filePath}: ${error}`);
+      return '';
+    }
+  }
+
   private async buildSystemPrompt(
     session: SupportVoiceSession,
     userQuery: string,
   ): Promise<string> {
     let prompt = session.config.agentInstruction;
+
+    // Inyectar reglas de voz
+    const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
+    if (voiceRules) {
+      prompt += `\n\n${voiceRules}`;
+    }
 
     if (session.knowledgeSourceIds.length > 0) {
       try {
