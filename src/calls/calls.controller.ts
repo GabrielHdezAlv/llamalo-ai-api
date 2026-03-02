@@ -39,6 +39,12 @@ export class CallsController {
       this.maskPhoneNumber(body.From),
     );
 
+    // EARLY EXIT: Rechazar peticiones de prueba/fantasma sin número real inmediatamente
+    if (!body.To || body.To === 'N/A' || body.To.includes('client:')) {
+      console.log('⚠️ Ignorando petición sin número real (Early Exit)');
+      return res.type('text/xml').send('<Response><Reject /></Response>');
+    }
+
     try {
       // 🔹 Buscar agente por su número Twilio (body.To)
       const rawNumber = body.To?.replace('+34', '').replace(/\D/g, '');
@@ -285,39 +291,8 @@ export class CallsController {
 
       addStreamParameter('agentName', agentName);
 
-      // 🔍 Obtener contexto de bases de conocimiento del agente
-      let knowledgeContext = '';
-      try {
-        const agentId = agentData.agentId as number;
-        if (agentId) {
-          console.log(
-            `🔍 [Calls] Buscando contexto de conocimiento para agente ${agentId}`,
-          );
-          knowledgeContext =
-            await this.agentKnowledgeService.searchAgentKnowledge(
-              agentId,
-              'información relevante del agente', // Query genérico para obtener contexto general
-            );
-
-          if (knowledgeContext) {
-            console.log(
-              `✅ [Calls] Contexto de conocimiento encontrado (longitud: ${knowledgeContext.length})`,
-            );
-          } else {
-            console.log(
-              `⚠️ [Calls] No se encontró contexto de conocimiento para agente ${agentId}`,
-            );
-          }
-        } else {
-          console.warn(
-            `⚠️ [Calls] Agente no tiene agentId válido para buscar conocimiento`,
-          );
-        }
-      } catch (error) {
-        console.error(
-          `❌ [Calls] Error al obtener contexto de conocimiento: ${error.message}`,
-        );
-      }
+      // 🔍 ELIMINADO: La carga de conocimiento se mueve a StreamsGateway para no bloquear a Twilio
+      // let knowledgeContext = '';
 
       // Obtener firstInteraction: primero de agentData
       const firstInteraction =
@@ -332,25 +307,11 @@ export class CallsController {
           ? agentData.agentInstruction
           : undefined;
 
-      // console.log(`🔍 [Calls] agentInstruction encontrado:`, {
-      //   tieneAgentInstruction: !!agentInstruction,
-      //   longitud: agentInstruction?.length || 0,
-      //   valor: agentInstruction
-      //     ? agentInstruction.substring(0, 100) +
-      //       (agentInstruction.length > 100 ? '...' : '')
-      //     : 'undefined',
-      //   agentDataKeys: Object.keys(agentData),
-      //   agentInstructionType: typeof agentData.agentInstruction,
-      // });
-
       addStreamParameter('instructions', agentInstruction);
-
-      // 🔍 Agregar contexto de bases de conocimiento si existe
-      if (knowledgeContext) {
-        addStreamParameter('knowledgeContext', knowledgeContext);
-        console.log(
-          `✅ [Calls] Contexto de conocimiento agregado al stream (longitud: ${knowledgeContext.length})`,
-        );
+      
+      // Pasar el ID del agente para que StreamsGateway cargue el conocimiento asíncronamente
+      if (agentData.agentId) {
+        addStreamParameter('agentId', agentData.agentId.toString());
       } else {
         console.log(
           `ℹ️ [Calls] No se agregó contexto de conocimiento al stream (vacío o no encontrado)`,

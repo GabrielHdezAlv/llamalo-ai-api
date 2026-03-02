@@ -20,6 +20,7 @@ import {
   ShopifyService,
 } from '../shopify/shopify.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -201,6 +202,7 @@ export class StreamsGateway {
   constructor(
     private readonly shopifyService: ShopifyService,
     private readonly metricsService: MetricsService,
+    private readonly agentKnowledgeService: AgentKnowledgeService,
   ) {
     if (!this.elevenLabsApiKey) {
       console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
@@ -307,6 +309,30 @@ export class StreamsGateway {
     const customParameters = this.extractCustomParameters(
       start?.customParameters,
     );
+
+    // 🔍 Cargar base de conocimiento asíncronamente si hay un agentId
+    if (customParameters?.agentId) {
+      this.agentKnowledgeService
+        .searchAgentKnowledge(
+          Number(customParameters.agentId),
+          'información relevante del agente',
+        )
+        .then((knowledgeContext) => {
+          if (knowledgeContext && knowledgeContext.trim()) {
+            const currentInst = session.instructions;
+            session.instructions = `${currentInst}\n\n---\n\nCONTEXTO DE CONOCIMIENTO:\n${knowledgeContext.trim()}`;
+            console.log(
+              `🧠 [${callSid}] Contexto de conocimiento cargado asíncronamente (longitud: ${knowledgeContext.length})`,
+            );
+          }
+        })
+        .catch((err) => {
+          console.error(
+            `❌ [${callSid}] Error al cargar contexto de conocimiento asíncrono:`,
+            err,
+          );
+        });
+    }
 
     // 🔍 Debug: Log de todos los customParameters recibidos
     if (customParameters && Object.keys(customParameters).length > 0) {
@@ -1313,30 +1339,8 @@ export class StreamsGateway {
     const instructions =
       customParameters?.instructions?.trim() || this.defaultInstructions;
 
-    // 🔍 Si no hay instructions pero hay knowledgeContext, usarlo como instrucciones
-    if (
-      (!customParameters?.instructions ||
-        !customParameters.instructions.trim()) &&
-      customParameters?.knowledgeContext?.trim()
-    ) {
-      console.log(
-        `🧠 [Streams] Usando knowledgeContext como instrucciones principales (agentInstruction vacío)`,
-      );
-      return customParameters.knowledgeContext.trim();
-    }
-
-    // 🔍 Si hay ambas, combinarlas
-    if (
-      customParameters?.instructions?.trim() &&
-      customParameters?.knowledgeContext?.trim()
-    ) {
-      const combined = `${customParameters.instructions.trim()}\n\n---\n\nCONTEXTO DE CONOCIMIENTO:\n${customParameters.knowledgeContext.trim()}`;
-      console.log(
-        `🧠 [Streams] Combinando agentInstruction con knowledgeContext`,
-      );
-      return combined;
-    }
-
+    // Ya no se resuelve el knowledge aquí síncronamente desde el customParameter.
+    // Lo manejamos asíncronamente en el handleConnection o al inicializar.
     return instructions;
   }
 
