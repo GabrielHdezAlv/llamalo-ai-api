@@ -1800,53 +1800,52 @@ export class StreamsGateway {
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
           // Si el agente está hablando, interrumpir completamente (Barge-in instantáneo)
-          if (session.agentSpeaking && session.allowInterruptions !== false) {
-            console.log(
-              `🛑 [${session.callSid}] ¡Barge-in detectado! Usuario interrumpió al agente - deteniendo instantáneamente`,
+          // 🔥 FIX: También interrumpir si está procesando LLM (session.interrupted=false) para evitar que la voz llegue tarde
+          console.log(
+            `🛑 [${session.callSid}] ¡Barge-in detectado! Usuario interrumpió al agente - deteniendo instantáneamente`,
+          );
+          session.interrupted = true;
+          session.agentSpeaking = false;
+
+          // Cancelar cualquier TTS en progreso
+          if (session.ttsCancelStream) {
+            session.ttsCancelStream();
+            session.ttsCancelStream = undefined;
+          }
+
+          // Cancelar cualquier request TTS pendiente
+          if (session.currentTTSRequest) {
+            session.currentTTSRequest = undefined;
+          }
+
+          // Limpiar texto interceptado
+          session.interceptedResponseText = '';
+
+          // Detener el envío de audio buffered
+          if (session.outboundSendTimer) {
+            clearTimeout(session.outboundSendTimer);
+            session.outboundSendTimer = undefined;
+          }
+
+          // Limpiar buffer de audio saliente
+          session.outboundBuffer = Buffer.alloc(0);
+
+          // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
+          if (session.streamSid) {
+            session.client.send(
+              JSON.stringify({
+                event: 'clear',
+                streamSid: session.streamSid,
+              }),
             );
-            session.interrupted = true;
-            session.agentSpeaking = false;
-
-            // Cancelar cualquier TTS en progreso
-            if (session.ttsCancelStream) {
-              session.ttsCancelStream();
-              session.ttsCancelStream = undefined;
-            }
-
-            // Cancelar cualquier request TTS pendiente
-            if (session.currentTTSRequest) {
-              session.currentTTSRequest = undefined;
-            }
-
-            // Limpiar texto interceptado
-            session.interceptedResponseText = '';
-
-            // Detener el envío de audio buffered
-            if (session.outboundSendTimer) {
-              clearTimeout(session.outboundSendTimer);
-              session.outboundSendTimer = undefined;
-            }
-
-            // Limpiar buffer de audio saliente
-            session.outboundBuffer = Buffer.alloc(0);
-
-            // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
-            if (session.streamSid) {
-              session.client.send(
-                JSON.stringify({
-                  event: 'clear',
-                  streamSid: session.streamSid,
-                }),
-              );
-              console.log(
-                `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
-              );
-            }
-
             console.log(
-              `🧹 Estado del agente limpiado completamente por interrupción`,
+              `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
             );
           }
+
+          console.log(
+            `🧹 Estado del agente limpiado completamente por interrupción`,
+          );
           break;
         case 'AgentThinking':
           // Silenciar este evento para reducir ruido
@@ -1867,22 +1866,20 @@ export class StreamsGateway {
           );
 
           if (text) {
-            // Procesar incluso si agentSpeaking es false (podría ser el greeting)
-            if (role === 'assistant' || role === 'agent' || !role) {
-              // 🔥 FIX: Ignorar ConversationText de Deepgram cuando role=assistant
-              // Deepgram solo debe transcribir, no generar respuestas
-              // Las respuestas del agente vienen del LLM de OpenAI
-              console.log(
-                `⚠️ [${session.callSid}] Ignorando ConversationText de Deepgram (role: ${role}) - Deepgram solo debe transcribir`,
-              );
-              return; // 🚫 No procesar respuestas de Deepgram
-            } else if (role === 'user') {
-              // Procesar texto del usuario como transcript final
+            // Procesar texto del usuario como transcript final
+            if (role === 'user') {
               console.log(
                 `👤 Texto del usuario en ConversationText - procesando como transcript final`,
               );
               // El usuario ha terminado de hablar, procesar su mensaje
               void this.handleFinalTranscript(session, text);
+            } else {
+              // 🔥 FIX: Ignorar ConversationText de Deepgram cuando role=assistant
+              // Deepgram solo debe transcribir, no generar respuestas
+              // Las respuestas del agente vienen del LLM de OpenAI
+              console.log(
+                `⚠️ [${session.callSid}] Ignorando ConversationText de Deepgram (role: ${role || 'desconocido'}) - Deepgram solo debe transcribir`,
+              );
             }
           } else {
             console.warn(
