@@ -1025,41 +1025,35 @@ export class StreamsGateway {
       session.interrupted = false;
       void this.handleFinalTranscript(session, text.trim());
     } else {
-      console.log(
-        `✏️ Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`,
-      );
-      // Si el agente está hablando o procesando LLM, interrumpir en cuanto el usuario empiece a hablar (parcial)
-      // Usamos is_final=false para detectar el inicio del habla MUY RÁPIDO
-      if (session.agentSpeaking || session.currentTTSRequest) {
-        console.log(`🛑 [${session.callSid}] Usuario hablando por encima (parcial detectado), interrumpiendo...`);
-        session.interrupted = true;
-        session.agentSpeaking = false;
-        
-        if (session.ttsCancelStream) {
-          session.ttsCancelStream();
-          session.ttsCancelStream = undefined;
-        }
+      // Ignoramos mensajes parciales que no aportan texto para no spamear los logs
+      if (text.trim().length > 3) {
+         console.log(`✏️ Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+      }
+      
+      // Solo interrumpimos si el agente ESTÁ enviando audio realmente (TTS) o lleva un buen rato hablando
+      // NO interrumpimos durante el pensamiento o procesamiento inicial del LLM.
+      if ((session.agentSpeaking || session.currentTTSRequest) && !session.interrupted) {
+        // Solo interrumpimos si el ruido/voz detectado es algo consistente (más de 3 letras) 
+        // para evitar ecos fantasmas.
+        if (text.trim().length > 3) {
+            console.log(`🛑 [${session.callSid}] Usuario hablando por encima (parcial: "${text}"), interrumpiendo...`);
+            session.interrupted = true;
+            session.agentSpeaking = false;
+            
+            if (session.ttsCancelStream) {
+              session.ttsCancelStream();
+              session.ttsCancelStream = undefined;
+            }
 
-        if (session.currentTTSRequest) {
-          session.currentTTSRequest = undefined;
-        }
-
-        session.interceptedResponseText = '';
-
-        if (session.outboundSendTimer) {
-          clearTimeout(session.outboundSendTimer);
-          session.outboundSendTimer = undefined;
-        }
-        session.outboundBuffer = Buffer.alloc(0);
-
-        // Vaciar el buffer de Twilio instantáneamente
-        if (session.streamSid) {
-          session.client.send(
-            JSON.stringify({
-              event: 'clear',
-              streamSid: session.streamSid,
-            }),
-          );
+            // Vaciar el buffer de Twilio instantáneamente
+            if (session.streamSid) {
+              session.client.send(
+                JSON.stringify({
+                  event: 'clear',
+                  streamSid: session.streamSid,
+                }),
+              );
+            }
         }
       }
     }
@@ -1119,8 +1113,10 @@ export class StreamsGateway {
 
       const agentResponseStart = Date.now(); // Marcar inicio de respuesta del agente
       
-      // Llamada a OpenAI en modo STREAM
-      const stream = await this.openai.chat.completions.create({
+    // Llamada a OpenAI en modo STREAM
+    let stream;
+    try {
+      stream = await this.openai.chat.completions.create({
         model: this.llmModel,
         temperature: this.llmTemperature,
         max_tokens: this.llmMaxTokens,
@@ -1130,12 +1126,20 @@ export class StreamsGateway {
         ],
         stream: true,
       });
-
-      // 🔥 FIX: Marcar explícitamente que el LLM está procesando antes de consumir el stream
-      // Esto evita que un evento parcial o un UserStartedSpeaking fantasma corte la respuesta en seco.
+    } catch (err) {
+      console.error(`❌ [${session.callSid}] Error al llamar a OpenAI:`, err);
       session.interrupted = false;
-      session.agentSpeaking = true;
-      session.allowInterruptions = true;
+      session.agentSpeaking = false;
+      return;
+    }
+
+    // 🔥 FIX: Marcar explícitamente que el LLM está procesando ANTES de consumir el stream
+    // Pero OJO, no marcamos agentSpeaking = true todavía, porque el agente NO está hablando,
+    // apenas estamos conectando con OpenAI.
+    // Usaremos un nuevo flag o simplemente comprobamos si currentTTSRequest existe para el barge-in
+    session.interrupted = false;
+    session.agentSpeaking = false; // Aún no habla
+    session.allowInterruptions = true;
 
       // Calcular y guardar latencia (Tiempo hasta el primer token)
       console.log(
@@ -1178,9 +1182,10 @@ export class StreamsGateway {
           break; // Salir del bucle si el usuario interrumpe
         }
 
-        // Ignorar respuestas inyectadas por Deepgram en medio del stream
-        // Esta es la validación clave: si el usuario habló, no generamos más
-        if (session.interrupted) break;
+        // En cuanto recibimos el primer token real de respuesta, el agente "empieza a hablar" virtualmente
+        if (!session.agentSpeaking) {
+           session.agentSpeaking = true;
+        }
 
         const token = chunk.choices[0]?.delta?.content || '';
         if (token) {
@@ -1829,11 +1834,11 @@ export class StreamsGateway {
           session.userSpeakingStartTime = Date.now();
           
           // En Deepgram V1 Listen puro o si estamos usando Agent, UserStartedSpeaking puede saltar por ruido
-          // Solo limpiar si el agente realmente estaba hablando o estaba en proceso de hablar
-          // Evita cortar la propia generación de la IA por ruidos parásitos en la línea.
-          if (session.agentSpeaking || session.currentTTSRequest) {
+          // Solo limpiar si el agente realmente estaba hablando y reproduciendo audio.
+          // Si el LLM está pensando y aún no ha reproducido nada, ignoramos esto para no auto-cortar la llamada por eco.
+          if ((session.agentSpeaking && session.currentTTSRequest) && !session.interrupted) {
             console.log(
-              `🛑 [${session.callSid}] ¡Barge-in detectado! Usuario interrumpió al agente - deteniendo instantáneamente`,
+              `🛑 [${session.callSid}] ¡Barge-in detectado (UserStarted)! Usuario interrumpió al agente - deteniendo instantáneamente`,
             );
             session.interrupted = true;
             session.agentSpeaking = false;
