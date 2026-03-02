@@ -135,9 +135,9 @@ export class StreamsGateway {
 
   private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const; // Para Twilio usamos μ-law 8k directo (evita conversión adicional)
   private readonly elevenLabsTtsModelId =
-    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5';
+    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2'; // Cambiado de flash a multilingual para hiper-realismo
   private readonly elevenLabsTtsStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.72,
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5, // Bajado a 0.5 para mayor expresividad
   );
   private readonly elevenLabsTtsStyle = Number(
     process.env.ELEVENLABS_TTS_STYLE ?? 0.05,
@@ -1106,15 +1106,10 @@ export class StreamsGateway {
         }
       }
 
-      // Procesar el stream de OpenAI token a token
+      // Limpiar el estado de interrupción ANTES de empezar a generar
       session.agentSpeaking = true;
       session.interrupted = false;
       session.allowInterruptions = true;
-
-      let fullResponse = '';
-      let sentenceBuffer = '';
-      const sentenceEnders = new Set(['.', '!', '?', '\n']); // Caracteres que marcan el fin de una frase para enviar a TTS
-      const pauseEnders = new Set([',', ':', ';']); // Pausas menores que también podemos enviar si la frase se alarga
 
       // Cola de promesas para garantizar que las frases se envíen a ElevenLabs y se reproduzcan en orden
       let ttsQueue = Promise.resolve();
@@ -1124,6 +1119,10 @@ export class StreamsGateway {
           console.log(`🛑 [${session.callSid}] Generación LLM interrumpida por el usuario.`);
           break; // Salir del bucle si el usuario interrumpe
         }
+
+        // Ignorar respuestas inyectadas por Deepgram en medio del stream
+        // Esta es la validación clave: si el usuario habló, no generamos más
+        if (session.interrupted) break;
 
         const token = chunk.choices[0]?.delta?.content || '';
         if (token) {
@@ -2136,7 +2135,8 @@ export class StreamsGateway {
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,
     );
-    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${encodeURIComponent(normalizedFormat)}`;
+    // Añadimos optimize_streaming_latency=3 para forzar la respuesta más rápida posible con el modelo multilingual
+    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${encodeURIComponent(normalizedFormat)}&optimize_streaming_latency=3`;
 
     try {
       session.agentSpeaking = true;

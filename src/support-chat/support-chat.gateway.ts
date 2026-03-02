@@ -76,11 +76,11 @@ export class SupportChatGateway {
   private readonly elevenLabsBaseUrl =
     process.env.ELEVENLABS_BASE_URL ?? 'https://api.elevenlabs.io/v1';
   private readonly elevenLabsTtsModelId =
-    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5';
+    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2';
   private readonly defaultVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP';
   private readonly defaultStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.72,
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5,
   );
   private readonly defaultSimilarity = Number(
     process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.8,
@@ -770,7 +770,7 @@ export class SupportChatGateway {
 
     const voiceId = session.config.voiceId || this.defaultVoiceId;
     const params = session.config.parameters;
-    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${this.ttsOutputFormat}`;
+    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${this.ttsOutputFormat}&optimize_streaming_latency=3`;
 
     session.agentSpeaking = true;
 
