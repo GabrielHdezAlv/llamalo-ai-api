@@ -155,8 +155,9 @@ export class EmailService {
    */
   async sendSupportTicket(
     userId: string,
-    userPhone: string,
+    userPhone: string | undefined,
     summary: string,
+    userEmail: string | undefined,
   ): Promise<{ success: boolean; messageId?: string }> {
     const email = process.env.SUPPORT_EMAIL || 'team@llamalo.ai';
 
@@ -188,6 +189,7 @@ Este es un correo automático generado por Xenon.
             <h3 style="margin-top: 0; color: #1f2937;">Detalles del Cliente:</h3>
             <ul style="color: #4b5563;">
               <li><strong>ID de Usuario:</strong> ${userId}</li>
+              <li><strong>Email (si aplica):</strong> ${userEmail || 'No proporcionado'}</li>
               <li><strong>Teléfono (si aplica):</strong> ${userPhone}</li>
             </ul>
           </div>
