@@ -1028,8 +1028,9 @@ export class StreamsGateway {
       console.log(
         `✏️ Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`,
       );
-      // Si el agente está hablando, interrumpir en cuanto el usuario empiece a hablar (parcial)
-      if (session.agentSpeaking) {
+      // Si el agente está hablando o procesando LLM, interrumpir en cuanto el usuario empiece a hablar (parcial)
+      // Usamos is_final=false para detectar el inicio del habla MUY RÁPIDO
+      if (session.agentSpeaking || session.currentTTSRequest) {
         console.log(`🛑 [${session.callSid}] Usuario hablando por encima (parcial detectado), interrumpiendo...`);
         session.interrupted = true;
         session.agentSpeaking = false;
@@ -1038,6 +1039,18 @@ export class StreamsGateway {
           session.ttsCancelStream();
           session.ttsCancelStream = undefined;
         }
+
+        if (session.currentTTSRequest) {
+          session.currentTTSRequest = undefined;
+        }
+
+        session.interceptedResponseText = '';
+
+        if (session.outboundSendTimer) {
+          clearTimeout(session.outboundSendTimer);
+          session.outboundSendTimer = undefined;
+        }
+        session.outboundBuffer = Buffer.alloc(0);
 
         // Vaciar el buffer de Twilio instantáneamente
         if (session.streamSid) {
@@ -1118,6 +1131,12 @@ export class StreamsGateway {
         stream: true,
       });
 
+      // 🔥 FIX: Marcar explícitamente que el LLM está procesando antes de consumir el stream
+      // Esto evita que un evento parcial o un UserStartedSpeaking fantasma corte la respuesta en seco.
+      session.interrupted = false;
+      session.agentSpeaking = true;
+      session.allowInterruptions = true;
+
       // Calcular y guardar latencia (Tiempo hasta el primer token)
       console.log(
         `[Latency Debug] Verificando condiciones para guardar latencia:`,
@@ -1145,11 +1164,6 @@ export class StreamsGateway {
           console.warn(`[Latency] Error guardando latencia:`, error);
         }
       }
-
-      // Limpiar el estado de interrupción ANTES de empezar a generar
-      session.agentSpeaking = true;
-      session.interrupted = false;
-      session.allowInterruptions = true;
 
       // Cola de promesas para garantizar que las frases se envíen a ElevenLabs y se reproduzcan en orden
       let ttsQueue = Promise.resolve();
@@ -1814,6 +1828,7 @@ export class StreamsGateway {
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
           
+          // En Deepgram V1 Listen puro o si estamos usando Agent, UserStartedSpeaking puede saltar por ruido
           // Solo limpiar si el agente realmente estaba hablando o estaba en proceso de hablar
           // Evita cortar la propia generación de la IA por ruidos parásitos en la línea.
           if (session.agentSpeaking || session.currentTTSRequest) {
