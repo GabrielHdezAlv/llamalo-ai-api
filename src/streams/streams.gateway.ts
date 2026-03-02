@@ -1113,6 +1113,10 @@ export class StreamsGateway {
 
       // Cola de promesas para garantizar que las frases se envíen a ElevenLabs y se reproduzcan en orden
       let ttsQueue = Promise.resolve();
+      let fullResponse = '';
+      let sentenceBuffer = '';
+      const sentenceEnders = new Set(['.', '!', '?', '\n']);
+      const pauseEnders = new Set([',', ':', ';']);
 
       for await (const chunk of stream) {
         if (session.interrupted) {
