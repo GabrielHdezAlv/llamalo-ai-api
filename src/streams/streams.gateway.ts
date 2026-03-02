@@ -1021,16 +1021,32 @@ export class StreamsGateway {
       console.log(
         `📝 Transcripción final: "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
       );
+      // Reiniciar estado antes de procesar el nuevo transcript
+      session.interrupted = false;
       void this.handleFinalTranscript(session, text.trim());
     } else {
       console.log(
         `✏️ Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`,
       );
-      // Si el usuario habla durante TTS, interrumpir
-      if (session.agentSpeaking && !session.interrupted) {
+      // Si el agente está hablando, interrumpir en cuanto el usuario empiece a hablar (parcial)
+      if (session.agentSpeaking) {
+        console.log(`🛑 [${session.callSid}] Usuario hablando por encima (parcial detectado), interrumpiendo...`);
         session.interrupted = true;
+        session.agentSpeaking = false;
+        
         if (session.ttsCancelStream) {
           session.ttsCancelStream();
+          session.ttsCancelStream = undefined;
+        }
+
+        // Vaciar el buffer de Twilio instantáneamente
+        if (session.streamSid) {
+          session.client.send(
+            JSON.stringify({
+              event: 'clear',
+              streamSid: session.streamSid,
+            }),
+          );
         }
       }
     }
@@ -1042,14 +1058,12 @@ export class StreamsGateway {
     );
 
     // Resetear estado de interrupción para permitir nueva respuesta
-    if (session.interrupted) {
-      console.log(
-        `🔄 Reseteando estado de interrupción - usuario terminó de hablar`,
-      );
-      session.interrupted = false;
-      session.agentSpeaking = false;
-      session.interceptedResponseText = '';
-    }
+    console.log(
+      `🔄 Reseteando estado de interrupción - usuario terminó de hablar`,
+    );
+    session.interrupted = false;
+    session.agentSpeaking = false;
+    session.interceptedResponseText = '';
 
     // 🔥 FIX: Corrección dinámica para nombres de empresas
     const correctedText = await this.basicCompanyCorrection(text, session);
@@ -1799,53 +1813,58 @@ export class StreamsGateway {
           break;
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
-          // Si el agente está hablando, interrumpir completamente (Barge-in instantáneo)
-          // 🔥 FIX: También interrumpir si está procesando LLM (session.interrupted=false) para evitar que la voz llegue tarde
-          console.log(
-            `🛑 [${session.callSid}] ¡Barge-in detectado! Usuario interrumpió al agente - deteniendo instantáneamente`,
-          );
-          session.interrupted = true;
-          session.agentSpeaking = false;
-
-          // Cancelar cualquier TTS en progreso
-          if (session.ttsCancelStream) {
-            session.ttsCancelStream();
-            session.ttsCancelStream = undefined;
-          }
-
-          // Cancelar cualquier request TTS pendiente
-          if (session.currentTTSRequest) {
-            session.currentTTSRequest = undefined;
-          }
-
-          // Limpiar texto interceptado
-          session.interceptedResponseText = '';
-
-          // Detener el envío de audio buffered
-          if (session.outboundSendTimer) {
-            clearTimeout(session.outboundSendTimer);
-            session.outboundSendTimer = undefined;
-          }
-
-          // Limpiar buffer de audio saliente
-          session.outboundBuffer = Buffer.alloc(0);
-
-          // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
-          if (session.streamSid) {
-            session.client.send(
-              JSON.stringify({
-                event: 'clear',
-                streamSid: session.streamSid,
-              }),
-            );
+          
+          // Solo limpiar si el agente realmente estaba hablando o estaba en proceso de hablar
+          // Evita cortar la propia generación de la IA por ruidos parásitos en la línea.
+          if (session.agentSpeaking || session.currentTTSRequest) {
             console.log(
-              `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
+              `🛑 [${session.callSid}] ¡Barge-in detectado! Usuario interrumpió al agente - deteniendo instantáneamente`,
             );
-          }
+            session.interrupted = true;
+            session.agentSpeaking = false;
 
-          console.log(
-            `🧹 Estado del agente limpiado completamente por interrupción`,
-          );
+            // Cancelar cualquier TTS en progreso
+            if (session.ttsCancelStream) {
+              session.ttsCancelStream();
+              session.ttsCancelStream = undefined;
+            }
+
+            // Cancelar cualquier request TTS pendiente
+            if (session.currentTTSRequest) {
+              session.currentTTSRequest = undefined;
+            }
+
+            // Limpiar texto interceptado
+            session.interceptedResponseText = '';
+
+            // Detener el envío de audio buffered
+            if (session.outboundSendTimer) {
+              clearTimeout(session.outboundSendTimer);
+              session.outboundSendTimer = undefined;
+            }
+
+            // Limpiar buffer de audio saliente
+            session.outboundBuffer = Buffer.alloc(0);
+
+            // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
+            if (session.streamSid) {
+              session.client.send(
+                JSON.stringify({
+                  event: 'clear',
+                  streamSid: session.streamSid,
+                }),
+              );
+              console.log(
+                `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
+              );
+            }
+
+            console.log(
+              `🧹 Estado del agente limpiado completamente por interrupción`,
+            );
+          } else {
+            console.log(`ℹ️ [${session.callSid}] Ignorando UserStartedSpeaking porque el agente no estaba hablando ni procesando`);
+          }
           break;
         case 'AgentThinking':
           // Silenciar este evento para reducir ruido
