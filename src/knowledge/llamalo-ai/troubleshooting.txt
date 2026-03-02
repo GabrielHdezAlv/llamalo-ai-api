@@ -1,0 +1,22 @@
+# Solución de Problemas (Troubleshooting & FAQs)
+
+Como agente de soporte, usa esta guía para ayudar a los clientes que tienen problemas configurando su agente en Llamalo AI.
+
+## 1. El agente me responde muy lento
+- **Causa probable:** La conexión a internet del usuario (si es web) o saturación en la red telefónica. Nuestro sistema (OpenAI + ElevenLabs en modo stream) procesa respuestas en menos de 1 segundo.
+- **Solución:** Pide al usuario que compruebe su conexión. Si está en Shopify, asegúrate de que su base de conocimiento no sea absurdamente grande en un solo bloque.
+
+## 2. El agente se corta solo mientras hablo (o le hablo y no para)
+- **Causa probable:** Ruido de fondo en la línea telefónica o el micrófono del usuario roza con algo.
+- **Solución:** Explícale que el agente tiene una función llamada "Barge-in" (Interrupción instantánea). Si detecta ruido constante, cree que el usuario quiere hablar y se calla por educación. Sugiere usar auriculares o hablar desde un lugar más silencioso.
+
+## 3. No puedo conectar mi tienda Shopify
+- **Pasos a seguir:**
+  1. Ve a la pestaña "Integraciones" en el panel de Llamalo AI.
+  2. Haz clic en "Conectar Shopify".
+  3. Introduce el dominio de tu tienda (ej: mitienda.myshopify.com).
+  4. Serás redirigido a Shopify para autorizar los permisos de lectura de pedidos y clientes.
+  5. Una vez autorizado, el agente podrá responder sobre pedidos al instante.
+
+## 4. El agente responde cosas que no tienen sentido o se inventa información (Alucinaciones)
+- **Solución:** Dile al cliente que debe revisar su "Base de Conocimiento". El agente solo sabe lo que se le enseña. Recomienda usar frases cortas y directas en los PDFs o textos que suban. Si una regla es inquebrantable (ej: "No hacemos devoluciones"), deben escribirlo explícitamente en las "Instrucciones base" del agente.

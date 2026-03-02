@@ -21,6 +21,7 @@ import {
 } from '../shopify/shopify.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
+import { EmailService } from '../auth/email.service'; // Importar EmailService
 
 type TwilioMediaIn = {
   event: 'media';
@@ -177,7 +178,7 @@ export class StreamsGateway {
   // LLM
   private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
   private readonly llmTemperature = Number(
-    process.env.OPENAI_TEMPERATURE ?? 0.2, // 0.2 para respuestas de voz más directas y deterministas
+    process.env.OPENAI_TEMPERATURE ?? 0.4, // Subido a 0.4 para respuestas de voz más naturales en ventas
   );
   private readonly llmMaxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 200);
 
@@ -203,6 +204,7 @@ export class StreamsGateway {
     private readonly shopifyService: ShopifyService,
     private readonly metricsService: MetricsService,
     private readonly agentKnowledgeService: AgentKnowledgeService,
+    private readonly emailService: EmailService,
   ) {
     if (!this.elevenLabsApiKey) {
       console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
@@ -1113,6 +1115,31 @@ export class StreamsGateway {
 
       const agentResponseStart = Date.now(); // Marcar inicio de respuesta del agente
       
+      // Definir la herramienta de escalado a soporte
+      const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+        {
+          type: 'function',
+          function: {
+            name: 'escalar_a_soporte_humano',
+            description: 'Envía un ticket o correo de soporte al equipo humano. Úsalo SOLO cuando el usuario solicite explícitamente hablar con un humano o tenga un problema técnico complejo que no puedas resolver.',
+            parameters: {
+              type: 'object',
+              properties: {
+                resumen_problema: {
+                  type: 'string',
+                  description: 'Un resumen detallado del problema que tiene el usuario, incluyendo pasos intentados si los hay.',
+                },
+                telefono_usuario: {
+                  type: 'string',
+                  description: 'El teléfono del usuario si te lo ha proporcionado en la llamada. Si no lo sabes, usa el número desde el que llama (callerPhone).',
+                }
+              },
+              required: ['resumen_problema'],
+            },
+          },
+        },
+      ];
+
     // Llamada a OpenAI en modo STREAM
     let stream;
     try {
@@ -1124,6 +1151,7 @@ export class StreamsGateway {
           { role: 'system', content: enrichedInstructions },
           ...session.history,
         ],
+        tools: tools,
         stream: true,
       });
     } catch (err) {
@@ -1173,6 +1201,8 @@ export class StreamsGateway {
       let ttsQueue = Promise.resolve();
       let fullResponse = '';
       let sentenceBuffer = '';
+      let functionCallName = '';
+      let functionCallArgs = '';
       const sentenceEnders = new Set(['.', '!', '?', '\n']);
       const pauseEnders = new Set([',', ':', ';']);
 
@@ -1180,6 +1210,19 @@ export class StreamsGateway {
         if (session.interrupted) {
           console.log(`🛑 [${session.callSid}] Generación LLM interrumpida por el usuario.`);
           break; // Salir del bucle si el usuario interrumpe
+        }
+
+        // Manejar Tool Calls (Llamadas a funciones)
+        const toolCalls = chunk.choices[0]?.delta?.tool_calls;
+        if (toolCalls && toolCalls.length > 0) {
+          const toolCall = toolCalls[0];
+          if (toolCall.function?.name) {
+            functionCallName = toolCall.function.name;
+          }
+          if (toolCall.function?.arguments) {
+            functionCallArgs += toolCall.function.arguments;
+          }
+          continue; // Si estamos construyendo una función, no procesamos texto
         }
 
         // En cuanto recibimos el primer token real de respuesta, el agente "empieza a hablar" virtualmente
@@ -1227,6 +1270,77 @@ export class StreamsGateway {
 
       // Esperar a que todos los audios terminen de generarse/enviarse
       await ttsQueue;
+
+      // --- MANEJO DE TOOLS (LLAMADA A FUNCIONES) ---
+      if (functionCallName === 'escalar_a_soporte_humano' && !session.interrupted) {
+        console.log(`📧 [${session.callSid}] Ejecutando tool: ${functionCallName}`);
+        try {
+          const args = JSON.parse(functionCallArgs);
+          const { resumen_problema, telefono_usuario } = args;
+
+          // Intentar obtener el email real del usuario desde Firestore
+          let userEmail: string | undefined = undefined;
+          if (session.userId) {
+            try {
+              const userDoc = await admin.firestore().collection('users').doc(session.userId).get();
+              if (userDoc.exists) {
+                userEmail = userDoc.data()?.email;
+              }
+            } catch (error) {
+              console.warn(`⚠️ No se pudo obtener el email del usuario ${session.userId} desde Firestore:`, error);
+            }
+          }
+
+          // Enviar el email
+          try {
+            await this.emailService.sendSupportTicket(
+              session.userId || 'Desconocido',
+              telefono_usuario || session.customParameters?.callerPhone || 'No proporcionado',
+              resumen_problema,
+              userEmail,
+            );
+
+            // Registrar la llamada en el historial (formato OpenAI)
+            const toolCallId = `call_${Date.now()}`;
+            session.history.push({
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: toolCallId,
+                  type: 'function',
+                  function: { name: functionCallName, arguments: functionCallArgs },
+                },
+              ],
+            } as any);
+
+            session.history.push({
+              role: 'tool',
+              tool_call_id: toolCallId,
+              content: JSON.stringify({
+                success: true,
+                message: 'Ticket enviado a soporte correctamente. El equipo humano contactará con el usuario.',
+              }),
+            } as any);
+
+            // Forzamos una nueva respuesta del LLM para que confirme al usuario
+            return this.handleFinalTranscript(
+              session,
+              '(SISTEMA: El ticket ha sido enviado con éxito. Confirma al usuario que el equipo de soporte le contactará pronto. Sé breve y profesional.)',
+            );
+          } catch (emailError) {
+            console.error(`❌ [${session.callSid}] Error al enviar email de soporte:`, emailError);
+            
+            // Si el email falla, informamos al LLM para que le pida al usuario escribir directamente
+            return this.handleFinalTranscript(
+              session,
+              '(SISTEMA: Error crítico al enviar el ticket por email. Por favor, discúlpate amablemente y dile al usuario que hubo un problema técnico temporal y que debe escribir directamente a team@llamalo.ai para que le ayudemos.)',
+            );
+          }
+        } catch (e) {
+          console.error(`❌ [${session.callSid}] Error procesando tool call:`, e);
+        }
+      }
 
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
@@ -1369,11 +1483,39 @@ export class StreamsGateway {
   private resolveInstructions(
     customParameters?: Record<string, string>,
   ): string {
-    const instructions =
+    let instructions =
       customParameters?.instructions?.trim() || this.defaultInstructions;
 
-    // Ya no se resuelve el knowledge aquí síncronamente desde el customParameter.
-    // Lo manejamos asíncronamente en el handleConnection o al inicializar.
+    // Detectar si es el agente Xenon (Llamalo AI)
+    const agentName = customParameters?.agentName?.toLowerCase() || '';
+    const isXenon = agentName.includes('xenon') || instructions.toLowerCase().includes('xenon');
+
+    if (isXenon) {
+      console.log(`🤖 [Streams] Xenon detectado, inyectando personalidad desde archivos...`);
+      const xenonPersona = this.readStaticFile('src/knowledge/llamalo-ai/xenon-persona.md');
+      if (xenonPersona) {
+        // Reemplazar la instrucción base (probablemente vacía o básica) por la personalidad completa
+        instructions = xenonPersona;
+      }
+
+      // Cargar conocimiento estático corporativo
+      const llamaloFeatures = this.readStaticFile('src/knowledge/llamalo-ai/features.txt');
+      const llamaloPricing = this.readStaticFile('src/knowledge/llamalo-ai/pricing.txt');
+      const llamaloTroubleshooting = this.readStaticFile('src/knowledge/llamalo-ai/troubleshooting.txt');
+      const llamaloSitemap = this.readStaticFile('src/knowledge/llamalo-ai/sitemap.txt');
+
+      let companyKnowledge = '';
+      if (llamaloFeatures) companyKnowledge += `\n\n--- FUNCIONALIDADES ---\n${llamaloFeatures}`;
+      if (llamaloPricing) companyKnowledge += `\n\n--- PRECIOS ---\n${llamaloPricing}`;
+      if (llamaloTroubleshooting) companyKnowledge += `\n\n--- TROUBLESHOOTING ---\n${llamaloTroubleshooting}`;
+      if (llamaloSitemap) companyKnowledge += `\n\n--- GUÍA DE LA PLATAFORMA (SITEMAP) ---\n${llamaloSitemap}`;
+
+      if (companyKnowledge) {
+        // Adjuntarlo al final de las instrucciones si existe
+        instructions += `\n\n--- CONOCIMIENTO DE EMPRESA ---\nUtiliza esta información para responder a las dudas del usuario:\n${companyKnowledge}\n--- FIN CONOCIMIENTO EMPRESA ---`;
+      }
+    }
+
     return instructions;
   }
 

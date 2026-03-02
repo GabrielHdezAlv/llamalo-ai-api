@@ -149,4 +149,70 @@ export class EmailService {
       return false;
     }
   }
+
+  /**
+   * Enviar ticket de soporte generado por Xenon
+   */
+  async sendSupportTicket(
+    userId: string,
+    userPhone: string,
+    summary: string,
+  ): Promise<{ success: boolean; messageId?: string }> {
+    const email = process.env.SUPPORT_EMAIL || 'team@llamalo.ai';
+
+    this.logger.log(`📧 Xenon enviando ticket de soporte a: ${email}`);
+
+    const mailOptions = {
+      from: `"Llamalo AI - Soporte IA" <${process.env.SMTP_USER || 'team@llamalo.ai'}>`,
+      to: email,
+      subject: `🚨 [ESCALADO] Soporte requerido por usuario ${userId}`,
+      text: `
+Un usuario ha solicitado asistencia humana a través del agente Xenon.
+
+DETALLES DEL CLIENTE:
+- ID de Usuario: ${userId}
+- Teléfono de contacto: ${userPhone}
+
+RESUMEN DEL PROBLEMA SEGÚN LA IA:
+${summary}
+
+---
+Este es un correo automático generado por Xenon.
+      `,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #4F46E5;">🚨 Nuevo ticket de soporte escalado por Xenon</h2>
+          <p>Un usuario ha solicitado asistencia humana durante su llamada/chat con el agente IA.</p>
+          
+          <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #1f2937;">Detalles del Cliente:</h3>
+            <ul style="color: #4b5563;">
+              <li><strong>ID de Usuario:</strong> ${userId}</li>
+              <li><strong>Teléfono (si aplica):</strong> ${userPhone}</li>
+            </ul>
+          </div>
+
+          <div style="background-color: #fee2e2; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
+            <h3 style="margin-top: 0; color: #991b1b;">Resumen del problema:</h3>
+            <p style="color: #7f1d1d; white-space: pre-wrap;">${summary}</p>
+          </div>
+
+          <p style="color: #6b7280; font-size: 12px; margin-top: 30px;">
+            Este es un correo automático generado por el asistente virtual de Llamalo AI.
+          </p>
+        </div>
+      `,
+    };
+
+    try {
+      const info = await this.transporter.sendMail(mailOptions);
+      this.logger.log(
+        `✅ Ticket de soporte enviado a ${email}: ${info.messageId}`,
+      );
+      return { success: true, messageId: info.messageId };
+    } catch (error) {
+      this.logger.error(`❌ Error al enviar ticket de soporte:`, error);
+      throw new Error(`No se pudo enviar el ticket de soporte: ${(error as Error).message}`);
+    }
+  }
 }

@@ -1,0 +1,57 @@
+# MAPA DEL SITIO Y NAVEGACIÓN (Dashboard de Llamalo AI)
+
+No debes recitar rutas exactas al usuario (ej. "ve a barra baja dashboard barra agents"), en su lugar, dale instrucciones naturales sobre dónde hacer clic usando esta referencia interna. Indica la sección y, si ayuda, orienta sobre el menú lateral.
+
+## 1. ZONA DE ACCESO (Sin sesión)
+- `/login`: Iniciar sesión.
+- `/register`: Registro con email.
+- `/verify-email`: Verificación de email tras registro.
+
+## 2. EL PANEL DE CLIENTE (Dashboard)
+- Layout principal: Barra lateral (sidebar) a la izquierda, barra superior (modo oscuro, perfil) y área central.
+- Abajo a la izquierda: Tarjeta de minutos/créditos y botón "Comprar minutos".
+
+## 3. PÁGINAS PRINCIPALES
+
+**Inicio (`/dashboard/home`)**
+- Resumen visual: Total de llamadas, exitosas, minutos y tiempo ahorrado.
+- Gráficos de evolución y Banner para "Mejorar Plan".
+
+**Agentes (`/dashboard/agents`)**
+- Lista completa de los agentes creados.
+- Botón "Crear agente" para iniciar el asistente.
+- Columnas: Nombre, Número de teléfono, Estado, Tipo.
+
+**Crear Agente (`/dashboard/agents/create`)**
+- Es un asistente de 9 pasos sencillos: Nombre, Inbound/Outbound, Selección de Voz, Conectar Shopify, Escribir Instrucciones, Base de conocimientos, Prueba de voz y Conectar número de Twilio.
+- Al usuario dile: "Para crear un agente, simplemente ve a la sección de Agentes en el menú izquierdo y dale al botón de Crear agente. Es un proceso guiado paso a paso."
+
+**Editar Agente (`/dashboard/agents/edit/:agentId`)**
+- Tiene 3 pestañas principales: 
+  - **Principal:** Nombre, saludo, instrucciones, configuración de voz.
+  - **Conexiones:** Vincular Shopify o Twilio a este agente.
+  - **Base de Conocimiento:** Qué PDFs o Webs puede leer este agente.
+
+**Números (`/dashboard/numbers`)**
+- Aquí se pueden importar números desde Twilio o revisar los asociados a la cuenta.
+
+**Historial (`/dashboard/history`)**
+- Registro detallado de todas las llamadas.
+- Seleccionando un contacto se puede ver la transcripción, el resumen y el resultado (resuelto o no).
+
+**Métricas (`/dashboard/metrics`)**
+- Analítica avanzada filtrable por fecha y agente.
+
+**Base de conocimientos (`/dashboard/knowledge-base`)**
+- Aquí el usuario sube sus propios documentos (PDF, URL, Texto) para que la IA aprenda de su negocio.
+- Dile al usuario que suba aquí su información y luego asigne ese documento a su agente en la pestaña de edición.
+
+**Cuenta y Ajustes (`/dashboard/account`)**
+- Pestañas internas: Perfil, Seguridad (contraseña), Facturación (cambiar plan o cancelar) y Regalos (Trustpilot).
+
+**Mejorar Plan (`/dashboard/upgrade-plan`)**
+- Dónde comprar más minutos o subir a planes Pro/Enterprise.
+
+## 4. FLUJOS ESPECIALES
+- **`/company-setup`:** Configuración inicial tras registrarse.
+- **`/shopify-onboarding`:** Flujo especial de OAuth para conectar la tienda online a Llamalo AI de forma segura.

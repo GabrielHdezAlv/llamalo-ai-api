@@ -7,6 +7,7 @@ import * as admin from 'firebase-admin';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SupportChatService } from './support-chat.service';
+import { EmailService } from '../auth/email.service'; // Importar servicio de emails
 import type { SupportAgentConfigResponseDto } from './dto/support-chat.dto';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -105,7 +106,10 @@ export class SupportChatGateway {
   private readonly openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   private readonly ttsOutputFormat = 'pcm_16000';
 
-  constructor(private readonly supportChatService: SupportChatService) {}
+  constructor(
+    private readonly supportChatService: SupportChatService,
+    private readonly emailService: EmailService,
+  ) {}
 
   // ── Conexión WebSocket ─────────────────────────────────────────────────────
 
@@ -552,14 +556,40 @@ export class SupportChatGateway {
       this.sendJson(session.client, { type: 'agent.thinking' });
       this.logger.log(`🤖 [SupportVoice] Llamando a OpenAI en modo stream...`);
 
+      // Definir la herramienta de escalado a soporte
+      const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+        {
+          type: 'function',
+          function: {
+            name: 'escalar_a_soporte_humano',
+            description: 'Envía un ticket o correo de soporte al equipo humano. Úsalo SOLO cuando el usuario solicite explícitamente hablar con un humano o tenga un problema técnico complejo que no puedas resolver.',
+            parameters: {
+              type: 'object',
+              properties: {
+                resumen_problema: {
+                  type: 'string',
+                  description: 'Un resumen detallado del problema que tiene el usuario, incluyendo pasos intentados si los hay.',
+                },
+                telefono_usuario: {
+                  type: 'string',
+                  description: 'El teléfono del usuario si te lo ha proporcionado en la llamada o chat. Si no lo sabes, pon "No proporcionado".',
+                }
+              },
+              required: ['resumen_problema'],
+            },
+          },
+        },
+      ];
+
       const stream = await this.openai.chat.completions.create({
         model: session.config.model ?? 'gpt-4o-mini',
-        temperature: 0.2, // Bajamos la temperatura para respuestas más rápidas y directas
+        temperature: 0.4, // Subido a 0.4 para más expresividad/ventas
         max_tokens: 500,
         messages: [
           { role: 'system', content: systemPrompt },
           ...session.history,
         ],
+        tools: tools,
         stream: true,
       });
 
@@ -570,6 +600,8 @@ export class SupportChatGateway {
 
       let fullResponse = '';
       let sentenceBuffer = '';
+      let functionCallName = '';
+      let functionCallArgs = '';
       const sentenceEnders = new Set(['.', '!', '?', '\n']); // Caracteres de fin de frase
       const pauseEnders = new Set([',', ':', ';']); // Pausas menores
 
@@ -580,6 +612,19 @@ export class SupportChatGateway {
         if (session.interrupted) {
           this.logger.log(`🛑 [SupportVoice] Generación LLM interrumpida por el usuario.`);
           break;
+        }
+
+        // Manejar Tool Calls (Llamadas a funciones)
+        const toolCalls = chunk.choices[0]?.delta?.tool_calls;
+        if (toolCalls && toolCalls.length > 0) {
+          const toolCall = toolCalls[0];
+          if (toolCall.function?.name) {
+            functionCallName = toolCall.function.name;
+          }
+          if (toolCall.function?.arguments) {
+            functionCallArgs += toolCall.function.arguments;
+          }
+          continue; // Si estamos construyendo una función, no procesamos texto
         }
 
         const token = chunk.choices[0]?.delta?.content || '';
@@ -633,6 +678,75 @@ export class SupportChatGateway {
       // Esperar a que el audio termine
       await ttsQueue;
 
+      // --- MANEJO DE TOOLS (LLAMADA A FUNCIONES) ---
+      if (functionCallName === 'escalar_a_soporte_humano' && !session.interrupted) {
+        this.logger.log(`📧 [SupportVoice] Ejecutando tool: ${functionCallName}`);
+        try {
+          const args = JSON.parse(functionCallArgs);
+          const { resumen_problema, telefono_usuario } = args;
+
+          // Intentar obtener el email real del usuario desde Firestore
+          let userEmail: string | undefined = undefined;
+          try {
+            const userDoc = await admin.firestore().collection('users').doc(session.userId).get();
+            if (userDoc.exists) {
+              userEmail = userDoc.data()?.email;
+            }
+          } catch (error) {
+            this.logger.warn(`⚠️ No se pudo obtener el email del usuario ${session.userId} desde Firestore: ${error}`);
+          }
+
+          // Enviar el email
+          try {
+            await this.emailService.sendSupportTicket(
+              session.userId,
+              telefono_usuario || 'No proporcionado',
+              resumen_problema,
+              userEmail,
+            );
+
+            // Registrar la llamada en el historial (formato OpenAI)
+            const toolCallId = `call_${Date.now()}`;
+            session.history.push({
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: toolCallId,
+                  type: 'function',
+                  function: { name: functionCallName, arguments: functionCallArgs },
+                },
+              ],
+            } as any);
+
+            session.history.push({
+              role: 'tool',
+              tool_call_id: toolCallId,
+              content: JSON.stringify({
+                success: true,
+                message: 'Ticket enviado a soporte correctamente. El equipo humano contactará con el usuario.',
+              }),
+            } as any);
+
+            // Forzamos una nueva respuesta del LLM para que confirme al usuario
+            return this.handleFinalTranscript(
+              session,
+              '(SISTEMA: El ticket ha sido enviado con éxito. Confirma al usuario que el equipo de soporte le contactará pronto. Sé breve y profesional.)',
+            );
+          } catch (emailError) {
+            this.logger.error(`❌ [SupportVoice] Error al enviar email de soporte:`, emailError);
+            
+            // Si el email falla, informamos al LLM para que le pida al usuario escribir directamente
+            return this.handleFinalTranscript(
+              session,
+              '(SISTEMA: Error crítico al enviar el ticket por email. Por favor, discúlpate amablemente y dile al usuario que hubo un problema técnico temporal y que debe escribir directamente a team@llamalo.ai para que le ayudemos.)',
+            );
+          }
+        } catch (e) {
+          this.logger.error(`❌ [SupportVoice] Error procesando tool call:`, e);
+        }
+      }
+
       // Finalizar el mensaje en el frontend
       if (fullResponse.trim()) {
         session.history.push({ role: 'assistant', content: fullResponse.trim() });
@@ -683,12 +797,40 @@ export class SupportChatGateway {
   ): Promise<string> {
     let prompt = session.config.agentInstruction;
 
-    // Inyectar reglas de voz
+    // Detectar si el agente configurado es "Xenon" para inyectar su personalidad específica
+    const isXenon = session.config.name?.toLowerCase().includes('xenon') || prompt.toLowerCase().includes('xenon');
+
+    if (isXenon) {
+      this.logger.log(`🤖 [SupportVoice] Xenon detectado, inyectando personalidad y conocimiento base...`);
+      const xenonPersona = this.readStaticFile('src/knowledge/llamalo-ai/xenon-persona.md');
+      const llamaloFeatures = this.readStaticFile('src/knowledge/llamalo-ai/features.txt');
+      const llamaloPricing = this.readStaticFile('src/knowledge/llamalo-ai/pricing.txt');
+      const llamaloTroubleshooting = this.readStaticFile('src/knowledge/llamalo-ai/troubleshooting.txt');
+      const llamaloSitemap = this.readStaticFile('src/knowledge/llamalo-ai/sitemap.txt');
+
+      if (xenonPersona) {
+        // Reemplazar las instrucciones base por las de Xenon
+        prompt = xenonPersona;
+      }
+      
+      let companyKnowledge = '';
+      if (llamaloFeatures) companyKnowledge += `\n\n--- FUNCIONALIDADES ---\n${llamaloFeatures}`;
+      if (llamaloPricing) companyKnowledge += `\n\n--- PRECIOS ---\n${llamaloPricing}`;
+      if (llamaloTroubleshooting) companyKnowledge += `\n\n--- TROUBLESHOOTING ---\n${llamaloTroubleshooting}`;
+      if (llamaloSitemap) companyKnowledge += `\n\n--- GUÍA DE LA PLATAFORMA (SITEMAP) ---\n${llamaloSitemap}`;
+
+      if (companyKnowledge) {
+        prompt += `\n\n--- CONOCIMIENTO DE EMPRESA ---\nUtiliza esta información para responder a las dudas del usuario:\n${companyKnowledge}\n--- FIN CONOCIMIENTO EMPRESA ---`;
+      }
+    }
+
+    // Inyectar reglas de voz estrictas
     const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
     if (voiceRules) {
       prompt += `\n\n${voiceRules}`;
     }
 
+    // Mantener la búsqueda dinámica en KB si el usuario tiene documentos subidos
     if (session.knowledgeSourceIds.length > 0) {
       try {
         const searchResults = await this.supportChatService.searchKnowledge(
@@ -704,7 +846,7 @@ export class SupportChatGateway {
             )
             .join('\n\n');
 
-          prompt += `\n\n--- DOCUMENTACIÓN DE REFERENCIA ---\n${context}\n--- FIN DOCUMENTACIÓN ---`;
+          prompt += `\n\n--- DOCUMENTACIÓN DE REFERENCIA ADICIONAL ---\n${context}\n--- FIN DOCUMENTACIÓN ---`;
         }
       } catch (err) {
         this.logger.warn(`Error buscando en KB: ${err}`);

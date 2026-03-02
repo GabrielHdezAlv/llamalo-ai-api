@@ -7,5 +7,6 @@ import { TestEmailController } from './test-email.controller';
 @Module({
   controllers: [AuthController, TestEmailController],
   providers: [AuthService, EmailService],
+  exports: [EmailService, AuthService], // Exportar EmailService para que Xenon lo use
 })
 export class AuthModule {}

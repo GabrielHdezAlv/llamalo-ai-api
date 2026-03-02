@@ -1,0 +1,18 @@
+# KILLER FEATURES (Nuestras 3 Joyas)
+
+1. **LATENCIA ULTRA-BAJA (<800ms)**: Nuestras respuestas son casi instantáneas. Se acabó la sensación de estar hablando con un robot lento; la conversación fluye como con un humano.
+2. **BARGE-IN INTELIGENTE (INTERRUPCIONES)**: Puedes interrumpir al agente en cualquier momento. Si hablas, el agente calla al instante para escucharte, tal como en una llamada real.
+3. **INTEGRACIÓN NATIVA CON SHOPIFY**: Somos expertos en e-commerce. Consultamos pedidos, clientes y stock en tiempo real directamente desde tu tienda Shopify.
+
+---
+
+# PASOS PARA CONFIGURAR TU PRIMER AGENTE (ONBOARDING)
+
+1. **Crear Agente**: Ve a la sección "Agentes" y haz clic en "Crear Nuevo".
+2. **Personalizar Voz**: Elige un nombre para tu agente y selecciona una voz de ElevenLabs. Puedes ajustar la estabilidad y claridad.
+3. **Conectar Twilio**: 
+   - Ve a "Números de Teléfono".
+   - Introduce tu Account SID y Auth Token de Twilio.
+   - Compra un número o usa uno existente para que tu agente pueda recibir llamadas.
+4. **Integrar Shopify**: En la pestaña de integraciones, conecta tu tienda para que el agente sepa responder sobre pedidos y productos.
+5. **Base de Conocimiento**: Sube PDFs o archivos de texto para que el agente sea un experto en tu negocio.

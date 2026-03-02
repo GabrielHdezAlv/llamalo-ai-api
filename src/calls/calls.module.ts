@@ -5,9 +5,10 @@ import { StreamsGateway } from '../streams/streams.gateway';
 import { ShopifyModule } from '../shopify/shopify.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { AgentsModule } from '../agents/agents.module';
+import { AuthModule } from '../auth/auth.module'; // Importar AuthModule para usar EmailService
 
 @Module({
-  imports: [ShopifyModule, MetricsModule, AgentsModule],
+  imports: [ShopifyModule, MetricsModule, AgentsModule, AuthModule],
   controllers: [CallsController],
   providers: [TwilioService, StreamsGateway],
   exports: [StreamsGateway],
