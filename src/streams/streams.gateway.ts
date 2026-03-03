@@ -114,6 +114,7 @@ interface CallSession {
   userId?: string;
   userDocument?: admin.firestore.DocumentData; // Documento completo del usuario de Firestore
   shopifyContext?: ShopifyContext;
+  knowledgeSourceIds?: string[];
 }
 
 @Injectable()
@@ -376,6 +377,8 @@ export class StreamsGateway {
     const userId = customParameters?.userId?.trim();
     const shopDomain = customParameters?.shopDomain?.trim();
 
+    let userDocumentData: admin.firestore.DocumentData | undefined;
+
     if (userId) {
       console.log(`👤 [${callSid}] userId extraído: ${userId}`);
       // 🆕 Tarea 1.1: Recuperar Datos Clave del Usuario desde Firestore
@@ -383,10 +386,10 @@ export class StreamsGateway {
         const userDocRef = admin.firestore().collection('users').doc(userId);
         const userDoc = await userDocRef.get();
         if (userDoc.exists) {
-          session.userDocument = userDoc.data();
+          userDocumentData = userDoc.data();
           console.log(`✅ [${callSid}] Datos de usuario ${userId} cargados desde Firestore.`);
-          if (session.userDocument?.companyName) {
-            console.log(`🏢 [${callSid}] Nombre de empresa del usuario: ${session.userDocument.companyName}`);
+          if (userDocumentData?.companyName) {
+            console.log(`🏢 [${callSid}] Nombre de empresa del usuario: ${userDocumentData.companyName}`);
           }
         } else {
           console.warn(`⚠️ [${callSid}] No se encontró documento para el userId: ${userId}`);
@@ -440,24 +443,12 @@ export class StreamsGateway {
       agentSpeaking: false,
       interrupted: false,
       userId,
+      userDocument: userDocumentData,
       shopifyContext: shopDomain ? { shopDomain } : undefined,
       knowledgeSourceIds: customParameters?.knowledgeContext ? [customParameters.knowledgeContext] : [],
     };
 
     // 🆕 Tarea 1.3: Personalizar Saludo Inicial del Agente de Llamadas
-    // Si ya cargamos el userDocument en el paso anterior (Tarea 1.1), lo asignamos aquí
-    // Nota: userDocument se cargó en variables locales, pero no se asignó a 'session' todavía
-    // porque 'session' no existía. Debemos recuperar esa variable local o volver a asignar.
-    
-    // Revisando Tarea 1.1: Asignamos a session.userDocument, pero 'session' no existía.
-    // Error lógico en mi paso anterior: Intenté asignar a session.userDocument ANTES de crear session.
-    // Corrección: La carga de Firestore debe ocurrir y guardar en una variable local, y luego asignarse aquí.
-    
-    // Como Tarea 1.1 ya modificó el código para intentar asignar a session.userDocument, 
-    // y ese código está ARRIBA de esta inicialización, probablemente falló o asignó a un 'session' undefined.
-    // Voy a asumir que necesito recuperar esos datos AHORA si quiero usarlos.
-    
-    // MEJOR ESTRATEGIA: Como ya tengo userId, hago la carga aquí mismo si no se hizo correctamente antes.
     if (userId) {
        try {
         const userDocRef = admin.firestore().collection('users').doc(userId);
