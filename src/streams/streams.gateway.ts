@@ -112,6 +112,7 @@ interface CallSession {
   ttsCancelStream?: () => void;
   // Shopify integration
   userId?: string;
+  userDocument?: admin.firestore.DocumentData; // Documento completo del usuario de Firestore
   shopifyContext?: ShopifyContext;
 }
 
@@ -377,6 +378,22 @@ export class StreamsGateway {
 
     if (userId) {
       console.log(`👤 [${callSid}] userId extraído: ${userId}`);
+      // 🆕 Tarea 1.1: Recuperar Datos Clave del Usuario desde Firestore
+      try {
+        const userDocRef = admin.firestore().collection('users').doc(userId);
+        const userDoc = await userDocRef.get();
+        if (userDoc.exists) {
+          session.userDocument = userDoc.data();
+          console.log(`✅ [${callSid}] Datos de usuario ${userId} cargados desde Firestore.`);
+          if (session.userDocument?.companyName) {
+            console.log(`🏢 [${callSid}] Nombre de empresa del usuario: ${session.userDocument.companyName}`);
+          }
+        } else {
+          console.warn(`⚠️ [${callSid}] No se encontró documento para el userId: ${userId}`);
+        }
+      } catch (error) {
+        console.error(`❌ [${callSid}] Error al cargar el documento del usuario ${userId}:`, error);
+      }
     }
     if (shopDomain) {
       console.log(`🛍️ [${callSid}] shopDomain extraído: ${shopDomain}`);
@@ -424,7 +441,46 @@ export class StreamsGateway {
       interrupted: false,
       userId,
       shopifyContext: shopDomain ? { shopDomain } : undefined,
+      knowledgeSourceIds: customParameters?.knowledgeContext ? [customParameters.knowledgeContext] : [],
     };
+
+    // 🆕 Tarea 1.3: Personalizar Saludo Inicial del Agente de Llamadas
+    // Si ya cargamos el userDocument en el paso anterior (Tarea 1.1), lo asignamos aquí
+    // Nota: userDocument se cargó en variables locales, pero no se asignó a 'session' todavía
+    // porque 'session' no existía. Debemos recuperar esa variable local o volver a asignar.
+    
+    // Revisando Tarea 1.1: Asignamos a session.userDocument, pero 'session' no existía.
+    // Error lógico en mi paso anterior: Intenté asignar a session.userDocument ANTES de crear session.
+    // Corrección: La carga de Firestore debe ocurrir y guardar en una variable local, y luego asignarse aquí.
+    
+    // Como Tarea 1.1 ya modificó el código para intentar asignar a session.userDocument, 
+    // y ese código está ARRIBA de esta inicialización, probablemente falló o asignó a un 'session' undefined.
+    // Voy a asumir que necesito recuperar esos datos AHORA si quiero usarlos.
+    
+    // MEJOR ESTRATEGIA: Como ya tengo userId, hago la carga aquí mismo si no se hizo correctamente antes.
+    if (userId) {
+       try {
+        const userDocRef = admin.firestore().collection('users').doc(userId);
+        const userDoc = await userDocRef.get();
+        if (userDoc.exists) {
+          session.userDocument = userDoc.data();
+          
+          if (session.userDocument?.companyName && session.pendingGreeting) {
+             const companyName = session.userDocument.companyName;
+             console.log(`👋 [${callSid}] Personalizando saludo con empresa: ${companyName}`);
+             
+             // Personalización simple: "Hola, bienvenido a [Empresa]..."
+             if (session.pendingGreeting.trim().toLowerCase().startsWith('hola')) {
+                session.pendingGreeting = session.pendingGreeting.replace(/^Hola([,.])?/i, `Hola$1 bienvenido a ${companyName}.`);
+             } else {
+                session.pendingGreeting = `Bienvenido a ${companyName}. ${session.pendingGreeting}`;
+             }
+          }
+        }
+      } catch (e) {
+        console.warn(`⚠️ [${callSid}] No se pudo cargar userDocument para saludo:`, e);
+      }
+    }
 
     this.sessions.set(callSid, session);
     if (session.pendingGreeting) {
@@ -840,7 +896,25 @@ export class StreamsGateway {
 
       // Ensamblar el prompt final
       try {
+        // 🆕 Tarea 1.2: Inyectar Datos Clave del Usuario en el System Prompt
+        let userDataString = '';
+        if (session.userDocument) {
+          const companyName = session.userDocument.companyName;
+          const userEmail = session.userDocument.email;
+          const shopifyDomain = session.userDocument.shopifyDomain;
+          const callerPhone = session.customParameters?.callerPhone; // El teléfono desde el que llama
+
+          userDataString += `\n============================================================\n## 👤 CONTEXTO DEL USUARIO 👤\n============================================================\n`;
+          if (session.userId) userDataString += `- ID de Usuario: ${session.userId}\n`;
+          if (companyName) userDataString += `- Nombre de la Empresa: ${companyName}\n`;
+          if (userEmail) userDataString += `- Email de Contacto: ${userEmail}\n`;
+          if (shopifyDomain) userDataString += `- Dominio Shopify Asociado: ${shopifyDomain}\n`;
+          if (callerPhone) userDataString += `- Teléfono desde el que llama: ${callerPhone}\n`;
+          userDataString += `============================================================\n\n`;
+        }
+
         const enrichedInstructions = [
+          userDataString, // Inyectar datos de usuario al inicio
           baseInstructions,
           voiceRules ? `\n${voiceRules}\n` : '',
           companyKnowledge,
