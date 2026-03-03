@@ -66,8 +66,8 @@ export class SupportChatGateway {
   private rateLimits = new Map<string, RateLimitEntry>();
 
   private readonly MAX_SESSION_MS = 5 * 60 * 1000;
-  private readonly MAX_CALLS_PER_HOUR = 1000; // Incrementado drásticamente para pruebas
-  private readonly MAX_CONCURRENT = 10;
+  private readonly MAX_CALLS_PER_HOUR = 100000; // Incrementado drásticamente para pruebas sin límites
+  private readonly MAX_CONCURRENT = 100; // Aumentado para soportar múltiples pruebas simultáneas
   private readonly RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
   private readonly KEEPALIVE_MS = 15_000;
   private readonly MAX_BUFFERED_CHUNKS = 25;

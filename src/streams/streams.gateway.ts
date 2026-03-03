@@ -97,6 +97,7 @@ interface CallSession {
   pendingGreeting?: string;
   greetingSent: boolean;
   keepAliveTimer?: NodeJS.Timeout;
+  silenceTimeout?: NodeJS.Timeout; // Temporizador para detectar silencio del usuario
   deepgramRequestId?: string;
   userSpeakingStartTime?: number;
   responseLatencies: number[];
@@ -513,12 +514,14 @@ export class StreamsGateway {
 
     try {
       // 🔍 Buscar cliente por teléfono para filtrar pedidos (Minimización Premium)
-      const callerPhone = session.customParameters?.callerPhone;
+      // Normalizar teléfono: eliminar espacios, guiones y paréntesis
+      const rawPhone = session.customParameters?.callerPhone;
+      const callerPhone = rawPhone ? rawPhone.replace(/[\s\-\(\)]/g, '') : undefined;
       let customerId: number | undefined;
 
       if (callerPhone) {
         console.log(
-          `🔍 [${session.callSid}] Buscando cliente por teléfono: ${callerPhone}`,
+          `🔍 [${session.callSid}] Buscando cliente por teléfono (normalizado): ${callerPhone} (Original: ${rawPhone})`,
         );
         customerId =
           (await this.shopifyService.searchCustomerByPhone(
@@ -803,7 +806,7 @@ export class StreamsGateway {
     try {
       const shopifyContext = session.shopifyContext;
 
-      // Si no hay contexto de Shopify o no tiene datos, retornar instrucciones originales
+      // Si no hay contexto de Shopify o no tiene datos, añadir instrucciones de Fallback
       if (
         !shopifyContext ||
         (!shopifyContext.store &&
@@ -811,9 +814,21 @@ export class StreamsGateway {
           !shopifyContext.orders?.length)
       ) {
         console.warn(
-          `⚠️ [DEBUG-${session.callSid}] Saliendo sin enriquecer - no hay datos suficientes en contexto`,
+          `⚠️ [DEBUG-${session.callSid}] Sin datos de Shopify. Inyectando instrucciones de fallback.`,
         );
-        return baseInstructions;
+        const fallbackInstructions = `
+============================================================
+## 🚫 NO SE ENCONTRARON DATOS DE SHOPIFY 🚫
+============================================================
+No se ha encontrado información de la tienda ni pedidos asociados a este número de teléfono (${session.customParameters?.callerPhone || 'Desconocido'}).
+
+**Instrucciones obligatorias si el usuario pregunta por un pedido:**
+1. NO inventes información.
+2. Explica amablemente que no encuentras el registro automáticamente.
+3. Pide al usuario el **Número de Pedido** o el **Email** con el que realizó la compra para poder ayudarle mejor (o escálalo a un humano).
+============================================================
+`;
+        return `${baseInstructions}\n${fallbackInstructions}`;
       }
 
       // Construir contexto de Shopify como JSON estructurado
@@ -2119,6 +2134,7 @@ export class StreamsGateway {
               );
               // El usuario ha terminado de hablar, procesar su mensaje
               void this.handleFinalTranscript(session, text);
+              this.resetSilenceTimer(session); // Reiniciar temporizador de silencio
             } else {
               // 🔥 FIX: Ignorar ConversationText de Deepgram cuando role=assistant
               // Deepgram solo debe transcribir, no generar respuestas
@@ -2660,6 +2676,31 @@ export class StreamsGateway {
     }, this.keepAliveIntervalMs);
   }
 
+  // Reinicia el temporizador de silencio del usuario
+  private resetSilenceTimer(session: CallSession) {
+    if (session.silenceTimeout) {
+      clearTimeout(session.silenceTimeout);
+    }
+
+    const SILENCE_TIMEOUT_MS = 15 * 1000; // 15 segundos de silencio antes de intervenir
+
+    session.silenceTimeout = setTimeout(async () => {
+      console.warn(`⏳ [${session.callSid}] Silencio detectado por ${SILENCE_TIMEOUT_MS / 1000} segundos. Interviniendo...`);
+      
+      // Simular que el usuario ha dicho algo para activar la respuesta del LLM
+      const silenceMessage = 'Parece que no hay nadie. ¿Sigues ahí o deberíamos terminar la llamada?';
+      await this.handleFinalTranscript(session, silenceMessage);
+
+    }, SILENCE_TIMEOUT_MS);
+  }
+
+  private stopSilenceTimer(session: CallSession) {
+    if (session.silenceTimeout) {
+      clearTimeout(session.silenceTimeout);
+      session.silenceTimeout = undefined;
+    }
+  }
+
   private stopKeepAlive(session: CallSession) {
     if (session.keepAliveTimer) {
       clearInterval(session.keepAliveTimer);
@@ -2748,6 +2789,7 @@ export class StreamsGateway {
     if (!session) return;
 
     this.stopKeepAlive(session);
+    this.stopSilenceTimer(session); // Detener temporizador de silencio al limpiar sesión
 
     if (session.outboundSendTimer) {
       clearTimeout(session.outboundSendTimer);
