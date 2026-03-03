@@ -99,6 +99,7 @@ interface CallSession {
   keepAliveTimer?: NodeJS.Timeout;
   silenceTimeout?: NodeJS.Timeout; // Temporizador para detectar silencio del usuario
   deepgramRequestId?: string;
+  lastAgentStartSpeakingTime?: number; // Timestamp de cuando el agente empezó a hablar la última frase
   userSpeakingStartTime?: number;
   responseLatencies: number[];
   // Conversación para el LLM
@@ -806,12 +807,16 @@ export class StreamsGateway {
     try {
       const shopifyContext = session.shopifyContext;
 
-      // Si no hay contexto de Shopify o no tiene datos, añadir instrucciones de Fallback
+      // Si NO hay contexto de Shopify (ej. Xenon o llamadas sin integración), no hacer nada
+      if (!shopifyContext) {
+        return baseInstructions;
+      }
+
+      // Si HAY contexto de Shopify pero no tiene datos, añadir instrucciones de Fallback
       if (
-        !shopifyContext ||
-        (!shopifyContext.store &&
-          !shopifyContext.featuredProducts?.length &&
-          !shopifyContext.orders?.length)
+        !shopifyContext.store &&
+        !shopifyContext.featuredProducts?.length &&
+        !shopifyContext.orders?.length
       ) {
         console.warn(
           `⚠️ [DEBUG-${session.callSid}] Sin datos de Shopify. Inyectando instrucciones de fallback.`,
@@ -1308,6 +1313,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         // En cuanto recibimos el primer token real de respuesta, el agente "empieza a hablar" virtualmente
         if (!session.agentSpeaking) {
            session.agentSpeaking = true;
+           session.lastAgentStartSpeakingTime = Date.now(); // Registrar inicio para protección de barge-in
         }
 
         const token = chunk.choices[0]?.delta?.content || '';
@@ -2058,6 +2064,16 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           // En Deepgram V1 Listen puro o si estamos usando Agent, UserStartedSpeaking puede saltar por ruido
           // Solo limpiar si el agente realmente estaba hablando y reproduciendo audio.
           // Si el LLM está pensando y aún no ha reproducido nada, ignoramos esto para no auto-cortar la llamada por eco.
+
+          // 🔥 FIX: Protección contra Barge-in temprano (eco inicial o ruido de línea)
+          // Ignorar interrupciones durante los primeros 800ms desde que el agente empezó a hablar
+          if (session.lastAgentStartSpeakingTime && (Date.now() - session.lastAgentStartSpeakingTime < 800)) {
+            console.log(
+              `🛡️ [${session.callSid}] Barge-in ignorado (Protección temprana < 800ms) - Posible eco o ruido inicial`,
+            );
+            break;
+          }
+
           if ((session.agentSpeaking && session.currentTTSRequest) && !session.interrupted) {
             console.log(
               `🛑 [${session.callSid}] ¡Barge-in detectado (UserStarted)! Usuario interrumpió al agente - deteniendo instantáneamente`,
