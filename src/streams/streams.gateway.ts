@@ -1290,10 +1290,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       let fullResponse = '';
       let sentenceBuffer = '';
-      let functionCallName = '';
-      let functionCallArgs = '';
-      const sentenceEnders = new Set(['.', '!', '?', '\n']);
-      const pauseEnders = new Set([',', ':', ';']);
+      let isFirstChunk = true; // Para detectar el primer fragmento de la respuesta
+
+      // Puntuaciones que indican un buen lugar para cortar y enviar a hablar
+      const strongEnders = new Set(['.', '!', '?', '\n']);
+      // Puntuaciones débiles que usamos SOLO si es el principio de la frase para empezar rápido
+      const weakEnders = new Set([',', ':', ';']);
 
       for await (const chunk of stream) {
         if (session.interrupted) {
@@ -1327,10 +1329,15 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
           // Si el token contiene un fin de frase o la frase es suficientemente larga y encontramos una pausa
           const lastChar = token.slice(-1);
-          const isSentenceEnd = sentenceEnders.has(lastChar);
-          const isPauseEnd = pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8; // Enviar en comas si la frase ya tiene >8 palabras
+          const isSentenceEnd = strongEnders.has(lastChar);
+          
+          // Enviar en comas si la frase ya tiene >8 palabras, O si es el PRIMER chunk y tiene al menos 1 palabra (ej: "Claro,", "Sí,")
+          const wordsCount = sentenceBuffer.trim().split(' ').length;
+          const isPauseEnd = weakEnders.has(lastChar) && (wordsCount > 8 || (isFirstChunk && wordsCount >= 1));
 
           if (isSentenceEnd || isPauseEnd) {
+            if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
+            
             const sentenceToSend = sentenceBuffer.trim();
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
