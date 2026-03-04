@@ -141,7 +141,7 @@ export class StreamsGateway {
 
   private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const; // Para Twilio usamos μ-law 8k directo (evita conversión adicional)
   private readonly elevenLabsTtsModelId =
-    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_multilingual_v2'; // Cambiado de flash a multilingual para hiper-realismo
+    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Usar Flash v2.5 para latencia ultra-baja (<100ms) en producción
   private readonly elevenLabsTtsStability = Number(
     process.env.ELEVENLABS_TTS_STABILITY ?? 0.5, // Bajado a 0.5 para mayor expresividad
   );
@@ -1491,6 +1491,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           model: this.deepgramListenModel,
           language: this.deepgramLanguage,
           smart_format: true,
+          endpointing: 300, // Detectar silencio final más rápido (300ms) para mejorar latencia
         },
       },
       // DESHABILITADO: Deepgram Speak genera respuestas duplicadas sin contexto
@@ -2432,8 +2433,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,
     );
-    // Añadimos optimize_streaming_latency=3 para forzar la respuesta más rápida posible con el modelo multilingual
-    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${encodeURIComponent(normalizedFormat)}&optimize_streaming_latency=3`;
+    // Añadimos optimize_streaming_latency=4 para máxima velocidad con Flash v2.5
+    const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${encodeURIComponent(normalizedFormat)}&optimize_streaming_latency=4`;
 
     try {
       session.agentSpeaking = true;
