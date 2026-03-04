@@ -2060,23 +2060,24 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           break;
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
+          console.log(`🎤 [${session.callSid}] UserStartedSpeaking detectado.`);
           
           // En Deepgram V1 Listen puro o si estamos usando Agent, UserStartedSpeaking puede saltar por ruido
           // Solo limpiar si el agente realmente estaba hablando y reproduciendo audio.
           // Si el LLM está pensando y aún no ha reproducido nada, ignoramos esto para no auto-cortar la llamada por eco.
 
           // 🔥 FIX: Protección contra Barge-in temprano (eco inicial o ruido de línea)
-          // Ignorar interrupciones durante los primeros 800ms desde que el agente empezó a hablar
-          if (session.lastAgentStartSpeakingTime && (Date.now() - session.lastAgentStartSpeakingTime < 800)) {
+          // Ignorar interrupciones durante los primeros 2000ms desde que el agente empezó a hablar
+          if (session.lastAgentStartSpeakingTime && (Date.now() - session.lastAgentStartSpeakingTime < 2000)) {
             console.log(
-              `🛡️ [${session.callSid}] Barge-in ignorado (Protección temprana < 800ms) - Posible eco o ruido inicial`,
+              `🛡️ [${session.callSid}] Barge-in ignorado (Protección temprana < 2000ms) - Posible eco o ruido inicial`,
             );
             break;
           }
 
           if ((session.agentSpeaking && session.currentTTSRequest) && !session.interrupted) {
             console.log(
-              `🛑 [${session.callSid}] ¡Barge-in detectado (UserStarted)! Usuario interrumpió al agente - deteniendo instantáneamente`,
+              `🛑 [${session.callSid}] ¡Barge-in confirmado! Usuario interrumpió al agente - deteniendo instantáneamente`,
             );
             session.interrupted = true;
             session.agentSpeaking = false;
