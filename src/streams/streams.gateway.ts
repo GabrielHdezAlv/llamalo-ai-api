@@ -1284,6 +1284,11 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       // Cola de promesas para garantizar que las frases se envíen a ElevenLabs y se reproduzcan en orden
       let ttsQueue = Promise.resolve();
+      
+      // FIX CRÍTICO: Asegurarse de que interrupted sea false antes de empezar el stream del LLM
+      session.interrupted = false;
+      console.log(`🛡️ [${session.callSid}] Reseteando session.interrupted=false antes de stream LLM`);
+
       let fullResponse = '';
       let sentenceBuffer = '';
       let functionCallName = '';
@@ -2159,6 +2164,13 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               console.log(
                 `⚠️ [${session.callSid}] Ignorando ConversationText de Deepgram (role: ${role || 'desconocido'}) - Deepgram solo debe transcribir`,
               );
+              
+              // Si detectamos que Deepgram está transcribiendo al asistente, es eco. 
+              // Renovamos la protección de barge-in para evitar que este eco corte la siguiente frase.
+              if (role === 'assistant') {
+                 console.log(`🛡️ [${session.callSid}] Eco del asistente detectado. Renovando protección de barge-in.`);
+                 session.lastAgentStartSpeakingTime = Date.now();
+              }
             }
           } else {
             console.warn(
