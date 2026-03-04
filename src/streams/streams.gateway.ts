@@ -1287,7 +1287,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       
       // FIX CRÍTICO: Asegurarse de que interrupted sea false antes de empezar el stream del LLM
       session.interrupted = false;
-      console.log(`🛡️ [${session.callSid}] Reseteando session.interrupted=false antes de stream LLM`);
 
       let fullResponse = '';
       let sentenceBuffer = '';
@@ -2032,11 +2031,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         return;
       }
 
-      // Loggear eventos interesantes
-      if (['UserStartedSpeaking', 'SpeechStarted', 'UtteranceEnd'].includes(type)) {
-         console.log(`🔍 [${session.callSid}] Deepgram Evento Crítico: ${type} at ${Date.now()}`);
-      }
-
       switch (type) {
         case 'Welcome':
           session.deepgramRequestId = this.asText(message.request_id);
@@ -2083,9 +2077,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           // 🔥 FIX: Protección contra Barge-in temprano (eco inicial o ruido de línea)
           // Ignorar interrupciones durante los primeros 2000ms desde que el agente empezó a hablar
           if (session.lastAgentStartSpeakingTime && (Date.now() - session.lastAgentStartSpeakingTime < 2000)) {
-            console.log(
-              `🛡️ [${session.callSid}] Barge-in ignorado (Protección temprana < 2000ms) - Posible eco o ruido inicial`,
-            );
+            // console.log(`ℹ️ [${session.callSid}] Barge-in ignorado (<2000ms)`);
             break;
           }
 
@@ -2093,7 +2085,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             console.log(
               `🛑 [${session.callSid}] ¡Barge-in confirmado! Usuario interrumpió al agente - deteniendo instantáneamente`,
             );
-            this.interruptSession(session, 'UserStartedSpeaking (Barge-in)');
+            session.interrupted = true;
             session.agentSpeaking = false;
 
             // Cancelar cualquier TTS en progreso
@@ -2121,8 +2113,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
             // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
             if (session.streamSid) {
-              // TEMPORAL: Comentar el 'clear' para debuggear si esto está matando el audio
-              /*
               session.client.send(
                 JSON.stringify({
                   event: 'clear',
@@ -2131,10 +2121,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               );
               console.log(
                 `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
-              );
-              */
-               console.log(
-                `🧹 [${session.callSid}] Comando 'clear' OMITIDO por debugging.`,
               );
             }
 
@@ -2183,7 +2169,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               // Si detectamos que Deepgram está transcribiendo al asistente, es eco. 
               // Renovamos la protección de barge-in para evitar que este eco corte la siguiente frase.
               if (role === 'assistant') {
-                 console.log(`🛡️ [${session.callSid}] Eco del asistente detectado. Renovando protección de barge-in.`);
+                 // console.log(`ℹ️ [${session.callSid}] Eco asistente detectado (protección extendida)`);
                  session.lastAgentStartSpeakingTime = Date.now();
               }
             }
@@ -2710,12 +2696,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         error,
       );
     }
-  }
-
-  private interruptSession(session: CallSession, reason: string) {
-    console.log(`🧨 [${session.callSid}] INTERRUPCIÓN DISPARADA por: ${reason} at ${Date.now()}`);
-    // console.log(new Error().stack); // Stack trace para ver quién llamó
-    session.interrupted = true;
   }
 
   private startKeepAlive(session: CallSession) {
