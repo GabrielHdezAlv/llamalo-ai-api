@@ -1291,6 +1291,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       let fullResponse = '';
       let sentenceBuffer = '';
       let isFirstChunk = true; // Para detectar el primer fragmento de la respuesta
+      let functionCallName = '';
+      let functionCallArgs = '';
 
       // Puntuaciones que indican un buen lugar para cortar y enviar a hablar
       const strongEnders = new Set(['.', '!', '?', '\n']);
