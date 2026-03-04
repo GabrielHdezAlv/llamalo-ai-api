@@ -1705,6 +1705,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       return;
     }
 
+    // No interrumpir aquí basado solo en flujo de audio crudo (eco del agente dispararía barge-in)
+    // Dejar que el proveedor STT (Deepgram) determine SpeechStarted/UserStartedSpeaking
+    /*
     if (!session.userSpeakingStartTime) {
       session.userSpeakingStartTime = Date.now();
     }
@@ -1714,6 +1717,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         session.ttsCancelStream();
       }
     }
+    */
     if (this.usingElevenLabs(session)) {
       this.sendAudioChunkToElevenLabs(session, chunk);
     } else {
@@ -2089,7 +2093,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             console.log(
               `🛑 [${session.callSid}] ¡Barge-in confirmado! Usuario interrumpió al agente - deteniendo instantáneamente`,
             );
-            session.interrupted = true;
+            this.interruptSession(session, 'UserStartedSpeaking (Barge-in)');
             session.agentSpeaking = false;
 
             // Cancelar cualquier TTS en progreso
@@ -2706,6 +2710,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         error,
       );
     }
+  }
+
+  private interruptSession(session: CallSession, reason: string) {
+    console.log(`🧨 [${session.callSid}] INTERRUPCIÓN DISPARADA por: ${reason} at ${Date.now()}`);
+    // console.log(new Error().stack); // Stack trace para ver quién llamó
+    session.interrupted = true;
   }
 
   private startKeepAlive(session: CallSession) {
