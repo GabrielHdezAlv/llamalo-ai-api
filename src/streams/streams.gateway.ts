@@ -2028,6 +2028,11 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         return;
       }
 
+      // Loggear eventos interesantes
+      if (['UserStartedSpeaking', 'SpeechStarted', 'UtteranceEnd'].includes(type)) {
+         console.log(`🔍 [${session.callSid}] Deepgram Evento Crítico: ${type} at ${Date.now()}`);
+      }
+
       switch (type) {
         case 'Welcome':
           session.deepgramRequestId = this.asText(message.request_id);
@@ -2112,6 +2117,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
             // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
             if (session.streamSid) {
+              // TEMPORAL: Comentar el 'clear' para debuggear si esto está matando el audio
+              /*
               session.client.send(
                 JSON.stringify({
                   event: 'clear',
@@ -2120,6 +2127,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               );
               console.log(
                 `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
+              );
+              */
+               console.log(
+                `🧹 [${session.callSid}] Comando 'clear' OMITIDO por debugging.`,
               );
             }
 
