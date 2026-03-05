@@ -1885,40 +1885,28 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   }
 
   private enqueueOutboundFrames(session: CallSession, audioChunk: Buffer) {
-    session.outboundBuffer = Buffer.concat([
-      session.outboundBuffer ?? Buffer.alloc(0),
-      audioChunk,
-    ]);
+    // En lugar de usar un setTimeout rígido de 20ms que puede causar entrecortes (jitter)
+    // por la latencia del event loop de Node.js, enviamos el chunk directamente.
+    // Twilio tiene su propio jitter buffer interno para manejar la cadencia,
+    // y aceptará ráfagas (bursts) más rápidas que el tiempo real.
+    if (!audioChunk || audioChunk.length === 0) return;
 
-    const sendFrame = () => {
-      if (!session.outboundBuffer || session.outboundBuffer.length < 160) {
-        session.outboundSendTimer = undefined;
-        return;
-      }
-      const frame = session.outboundBuffer.subarray(0, 160);
-      session.outboundBuffer = session.outboundBuffer.subarray(160);
-      try {
-        session.client.send(
-          JSON.stringify({
-            event: 'media',
-            streamSid: session.streamSid,
-            media: {
-              payload: frame.toString('base64'),
-              track: 'outbound',
-            },
-          }),
-        );
-      } catch (err) {
-        console.error(
-          `❌ [${session.callSid}] Error enviando frame a Twilio:`,
-          err,
-        );
-      }
-      session.outboundSendTimer = setTimeout(sendFrame, 20);
-    };
-
-    if (!session.outboundSendTimer) {
-      session.outboundSendTimer = setTimeout(sendFrame, 0);
+    try {
+      session.client.send(
+        JSON.stringify({
+          event: 'media',
+          streamSid: session.streamSid,
+          media: {
+            payload: audioChunk.toString('base64'),
+            track: 'outbound',
+          },
+        }),
+      );
+    } catch (err) {
+      console.error(
+        `❌ [${session.callSid}] Error enviando chunk a Twilio:`,
+        err,
+      );
     }
   }
 
