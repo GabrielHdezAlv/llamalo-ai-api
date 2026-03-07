@@ -1448,9 +1448,14 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
-        session.history.push({ role: 'assistant', content: fullResponse.trim() });
+        const finalContent = session.interrupted 
+          ? fullResponse.trim() + ' [Interrumpido por el usuario antes de terminar]' 
+          : fullResponse.trim();
+          
+        session.history.push({ role: 'assistant', content: finalContent });
+        
         console.log(
-          `💬 Respuesta LLM (Stream Completo): "${fullResponse.substring(0, 120)}${fullResponse.length > 120 ? '...' : ''}"`,
+          `💬 Respuesta LLM (Stream Completo${session.interrupted ? ' - Interrumpido' : ''}): "${finalContent.substring(0, 120)}${finalContent.length > 120 ? '...' : ''}"`,
         );
       }
 
@@ -2065,13 +2070,15 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           // Si el LLM está pensando y aún no ha reproducido nada, ignoramos esto para no auto-cortar la llamada por eco.
 
           // 🔥 FIX: Protección contra Barge-in temprano (eco inicial o ruido de línea)
-          // Ignorar interrupciones durante los primeros 2000ms desde que el agente empezó a hablar
-          if (session.lastAgentStartSpeakingTime && (Date.now() - session.lastAgentStartSpeakingTime < 2000)) {
-            // console.log(`ℹ️ [${session.callSid}] Barge-in ignorado (<2000ms)`);
+          // Ignorar interrupciones durante los primeros 1500ms desde que el agente empezó a hablar (reducido para mejor respuesta)
+          if (session.lastAgentStartSpeakingTime && (Date.now() - session.lastAgentStartSpeakingTime < 1500)) {
+            // console.log(`ℹ️ [${session.callSid}] Barge-in ignorado (<1500ms)`);
             break;
           }
 
-          if ((session.agentSpeaking && session.currentTTSRequest) && !session.interrupted) {
+          // Verificamos si el agente está hablando. Ya no verificamos currentTTSRequest porque el buffer puede
+          // estar enviando audio aunque la petición a ElevenLabs haya terminado.
+          if (session.agentSpeaking && !session.interrupted) {
             console.log(
               `🛑 [${session.callSid}] ¡Barge-in confirmado! Usuario interrumpió al agente - deteniendo instantáneamente`,
             );
