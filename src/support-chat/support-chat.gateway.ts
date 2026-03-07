@@ -42,6 +42,7 @@ interface SupportVoiceSession {
   pendingTranscript: string;
   transcriptDebounceTimer?: NodeJS.Timeout;
   llmProcessing: boolean;
+  expectedAudioEndTime?: number;
 }
 
 interface RateLimitEntry {
@@ -399,11 +400,22 @@ export class SupportChatGateway {
           break;
 
         case 'UserStartedSpeaking':
-          if (session.agentSpeaking && session.allowInterruptions) {
-            this.logger.log(`🛑 [SupportVoice] Interrupción detectada (Barge-in), silenciando agente`);
+          // Verificamos si el agente está hablando o si hay audio encolado reproduciéndose
+          const isPlayingAudio =
+            session.expectedAudioEndTime &&
+            session.expectedAudioEndTime > Date.now();
+
+          if (
+            (session.agentSpeaking || isPlayingAudio) &&
+            session.allowInterruptions
+          ) {
+            this.logger.log(
+              `🛑 [SupportVoice] Interrupción detectada (Barge-in), silenciando agente`,
+            );
             session.interrupted = true;
             session.agentSpeaking = false;
-            
+            session.expectedAudioEndTime = 0;
+
             if (session.ttsCancelStream) {
               session.ttsCancelStream();
               session.ttsCancelStream = undefined;
@@ -536,7 +548,7 @@ export class SupportChatGateway {
     // Si el usuario habla, forzamos la interrupción del audio que esté sonando
     session.interrupted = true;
     session.agentSpeaking = false;
-    
+
     if (session.ttsCancelStream) {
       session.ttsCancelStream();
       session.ttsCancelStream = undefined;
@@ -562,18 +574,21 @@ export class SupportChatGateway {
           type: 'function',
           function: {
             name: 'escalar_a_soporte_humano',
-            description: 'Envía un ticket o correo de soporte al equipo humano. Úsalo SOLO cuando el usuario solicite explícitamente hablar con un humano o tenga un problema técnico complejo que no puedas resolver.',
+            description:
+              'Envía un ticket o correo de soporte al equipo humano. Úsalo SOLO cuando el usuario solicite explícitamente hablar con un humano o tenga un problema técnico complejo que no puedas resolver.',
             parameters: {
               type: 'object',
               properties: {
                 resumen_problema: {
                   type: 'string',
-                  description: 'Un resumen detallado del problema que tiene el usuario, incluyendo pasos intentados si los hay.',
+                  description:
+                    'Un resumen detallado del problema que tiene el usuario, incluyendo pasos intentados si los hay.',
                 },
                 telefono_usuario: {
                   type: 'string',
-                  description: 'El teléfono del usuario si te lo ha proporcionado en la llamada o chat. Si no lo sabes, pon "No proporcionado".',
-                }
+                  description:
+                    'El teléfono del usuario si te lo ha proporcionado en la llamada o chat. Si no lo sabes, pon "No proporcionado".',
+                },
               },
               required: ['resumen_problema'],
             },
@@ -610,7 +625,9 @@ export class SupportChatGateway {
 
       for await (const chunk of stream) {
         if (session.interrupted) {
-          this.logger.log(`🛑 [SupportVoice] Generación LLM interrumpida por el usuario.`);
+          this.logger.log(
+            `🛑 [SupportVoice] Generación LLM interrumpida por el usuario.`,
+          );
           break;
         }
 
@@ -648,7 +665,8 @@ export class SupportChatGateway {
           // Lógica de chunking para el TTS
           const lastChar = token.slice(-1);
           const isSentenceEnd = sentenceEnders.has(lastChar);
-          const isPauseEnd = pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8;
+          const isPauseEnd =
+            pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8;
 
           if (isSentenceEnd || isPauseEnd) {
             const sentenceToSend = sentenceBuffer.trim();
@@ -679,8 +697,13 @@ export class SupportChatGateway {
       await ttsQueue;
 
       // --- MANEJO DE TOOLS (LLAMADA A FUNCIONES) ---
-      if (functionCallName === 'escalar_a_soporte_humano' && !session.interrupted) {
-        this.logger.log(`📧 [SupportVoice] Ejecutando tool: ${functionCallName}`);
+      if (
+        functionCallName === 'escalar_a_soporte_humano' &&
+        !session.interrupted
+      ) {
+        this.logger.log(
+          `📧 [SupportVoice] Ejecutando tool: ${functionCallName}`,
+        );
         try {
           const args = JSON.parse(functionCallArgs);
           const { resumen_problema, telefono_usuario } = args;
@@ -688,12 +711,18 @@ export class SupportChatGateway {
           // Intentar obtener el email real del usuario desde Firestore
           let userEmail: string | undefined = undefined;
           try {
-            const userDoc = await admin.firestore().collection('users').doc(session.userId).get();
+            const userDoc = await admin
+              .firestore()
+              .collection('users')
+              .doc(session.userId)
+              .get();
             if (userDoc.exists) {
               userEmail = userDoc.data()?.email;
             }
           } catch (error) {
-            this.logger.warn(`⚠️ No se pudo obtener el email del usuario ${session.userId} desde Firestore: ${error}`);
+            this.logger.warn(
+              `⚠️ No se pudo obtener el email del usuario ${session.userId} desde Firestore: ${error}`,
+            );
           }
 
           // Enviar el email
@@ -714,7 +743,10 @@ export class SupportChatGateway {
                 {
                   id: toolCallId,
                   type: 'function',
-                  function: { name: functionCallName, arguments: functionCallArgs },
+                  function: {
+                    name: functionCallName,
+                    arguments: functionCallArgs,
+                  },
                 },
               ],
             } as any);
@@ -724,7 +756,8 @@ export class SupportChatGateway {
               tool_call_id: toolCallId,
               content: JSON.stringify({
                 success: true,
-                message: 'Ticket enviado a soporte correctamente. El equipo humano contactará con el usuario.',
+                message:
+                  'Ticket enviado a soporte correctamente. El equipo humano contactará con el usuario.',
               }),
             } as any);
 
@@ -734,8 +767,11 @@ export class SupportChatGateway {
               '(SISTEMA: El ticket ha sido enviado con éxito. Confirma al usuario que el equipo de soporte le contactará pronto. Sé breve y profesional.)',
             );
           } catch (emailError) {
-            this.logger.error(`❌ [SupportVoice] Error al enviar email de soporte:`, emailError);
-            
+            this.logger.error(
+              `❌ [SupportVoice] Error al enviar email de soporte:`,
+              emailError,
+            );
+
             // Si el email falla, informamos al LLM para que le pida al usuario escribir directamente
             return this.handleFinalTranscript(
               session,
@@ -749,12 +785,15 @@ export class SupportChatGateway {
 
       // Finalizar el mensaje en el frontend
       if (fullResponse.trim()) {
-        session.history.push({ role: 'assistant', content: fullResponse.trim() });
+        session.history.push({
+          role: 'assistant',
+          content: fullResponse.trim(),
+        });
         this.sendJson(session.client, {
           type: 'transcript',
           role: 'assistant',
           text: fullResponse.trim(),
-          isFinal: true
+          isFinal: true,
         });
       }
     } catch (err) {
@@ -786,7 +825,9 @@ export class SupportChatGateway {
       }
       return '';
     } catch (error) {
-      this.logger.warn(`⚠️ Error leyendo archivo estático ${filePath}: ${error}`);
+      this.logger.warn(
+        `⚠️ Error leyendo archivo estático ${filePath}: ${error}`,
+      );
       return '';
     }
   }
@@ -798,26 +839,44 @@ export class SupportChatGateway {
     let prompt = session.config.agentInstruction;
 
     // Detectar si el agente configurado es "Xenon" para inyectar su personalidad específica
-    const isXenon = session.config.name?.toLowerCase().includes('xenon') || prompt.toLowerCase().includes('xenon');
+    const isXenon =
+      session.config.name?.toLowerCase().includes('xenon') ||
+      prompt.toLowerCase().includes('xenon');
 
     if (isXenon) {
-      this.logger.log(`🤖 [SupportVoice] Xenon detectado, inyectando personalidad y conocimiento base...`);
-      const xenonPersona = this.readStaticFile('src/knowledge/llamalo-ai/xenon-persona.md');
-      const llamaloFeatures = this.readStaticFile('src/knowledge/llamalo-ai/features.txt');
-      const llamaloPricing = this.readStaticFile('src/knowledge/llamalo-ai/pricing.txt');
-      const llamaloTroubleshooting = this.readStaticFile('src/knowledge/llamalo-ai/troubleshooting.txt');
-      const llamaloSitemap = this.readStaticFile('src/knowledge/llamalo-ai/sitemap.txt');
+      this.logger.log(
+        `🤖 [SupportVoice] Xenon detectado, inyectando personalidad y conocimiento base...`,
+      );
+      const xenonPersona = this.readStaticFile(
+        'src/knowledge/llamalo-ai/xenon-persona.md',
+      );
+      const llamaloFeatures = this.readStaticFile(
+        'src/knowledge/llamalo-ai/features.txt',
+      );
+      const llamaloPricing = this.readStaticFile(
+        'src/knowledge/llamalo-ai/pricing.txt',
+      );
+      const llamaloTroubleshooting = this.readStaticFile(
+        'src/knowledge/llamalo-ai/troubleshooting.txt',
+      );
+      const llamaloSitemap = this.readStaticFile(
+        'src/knowledge/llamalo-ai/sitemap.txt',
+      );
 
       if (xenonPersona) {
         // Reemplazar las instrucciones base por las de Xenon
         prompt = xenonPersona;
       }
-      
+
       let companyKnowledge = '';
-      if (llamaloFeatures) companyKnowledge += `\n\n--- FUNCIONALIDADES ---\n${llamaloFeatures}`;
-      if (llamaloPricing) companyKnowledge += `\n\n--- PRECIOS ---\n${llamaloPricing}`;
-      if (llamaloTroubleshooting) companyKnowledge += `\n\n--- TROUBLESHOOTING ---\n${llamaloTroubleshooting}`;
-      if (llamaloSitemap) companyKnowledge += `\n\n--- GUÍA DE LA PLATAFORMA (SITEMAP) ---\n${llamaloSitemap}`;
+      if (llamaloFeatures)
+        companyKnowledge += `\n\n--- FUNCIONALIDADES ---\n${llamaloFeatures}`;
+      if (llamaloPricing)
+        companyKnowledge += `\n\n--- PRECIOS ---\n${llamaloPricing}`;
+      if (llamaloTroubleshooting)
+        companyKnowledge += `\n\n--- TROUBLESHOOTING ---\n${llamaloTroubleshooting}`;
+      if (llamaloSitemap)
+        companyKnowledge += `\n\n--- GUÍA DE LA PLATAFORMA (SITEMAP) ---\n${llamaloSitemap}`;
 
       if (companyKnowledge) {
         prompt += `\n\n--- CONOCIMIENTO DE EMPRESA ---\nUtiliza esta información para responder a las dudas del usuario:\n${companyKnowledge}\n--- FIN CONOCIMIENTO EMPRESA ---`;
@@ -974,6 +1033,17 @@ export class SupportChatGateway {
 
         try {
           session.client.send(Buffer.from(chunk));
+          // Estimar duración del chunk en ms (8000Hz, 1 byte/muestra -> 8 bytes/ms)
+          const chunkDurationMs = Math.floor(chunk.length / 8);
+          const now = Date.now();
+          if (
+            !session.expectedAudioEndTime ||
+            session.expectedAudioEndTime < now
+          ) {
+            session.expectedAudioEndTime = now + chunkDurationMs;
+          } else {
+            session.expectedAudioEndTime += chunkDurationMs;
+          }
         } catch (err) {
           this.logger.error(
             `❌ [SupportVoice] Error enviando audio al cliente:`,
@@ -1021,7 +1091,7 @@ export class SupportChatGateway {
       type: 'transcript',
       role: 'assistant',
       text: greeting,
-      isFinal: true
+      isFinal: true,
     });
     this.sendJson(session.client, { type: 'agent.speaking' });
 

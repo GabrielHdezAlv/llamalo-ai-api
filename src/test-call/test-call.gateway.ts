@@ -68,6 +68,7 @@ interface TestCallSession {
   transcriptDebounceTimer?: NodeJS.Timeout;
   // Lock para evitar llamadas LLM concurrentes
   llmProcessing: boolean;
+  expectedAudioEndTime?: number;
 }
 
 interface RateLimitEntry {
@@ -435,10 +436,19 @@ export class TestCallGateway {
           break;
 
         case 'UserStartedSpeaking':
-          if (session.agentSpeaking && session.allowInterruptions) {
+          // Verificamos si el agente está hablando o si hay audio encolado reproduciéndose
+          const isPlayingAudio =
+            session.expectedAudioEndTime &&
+            session.expectedAudioEndTime > Date.now();
+
+          if (
+            (session.agentSpeaking || isPlayingAudio) &&
+            session.allowInterruptions
+          ) {
             console.log(`🛑 [TestCall] Usuario interrumpió al agente`);
             session.interrupted = true;
             session.agentSpeaking = false;
+            session.expectedAudioEndTime = 0;
             if (session.ttsCancelStream) {
               session.ttsCancelStream();
               session.ttsCancelStream = undefined;
@@ -765,6 +775,17 @@ export class TestCallGateway {
 
         try {
           session.client.send(Buffer.from(chunk));
+          // Estimar duración del chunk en ms (8000Hz, 1 byte/muestra -> 8 bytes/ms)
+          const chunkDurationMs = Math.floor(chunk.length / 8);
+          const now = Date.now();
+          if (
+            !session.expectedAudioEndTime ||
+            session.expectedAudioEndTime < now
+          ) {
+            session.expectedAudioEndTime = now + chunkDurationMs;
+          } else {
+            session.expectedAudioEndTime += chunkDurationMs;
+          }
         } catch (err) {
           console.error(
             `❌ [TestCall] Error enviando audio al navegador:`,
