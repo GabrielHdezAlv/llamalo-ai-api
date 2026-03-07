@@ -1148,6 +1148,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   }
 
   private async handleFinalTranscript(session: CallSession, text: string) {
+    // 🛑 DETENER TEMPORIZADOR DE SILENCIO: El agente va a procesar y hablar
+    this.stopSilenceTimer(session);
+
     console.log(
       `[Latency Debug] handleFinalTranscript llamado - session.userId: ${session.userId}, twilioAccountId: ${session.customParameters?.twilioAccountId}, userSpeakingStartTime: ${session.userSpeakingStartTime}`,
     );
@@ -1454,6 +1457,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       // Marcar que el agente terminó de hablar solo si no fue interrumpido por otro proceso
       if (!session.interrupted) {
         session.agentSpeaking = false;
+        // 🟢 REINICIAR TEMPORIZADOR DE SILENCIO: El agente terminó, ahora esperamos al usuario
+        this.resetSilenceTimer(session);
       }
       session.interceptedResponseText = '';
     } catch (err) {
@@ -2102,6 +2107,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
                 `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
               );
             }
+
+            // Al interrumpir, reiniciamos la espera porque el usuario ha tomado el turno
+            this.resetSilenceTimer(session);
 
             console.log(
               `🧹 Estado del agente limpiado completamente por interrupción`,
@@ -2799,6 +2807,17 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   private cleanupSession(callSid: string) {
     const session = this.sessions.get(callSid);
     if (!session) return;
+
+    // Calcular y loguear la media de latencia de la llamada
+    if (session.responseLatencies && session.responseLatencies.length > 0) {
+      const sum = session.responseLatencies.reduce((acc, val) => acc + val, 0);
+      const avg = Math.round(sum / session.responseLatencies.length);
+      console.log(
+        `📊 [${callSid}] Resumen de Latencia de la Llamada: Media ${avg}ms en ${session.responseLatencies.length} interacciones. (Tiempos: ${session.responseLatencies.join('ms, ')}ms)`,
+      );
+    } else {
+      console.log(`📊 [${callSid}] Resumen de Latencia de la Llamada: No hubo interacciones registradas.`);
+    }
 
     this.stopKeepAlive(session);
     this.stopSilenceTimer(session); // Detener temporizador de silencio al limpiar sesión
