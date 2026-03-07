@@ -92,7 +92,6 @@ interface CallSession {
   language?: string;
   queuedAudio: Buffer[];
   outboundBuffer?: Buffer;
-  outboundSendTimer?: NodeJS.Timeout;
   readyForAudio: boolean;
   pendingGreeting?: string;
   greetingSent: boolean;
@@ -139,7 +138,7 @@ export class StreamsGateway {
   private readonly elevenLabsTtsVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP';
 
-  private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const; // Para Twilio usamos μ-law 8k directo (evita conversión adicional)
+  private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const; // Solicitar mu-law nativo para passthrough directo a Twilio
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Usar Flash v2.5 para latencia ultra-baja (<100ms) en producción
   private readonly elevenLabsTtsStability = Number(
@@ -1132,6 +1131,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               session.ttsCancelStream = undefined;
             }
 
+            session.outboundBuffer = Buffer.alloc(0);
+
             // Vaciar el buffer de Twilio instantáneamente
             if (session.streamSid) {
               session.client.send(
@@ -1158,6 +1159,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     session.interrupted = false;
     session.agentSpeaking = false;
     session.interceptedResponseText = '';
+    session.outboundBuffer = Buffer.alloc(0);
 
     // 🔥 FIX: Corrección dinámica para nombres de empresas
     const correctedText = await this.basicCompanyCorrection(text, session);
@@ -1347,7 +1349,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               ttsQueue = ttsQueue.then(async () => {
                 if (!session.interrupted) {
                   // console.log(`🔊 [${session.callSid}] Enviando chunk a TTS: "${currentSentence}"`);
-                  await this.streamTTSFromText(session, currentSentence);
+                  await this.streamElevenLabsTTS(session, currentSentence);
                 }
               });
             }
@@ -1362,7 +1364,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         ttsQueue = ttsQueue.then(async () => {
           if (!session.interrupted) {
             // console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
-            await this.streamTTSFromText(session, remainingText);
+            await this.streamElevenLabsTTS(session, remainingText);
           }
         });
       }
@@ -1840,38 +1842,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     }
 
     try {
-      let audioChunk = chunk;
-      const normalizedFormat = this.normalizeTtsFormat(
-        ttsFormat ?? this.elevenLabsTtsOutputFormat,
-      );
-
-      // Guardarraíl: si detectamos MP3 en relay, decodificar y reconvertir
-      if (this.isMp3Header(audioChunk)) {
-        console.warn(
-          `⚠️ [${session.callSid}] Chunk con cabecera MP3 en relay; decodificando a PCM16k`,
-        );
-        const pcm16k = await this.decodeMp3ToPcm16k(audioChunk);
-        audioChunk = pcm16k;
-      }
-
-      const { payload, stripped } = this.stripWavHeaderIfPresent(audioChunk);
-      if (stripped) {
-        console.log(
-          `ℹ️ [${session.callSid}] Cabecera WAV detectada en TTS; se envía payload μ-law crudo`,
-        );
-        audioChunk = payload;
-      }
-
-      if (normalizedFormat === 'pcm_16000') {
-        audioChunk = this.convertPcm16kToUlaw8k(audioChunk);
-      } else if (normalizedFormat !== 'ulaw_8000') {
-        // Formato inesperado; enviar tal cual pero loguear advertencia
-        console.warn(
-          `⚠️ [${session.callSid}] Formato TTS no μ-law/PCM16k (${String(normalizedFormat)}); se envía sin convertir`,
-        );
-      }
-
-      this.enqueueOutboundFrames(session, audioChunk);
+      // ElevenLabs con 'ulaw_8000' puede añadir una pequeña cabecera WAV al principio del primer chunk del stream.
+      // La quitamos por seguridad para asegurar que a Twilio solo le llegue payload de audio crudo.
+      const { payload } = this.stripWavHeaderIfPresent(chunk);
+      
+      // Enviamos directamente a la cola de salida sin conversiones costosas (Passthrough directo).
+      this.enqueueOutboundFrames(session, payload);
     } catch (error) {
       console.error(
         `❌ [${session.callSid}] Error enviando audio a Twilio:`,
@@ -1885,28 +1861,39 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   }
 
   private enqueueOutboundFrames(session: CallSession, audioChunk: Buffer) {
-    // En lugar de usar un setTimeout rígido de 20ms que puede causar entrecortes (jitter)
-    // por la latencia del event loop de Node.js, enviamos el chunk directamente.
-    // Twilio tiene su propio jitter buffer interno para manejar la cadencia,
-    // y aceptará ráfagas (bursts) más rápidas que el tiempo real.
     if (!audioChunk || audioChunk.length === 0) return;
 
-    try {
-      session.client.send(
-        JSON.stringify({
-          event: 'media',
-          streamSid: session.streamSid,
-          media: {
-            payload: audioChunk.toString('base64'),
-            track: 'outbound',
-          },
-        }),
-      );
-    } catch (err) {
-      console.error(
-        `❌ [${session.callSid}] Error enviando chunk a Twilio:`,
-        err,
-      );
+    // Empaquetador de frames (Frame Packer): Acumulamos el audio entrante
+    session.outboundBuffer = session.outboundBuffer
+      ? Buffer.concat([session.outboundBuffer, audioChunk])
+      : audioChunk;
+
+    // Twilio espera exactamente 160 bytes por frame (20ms de audio ulaw 8000Hz)
+    const FRAME_SIZE = 160;
+
+    // Mientras tengamos suficientes bytes para formar un frame completo, lo enviamos.
+    // Al no usar temporizadores (setTimeout), eliminamos el jitter introducido por Node.js.
+    while (session.outboundBuffer.length >= FRAME_SIZE) {
+      const frame = session.outboundBuffer.subarray(0, FRAME_SIZE);
+      session.outboundBuffer = session.outboundBuffer.subarray(FRAME_SIZE);
+
+      try {
+        session.client.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid: session.streamSid,
+            media: {
+              payload: frame.toString('base64'),
+              track: 'outbound',
+            },
+          }),
+        );
+      } catch (err) {
+        console.error(
+          `❌ [${session.callSid}] Error enviando frame a Twilio:`,
+          err,
+        );
+      }
     }
   }
 
@@ -2099,12 +2086,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
             // Limpiar texto interceptado
             session.interceptedResponseText = '';
-
-            // Detener el envío de audio buffered
-            if (session.outboundSendTimer) {
-              clearTimeout(session.outboundSendTimer);
-              session.outboundSendTimer = undefined;
-            }
 
             // Limpiar buffer de audio saliente
             session.outboundBuffer = Buffer.alloc(0);
@@ -2369,6 +2350,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     await session.currentTTSRequest;
   }
 
+  /**
+   * Obtiene o crea una conexión WebSocket persistente con ElevenLabs para reducir latencia.
+   */
   private async streamElevenLabsTTS(
     session: CallSession,
     text: string,
@@ -2818,11 +2802,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
     this.stopKeepAlive(session);
     this.stopSilenceTimer(session); // Detener temporizador de silencio al limpiar sesión
-
-    if (session.outboundSendTimer) {
-      clearTimeout(session.outboundSendTimer);
-      session.outboundSendTimer = undefined;
-    }
 
     if (session.ttsCancelStream) {
       session.ttsCancelStream();
