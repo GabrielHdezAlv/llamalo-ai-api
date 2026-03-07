@@ -308,7 +308,7 @@ export class CallsController {
           : undefined;
 
       addStreamParameter('instructions', agentInstruction);
-      
+
       // Pasar el ID del agente para que StreamsGateway cargue el conocimiento asíncronamente
       if (agentData.agentId) {
         addStreamParameter('agentId', agentData.agentId.toString());

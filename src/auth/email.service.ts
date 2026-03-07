@@ -214,7 +214,9 @@ Este es un correo automático generado por Xenon.
       return { success: true, messageId: info.messageId };
     } catch (error) {
       this.logger.error(`❌ Error al enviar ticket de soporte:`, error);
-      throw new Error(`No se pudo enviar el ticket de soporte: ${(error as Error).message}`);
+      throw new Error(
+        `No se pudo enviar el ticket de soporte: ${(error as Error).message}`,
+      );
     }
   }
 }
