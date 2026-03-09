@@ -1124,11 +1124,11 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         (session.agentSpeaking || session.currentTTSRequest) &&
         !session.interrupted
       ) {
-        // Solo interrumpimos si el ruido/voz detectado es algo consistente (más de 3 letras)
-        // para evitar ecos fantasmas.
-        if (text.trim().length > 3) {
+        // Solo interrumpimos si el ruido/voz detectado es algo consistente (más de 12 caracteres)
+        // para evitar que ruidos cortos o ecos corten al agente.
+        if (text.trim().length > 12) {
           console.log(
-            `🛑 [${session.callSid}] Usuario hablando por encima (parcial: "${text}"), interrumpiendo...`,
+            `🛑 [${session.callSid}] Interrupción por voz del usuario (parcial: "${text.substring(0, 30)}...")`,
           );
           session.interrupted = true;
           session.agentSpeaking = false;
