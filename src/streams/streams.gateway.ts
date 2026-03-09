@@ -223,15 +223,26 @@ export class StreamsGateway {
     return provider === 'elevenlabs';
   }
 
+  private fileCache = new Map<string, string>();
+
   /**
    * Helper para leer archivos estáticos (prompts, conocimiento).
    * Devuelve string vacío si el archivo no existe o hay error.
+   * OPTIMIZACIÓN: Usa cache en memoria para evitar lecturas de disco repetitivas.
    */
   private readStaticFile(filePath: string): string {
     try {
       const absolutePath = path.resolve(process.cwd(), filePath);
+
+      // Retornar del cache si ya existe
+      if (this.fileCache.has(absolutePath)) {
+        return this.fileCache.get(absolutePath)!;
+      }
+
       if (fs.existsSync(absolutePath)) {
-        return fs.readFileSync(absolutePath, 'utf8');
+        const content = fs.readFileSync(absolutePath, 'utf8');
+        this.fileCache.set(absolutePath, content);
+        return content;
       }
       return '';
     } catch (error) {
@@ -860,11 +871,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         return baseInstructions;
       }
 
-      // 1. Cargar reglas de voz
+      // 1. Cargar reglas de voz (Cachear para latencia)
       const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
 
-      // 2. Cargar conocimiento de empresa (ej. Xenon)
-      // Se carga siempre si el archivo existe. Si quieres condicionarlo, puedes hacerlo aquí
+      // 2. Cargar conocimiento de empresa (Cachear para latencia)
       const privacyPolicy = this.readStaticFile(
         'src/knowledge/xenon/privacy_policy.txt',
       );
@@ -881,7 +891,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           companyKnowledge += `\n### Términos y Condiciones:\n${terms}\n`;
       }
 
-      // 3. Cargar plantilla de Shopify
+      // 3. Cargar plantilla de Shopify (Cachear para latencia)
       let shopifyPromptTemplate = this.readStaticFile(
         'src/prompts/shopify-context.md',
       );
@@ -1169,28 +1179,38 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       );
     }
     try {
-      // Consultar datos de Shopify bajo demanda si el usuario necesita información fresca
-      // Si falla o hay timeout, se usa el cache existente en session.shopifyContext
-      try {
-        await this.queryShopifyDataIfNeeded(session, text);
-      } catch (error) {
-        // Manejar errores silenciosamente (usar cache existente)
-        console.warn(
-          `⚠️ [${session.callSid}] Error consultando datos Shopify bajo demanda (usando cache):`,
-          error instanceof Error ? error.message : String(error),
-        );
+      // 🚀 OPTIMIZACIÓN DE LATENCIA: Consultar Shopify solo si el mensaje es relevante
+      const lowerText = text.toLowerCase();
+      const isShopifyRelevant =
+        lowerText.includes('pedido') ||
+        lowerText.includes('orden') ||
+        lowerText.includes('compr') ||
+        lowerText.includes('rastre') ||
+        lowerText.includes('status') ||
+        lowerText.includes('donde esta');
+
+      if (isShopifyRelevant) {
+        try {
+          // Timeout agresivo para Shopify (1.5s) para no bloquear la llamada
+          await Promise.race([
+            this.queryShopifyDataIfNeeded(session, text),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Shopify Timeout')), 1500),
+            ),
+          ]);
+        } catch (error) {
+          // Si falla o hay timeout, se usa el cache existente en session.shopifyContext
+          console.warn(
+            `⚠️ [${session.callSid}] Shopify saltado por lentitud o error (usando cache).`,
+          );
+        }
       }
 
-      // Enriquecer las instrucciones con datos de Shopify si están disponibles
+      // Enriquecer las instrucciones con datos de Shopify
       let enrichedInstructions: string;
       try {
         enrichedInstructions = this.enrichInstructionsWithShopify(session);
       } catch (error) {
-        // Si falla el enriquecimiento, usar instrucciones base
-        console.warn(
-          `⚠️ [${session.callSid}] Error enriqueciendo instrucciones con Shopify (usando instrucciones base):`,
-          error instanceof Error ? error.message : String(error),
-        );
         enrichedInstructions = session.instructions;
       }
 
