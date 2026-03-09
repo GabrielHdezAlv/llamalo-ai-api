@@ -339,6 +339,10 @@ export class StreamsGateway {
       } catch (err) {
         console.error(
           `❌ [${callSid}] Error al cargar IDs de fuentes de conocimiento:`,
+          err,
+        );
+      }
+    }
 
     if (customParameters && !customParameters.shopDomain) {
       console.warn(`⚠️ [${callSid}] shopDomain NO está en customParameters`);

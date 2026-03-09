@@ -45,6 +45,10 @@ export class AgentKnowledgeService {
     }
   }
 
+  async getAgentKnowledgeSources(agentId: number): Promise<any[]> {
+    return this.knowledgeBaseService.getAgentKnowledgeSources(agentId);
+  }
+
   async createAgentWithKnowledge(
     userId: string,
     agentData: any,
