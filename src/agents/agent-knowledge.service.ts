@@ -7,16 +7,21 @@ export class AgentKnowledgeService {
 
   constructor(private readonly knowledgeBaseService: KnowledgeBaseService) {}
 
-  async searchAgentKnowledge(agentId: number, query: string): Promise<string> {
+  async searchAgentKnowledge(
+    agentId: number,
+    query: string,
+    preloadedSourceIds?: string[],
+  ): Promise<string> {
     try {
-      const agentSources =
-        await this.knowledgeBaseService.getAgentKnowledgeSources(agentId);
+      const sourceIds = preloadedSourceIds
+        ? preloadedSourceIds
+        : (await this.knowledgeBaseService.getAgentKnowledgeSources(agentId)).map(
+            (source) => source.id,
+          );
 
-      if (agentSources.length === 0) {
+      if (sourceIds.length === 0) {
         return '';
       }
-
-      const sourceIds = agentSources.map((source) => source.id);
       const searchResults = await this.knowledgeBaseService.searchKnowledge({
         query,
         sourceIds,

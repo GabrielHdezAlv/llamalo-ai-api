@@ -115,7 +115,7 @@ interface CallSession {
   userId?: string;
   userDocument?: admin.firestore.DocumentData; // Documento completo del usuario de Firestore
   shopifyContext?: ShopifyContext;
-  knowledgeSourceIds?: string[];
+  knowledgeSourceIds: string[];
   expectedAudioEndTime?: number;
 }
 
@@ -327,26 +327,18 @@ export class StreamsGateway {
       start?.customParameters,
     );
 
-    // 🔍 Cargar base de conocimiento asíncronamente si hay un agentId
+    // 🔍 Cargar IDs de fuentes de conocimiento asíncronamente si hay un agentId
+    let agentKnowledgeSourceIds: string[] = [];
     if (customParameters?.agentId) {
-      this.agentKnowledgeService
-        .searchAgentKnowledge(
-          Number(customParameters.agentId),
-          'información relevante del agente',
-        )
-        .then((knowledgeContext) => {
-          if (knowledgeContext && knowledgeContext.trim()) {
-            const currentInst = session.instructions;
-            session.instructions = `${currentInst}\n\n---\n\nCONTEXTO DE CONOCIMIENTO:\n${knowledgeContext.trim()}`;
-          }
-        })
-        .catch((err) => {
-          console.error(
-            `❌ [${callSid}] Error al cargar contexto de conocimiento asíncrono:`,
-            err,
+      try {
+        const agentSources =
+          await this.agentKnowledgeService.getAgentKnowledgeSources(
+            Number(customParameters.agentId),
           );
-        });
-    }
+        agentKnowledgeSourceIds = agentSources.map((source) => source.id);
+      } catch (err) {
+        console.error(
+          `❌ [${callSid}] Error al cargar IDs de fuentes de conocimiento:`,
 
     if (customParameters && !customParameters.shopDomain) {
       console.warn(`⚠️ [${callSid}] shopDomain NO está en customParameters`);
@@ -425,9 +417,7 @@ export class StreamsGateway {
       userId,
       userDocument: userDocumentData,
       shopifyContext: shopDomain ? { shopDomain } : undefined,
-      knowledgeSourceIds: customParameters?.knowledgeContext
-        ? [customParameters.knowledgeContext]
-        : [],
+      knowledgeSourceIds: agentKnowledgeSourceIds,
     };
 
     // 🆕 Tarea 1.3: Personalizar Saludo Inicial del Agente de Llamadas
