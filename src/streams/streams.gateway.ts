@@ -1305,6 +1305,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       let isFirstChunk = true; // Para detectar el primer fragmento de la respuesta
       let functionCallName = '';
       let functionCallArgs = '';
+      let shouldHangup = false;
 
       // Puntuaciones que indican un buen lugar para cortar y enviar a hablar
       const strongEnders = new Set(['.', '!', '?', '\n']);
@@ -1342,6 +1343,13 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         if (token) {
           fullResponse += token;
           sentenceBuffer += token;
+
+          // 🔍 Detectar señal de colgado [END_CALL]
+          if (sentenceBuffer.includes('[END_CALL]')) {
+            console.log(`🔚 [${session.callSid}] Señal [END_CALL] detectada en el stream.`);
+            shouldHangup = true;
+            sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/g, '');
+          }
 
           // Si el token contiene un fin de frase o la frase es suficientemente larga y encontramos una pausa
           const lastChar = token.slice(-1);
@@ -1483,10 +1491,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
+        let cleanedResponse = fullResponse.replace(/\[END_CALL\]/g, '').trim();
         const finalContent = session.interrupted
-          ? fullResponse.trim() +
-            ' [Interrumpido por el usuario antes de terminar]'
-          : fullResponse.trim();
+          ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
+          : cleanedResponse;
 
         session.history.push({ role: 'assistant', content: finalContent });
       }
@@ -1498,6 +1506,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         this.resetSilenceTimer(session);
       }
       session.interceptedResponseText = '';
+
+      // 🔚 Colgar si se detectó la señal [END_CALL]
+      if (shouldHangup && !session.interrupted) {
+        console.log(`🔚 [${session.callSid}] Ejecutando hangup tras [END_CALL]`);
+        await this.hangupCall(session);
+      }
     } catch (err) {
       console.error(
         `❌ [${session.callSid}] Error generando respuesta LLM:`,
@@ -2326,9 +2340,18 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   }
 
   private async streamTTSFromText(session: CallSession, text: string) {
-    if (session.interrupted || !text.trim()) {
+    let processedText = text;
+    let shouldHangup = false;
+
+    if (processedText.includes('[END_CALL]')) {
+      console.log(`🔚 [${session.callSid}] Señal [END_CALL] detectada en TTS manual.`);
+      shouldHangup = true;
+      processedText = processedText.replace(/\[END_CALL\]/g, '').trim();
+    }
+
+    if (session.interrupted || !processedText.trim()) {
       console.log(
-        `⏸️ TTS cancelado (interrupted: ${session.interrupted}, text vacío: ${!text.trim()})`,
+        `⏸️ TTS cancelado (interrupted: ${session.interrupted}, text vacío: ${!processedText.trim()})`,
       );
       return;
     }
@@ -2351,11 +2374,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     // Asegurar que no haya marca de interrupción previa antes de iniciar TTS
     session.interrupted = false;
 
-    session.currentTTSRequest = this.streamElevenLabsTTS(session, text)
-      .then(() => {
-        // console.log(
-        //   `✅ TTS completado para: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
-        // );
+    session.currentTTSRequest = this.streamElevenLabsTTS(session, processedText)
+      .then(async () => {
+        if (shouldHangup && !session.interrupted) {
+          console.log(`🔚 [${session.callSid}] Colgando tras completar TTS con [END_CALL]`);
+          await this.hangupCall(session);
+        }
       })
       .catch((error) => {
         if (!session.interrupted) {
