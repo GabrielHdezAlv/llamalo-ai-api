@@ -327,9 +327,6 @@ export class StreamsGateway {
           if (knowledgeContext && knowledgeContext.trim()) {
             const currentInst = session.instructions;
             session.instructions = `${currentInst}\n\n---\n\nCONTEXTO DE CONOCIMIENTO:\n${knowledgeContext.trim()}`;
-            console.log(
-              `🧠 [${callSid}] Contexto de conocimiento cargado asíncronamente (longitud: ${knowledgeContext.length})`,
-            );
           }
         })
         .catch((err) => {
@@ -340,38 +337,16 @@ export class StreamsGateway {
         });
     }
 
-    // 🔍 Debug: Log de todos los customParameters recibidos
-    if (customParameters && Object.keys(customParameters).length > 0) {
-      console.log(
-        `🔍 [${callSid}] CustomParameters recibidos:`,
-        Object.keys(customParameters).join(', '),
-      );
-      if (customParameters.userId) {
-        console.log(
-          `👤 [${callSid}] userId en customParameters: ${customParameters.userId}`,
-        );
-      }
-      if (customParameters.shopDomain) {
-        console.log(
-          `🛍️ [${callSid}] shopDomain en customParameters: ${customParameters.shopDomain}`,
-        );
-      } else {
-        console.warn(`⚠️ [${callSid}] shopDomain NO está en customParameters`);
-      }
-    } else {
+    if (customParameters && !customParameters.shopDomain) {
+      console.warn(`⚠️ [${callSid}] shopDomain NO está en customParameters`);
+    }
+    if (!customParameters || Object.keys(customParameters).length === 0) {
       console.warn(`⚠️ [${callSid}] No se recibieron customParameters`);
     }
 
-    if (customParameters?.instructions) {
-      console.log(
-        `📋 AgentInstruction recibido desde Twilio: "${customParameters.instructions.substring(0, 100)}..."`,
-      );
-      console.log(
-        `ℹ️ AgentInstruction longitud=${customParameters.instructions.length} tail="${customParameters.instructions.slice(-60)}"`,
-      );
-    } else {
-      console.log(
-        `⚠️ [${callSid}] No se recibió agentInstruction desde Twilio (customParameters.instructions está vacío)`,
+    if (!customParameters?.instructions) {
+      console.warn(
+        `⚠️ [${callSid}] No se recibió agentInstruction desde Twilio`,
       );
     }
 
@@ -382,21 +357,11 @@ export class StreamsGateway {
     let userDocumentData: admin.firestore.DocumentData | undefined;
 
     if (userId) {
-      console.log(`👤 [${callSid}] userId extraído: ${userId}`);
-      // 🆕 Tarea 1.1: Recuperar Datos Clave del Usuario desde Firestore
       try {
         const userDocRef = admin.firestore().collection('users').doc(userId);
         const userDoc = await userDocRef.get();
         if (userDoc.exists) {
           userDocumentData = userDoc.data();
-          console.log(
-            `✅ [${callSid}] Datos de usuario ${userId} cargados desde Firestore.`,
-          );
-          if (userDocumentData?.companyName) {
-            console.log(
-              `🏢 [${callSid}] Nombre de empresa del usuario: ${userDocumentData.companyName}`,
-            );
-          }
         } else {
           console.warn(
             `⚠️ [${callSid}] No se encontró documento para el userId: ${userId}`,
@@ -409,9 +374,6 @@ export class StreamsGateway {
         );
       }
     }
-    if (shopDomain) {
-      console.log(`🛍️ [${callSid}] shopDomain extraído: ${shopDomain}`);
-    }
 
     const instructions = this.resolveInstructions(customParameters);
     const voiceId = this.resolveVoiceId(customParameters);
@@ -420,10 +382,6 @@ export class StreamsGateway {
     //   `🔍 [Streams] CustomParameters recibidos para ${callSid}:`,
     //   JSON.stringify(customParameters, null, 2),
     // );
-    // console.log(`🔍 [Streams] VoiceId resuelto: ${voiceId}`);
-    console.log(
-      `🔍 [Streams] Language resuelto: ${this.resolveLanguage(customParameters)}`,
-    );
 
     if (!voiceId) {
       console.warn(
@@ -1146,20 +1104,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     }
 
     if (isFinal) {
-      console.log(
-        `📝 Transcripción final: "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
-      );
       // Reiniciar estado antes de procesar el nuevo transcript
       session.interrupted = false;
       void this.handleFinalTranscript(session, text.trim());
     } else {
-      // Ignoramos mensajes parciales que no aportan texto para no spamear los logs
-      if (text.trim().length > 3) {
-        console.log(
-          `✏️ Parcial STT: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`,
-        );
-      }
-
       // Solo interrumpimos si el agente ESTÁ enviando audio realmente (TTS) o lleva un buen rato hablando
       // NO interrumpimos durante el pensamiento o procesamiento inicial del LLM.
       if (
@@ -1200,14 +1148,11 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     // 🛑 DETENER TEMPORIZADOR DE SILENCIO: El agente va a procesar y hablar
     this.stopSilenceTimer(session);
 
-    console.log(
-      `[Latency Debug] handleFinalTranscript llamado - session.userId: ${session.userId}, twilioAccountId: ${session.customParameters?.twilioAccountId}, userSpeakingStartTime: ${session.userSpeakingStartTime}`,
-    );
+    // Capturar ahora el inicio de habla para latencia; evita que un UserStartedSpeaking posterior
+    // (ej. usuario repite "Hola") sobrescriba session.userSpeakingStartTime y genere latencias negativas.
+    const userStartedAt = session.userSpeakingStartTime ?? undefined;
 
     // Resetear estado de interrupción para permitir nueva respuesta
-    console.log(
-      `🔄 Reseteando estado de interrupción - usuario terminó de hablar`,
-    );
     session.interrupted = false;
     session.agentSpeaking = false;
     session.interceptedResponseText = '';
@@ -1217,13 +1162,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     const correctedText = await this.basicCompanyCorrection(text, session);
 
     session.history.push({ role: 'user', content: correctedText });
-    console.log(
-      `🧾 Texto usuario final (${text.length} chars): "${text.substring(0, 120)}${text.length > 120 ? '...' : ''}"`,
-    );
 
     if (correctedText !== text) {
       console.log(
-        `🔧 Texto corregido: "${correctedText.substring(0, 120)}${correctedText.length > 120 ? '...' : ''}"`,
+        `🔧 [${session.callSid}] Texto corregido: "${text.substring(0, 50)}" → "${correctedText.substring(0, 50)}"`,
       );
     }
     try {
@@ -1311,17 +1253,21 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       session.agentSpeaking = false; // Aún no habla
       session.allowInterruptions = true;
 
-      // Calcular y guardar latencia (Tiempo hasta el primer token)
-      if (session.userSpeakingStartTime) {
-        const latency = agentResponseStart - session.userSpeakingStartTime;
+      // Calcular y guardar latencia (desde que el usuario empezó a hablar hasta inicio de respuesta)
+      if (userStartedAt != null) {
+        const latency = agentResponseStart - userStartedAt;
         session.responseLatencies.push(latency);
 
-        console.log(
-          `🗣️ [${session.callSid}] Primer token recibido (latencia: ${latency}ms)`,
-        );
+        if (latency >= 0) {
+          console.log(`🗣️ [${session.callSid}] Latencia: ${latency}ms`);
+        }
 
-        if (session.userId && session.customParameters?.twilioAccountId) {
-          // Guardar latencia en Firestore
+        // Solo persistir latencias válidas (evitar negativas por condición de carrera)
+        if (
+          latency >= 0 &&
+          session.userId &&
+          session.customParameters?.twilioAccountId
+        ) {
           try {
             await this.metricsService.saveLatencyMeasurement(
               session.userId,
@@ -1529,10 +1475,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           : fullResponse.trim();
 
         session.history.push({ role: 'assistant', content: finalContent });
-
-        console.log(
-          `💬 Respuesta LLM (Stream Completo${session.interrupted ? ' - Interrumpido' : ''}): "${finalContent.substring(0, 120)}${finalContent.length > 120 ? '...' : ''}"`,
-        );
       }
 
       // Marcar que el agente terminó de hablar solo si no fue interrumpido por otro proceso
@@ -2151,7 +2093,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           break;
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
-          console.log(`🎤 [${session.callSid}] UserStartedSpeaking detectado.`);
 
           // En Deepgram V1 Listen puro o si estamos usando Agent, UserStartedSpeaking puede saltar por ruido
           // Solo limpiar si el agente realmente estaba hablando y reproduciendo audio.
@@ -2177,7 +2118,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             !session.interrupted
           ) {
             console.log(
-              `🛑 [${session.callSid}] ¡Barge-in confirmado! Usuario interrumpió al agente - deteniendo instantáneamente`,
+              `🛑 [${session.callSid}] Barge-in: usuario interrumpió`,
             );
             session.interrupted = true;
             session.agentSpeaking = false;
@@ -2208,57 +2149,25 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
                   streamSid: session.streamSid,
                 }),
               );
-              console.log(
-                `🧹 [${session.callSid}] Comando 'clear' enviado a Twilio.`,
-              );
             }
 
             // Al interrumpir, reiniciamos la espera porque el usuario ha tomado el turno
             this.resetSilenceTimer(session);
-
-            console.log(
-              `🧹 Estado del agente limpiado completamente por interrupción`,
-            );
-          } else {
-            console.log(
-              `ℹ️ [${session.callSid}] Ignorando UserStartedSpeaking porque el agente no estaba hablando ni procesando (agentSpeaking: ${session.agentSpeaking}, isPlayingAudio: ${isPlayingAudio})`,
-            );
           }
           break;
         case 'AgentThinking':
           // Silenciar este evento para reducir ruido
           break;
         case 'ConversationText': {
-          // Loggear TODOS los eventos ConversationText para debugging
-          console.log(
-            `🔍 ConversationText recibido (agentSpeaking: ${session.agentSpeaking}):`,
-            JSON.stringify(message).substring(0, 500),
-          );
-
-          // Interceptar el texto de la conversación
           const text = this.extractTextFromConversationText(message);
           const role = this.extractRoleFromConversationText(message);
 
-          console.log(
-            `🔍 Texto extraído: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}", Rol: ${role || 'null'}`,
-          );
-
           if (text) {
-            // Procesar texto del usuario como transcript final
             if (role === 'user') {
-              console.log(
-                `👤 Texto del usuario en ConversationText - procesando como transcript final`,
-              );
-              // El usuario ha terminado de hablar, procesar su mensaje
               void this.handleFinalTranscript(session, text);
               this.resetSilenceTimer(session); // Reiniciar temporizador de silencio
             } else {
-              // 🔥 FIX: Ignorar ConversationText de Deepgram cuando role=assistant
-              // Deepgram solo debe transcribir, no generar respuestas
-              // Las respuestas del agente vienen del LLM de OpenAI
-              console.log(
-                `⚠️ [${session.callSid}] Ignorando ConversationText de Deepgram (role: ${role || 'desconocido'}) - Deepgram solo debe transcribir`,
-              );
+              // Ignorar ConversationText de Deepgram cuando role=assistant (eco/TTS)
 
               // Si detectamos que Deepgram está transcribiendo al asistente, es eco.
               // Renovamos la protección de barge-in para evitar que este eco corte la siguiente frase.
@@ -2280,9 +2189,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           const text = this.extractTextFromResponse(message);
           if (text && session.agentSpeaking) {
             session.interceptedResponseText += text;
-            console.log(
-              `📝 Texto interceptado de ${type}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
-            );
             void this.streamTTSFromText(session, text);
           }
           break;
@@ -2312,11 +2218,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           // Silenciar este evento
           break;
         default:
-          // Loggear TODOS los eventos para debugging
-          console.log(
-            `🔍 Evento Deepgram recibido: ${type}`,
-            JSON.stringify(message).substring(0, 500),
-          );
+          break;
       }
     } catch (error) {
       console.error(
@@ -2917,12 +2819,18 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     const session = this.sessions.get(callSid);
     if (!session) return;
 
-    // Calcular y loguear la media de latencia de la llamada
-    if (session.responseLatencies && session.responseLatencies.length > 0) {
-      const sum = session.responseLatencies.reduce((acc, val) => acc + val, 0);
-      const avg = Math.round(sum / session.responseLatencies.length);
+    // Calcular y loguear la media de latencia de la llamada (solo valores >= 0)
+    const validLatencies =
+      session.responseLatencies?.filter((v) => v >= 0) ?? [];
+    if (validLatencies.length > 0) {
+      const sum = validLatencies.reduce((acc, val) => acc + val, 0);
+      const avg = Math.round(sum / validLatencies.length);
       console.log(
-        `📊 [${callSid}] Resumen de Latencia de la Llamada: Media ${avg}ms en ${session.responseLatencies.length} interacciones. (Tiempos: ${session.responseLatencies.join('ms, ')}ms)`,
+        `📊 [${callSid}] Resumen de Latencia de la Llamada: Media ${avg}ms en ${validLatencies.length} interacciones. (Tiempos: ${validLatencies.join('ms, ')}ms)`,
+      );
+    } else if (session.responseLatencies?.length) {
+      console.log(
+        `📊 [${callSid}] Resumen de Latencia: ${session.responseLatencies.length} interacciones sin latencias válidas.`,
       );
     } else {
       console.log(
@@ -3001,9 +2909,6 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   ): Promise<string> {
     let correctedText = text;
 
-    // DEBUG: Log del texto original
-    console.log(`🔍 [${session.callSid}] DEBUG - Texto original: "${text}"`);
-
     // 1. Extraer el nombre de la empresa del usuario
     const companyName = await this.getUserCompanyName(session);
 
@@ -3012,39 +2917,15 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       return this.applyGenericCorrections(correctedText);
     }
 
-    // DEBUG: Log del nombre de empresa encontrado
-    console.log(
-      `🔍 [${session.callSid}] DEBUG - Empresa detectada: "${companyName}"`,
-    );
-
     // 2. Generar variaciones fonéticas del nombre de la empresa
     const companyCorrections = this.generateCompanyCorrections(companyName);
-
-    // DEBUG: Log de las correcciones generadas
-    console.log(
-      `🔍 [${session.callSid}] DEBUG - Correcciones generadas: ${companyCorrections.length}`,
-    );
 
     // 3. Aplicar correcciones específicas de la empresa
     companyCorrections.forEach((correction) => {
       if (correction.from.test(correctedText)) {
         correctedText = correctedText.replace(correction.from, correction.to);
-        console.log(
-          `🔧 Corrección empresa: "${correction.from.source}" → "${correction.to}"`,
-        );
       }
     });
-
-    // DEBUG: Log del resultado final
-    if (correctedText !== text) {
-      console.log(
-        `🔍 [${session.callSid}] DEBUG - Texto corregido: "${correctedText}"`,
-      );
-    } else {
-      console.log(
-        `🔍 [${session.callSid}] DEBUG - No se aplicaron correcciones`,
-      );
-    }
 
     return correctedText;
   }
@@ -3069,23 +2950,15 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
         // Si es agentName, verificar si parece un nombre de empresa
         if (source === session.customParameters?.agentName) {
-          // Si contiene "AI", "SaaS", "Tech", etc., probablemente es empresa
           if (
             name.toLowerCase().includes('ai') ||
             name.toLowerCase().includes('saas') ||
             name.toLowerCase().includes('tech') ||
             name.toLowerCase().includes('llamalo')
           ) {
-            console.log(
-              `🔍 [${session.callSid}] Usando agentName como nombre de empresa: "${name}"`,
-            );
             return name;
           }
         } else {
-          // Para otros campos, usar directamente
-          console.log(
-            `🔍 [${session.callSid}] Nombre de empresa encontrado en customParameters: "${name}"`,
-          );
           return name;
         }
       }
@@ -3102,11 +2975,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         const userData = userDoc.data();
 
         if (userData?.enterprise?.name) {
-          const enterpriseName = userData.enterprise.name;
-          console.log(
-            `🔍 [${session.callSid}] Nombre de empresa encontrado en Firestore: "${enterpriseName}"`,
-          );
-          return enterpriseName;
+          return userData.enterprise.name as string;
         }
       }
     } catch (firestoreError) {
@@ -3118,17 +2987,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       );
     }
 
-    // 3. Si no hay nada, usar fallback para Llamalo AI (basado en el shopDomain)
     if (session.customParameters?.shopDomain?.includes('llamalo')) {
-      console.log(
-        `🔍 [${session.callSid}] Usando fallback para Llamalo AI basado en shopDomain`,
-      );
       return 'Llamalo AI';
     }
 
-    console.log(
-      `⚠️ [${session.callSid}] No se encontró nombre de empresa en ningún lugar`,
-    );
     return null;
   }
 
