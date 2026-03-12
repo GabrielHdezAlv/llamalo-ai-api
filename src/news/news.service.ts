@@ -1,11 +1,21 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import * as admin from 'firebase-admin';
+import { v4 as uuidv4 } from 'uuid';
 import { getFirestore } from '../firebase/firebase.config';
 import { CreateNewsDto } from './dto/create-news.dto';
 import { UpdateNewsDto } from './dto/update-news.dto';
 
+export interface UploadFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
+
 @Injectable()
 export class NewsService {
   private firestore = getFirestore();
+  private storage = admin.storage();
 
   private async checkOwner(userId: string) {
     const userDoc = await this.firestore.collection('users').doc(userId).get();
@@ -61,5 +71,51 @@ export class NewsService {
     
     await docRef.delete();
     return { success: true, message: 'Noticia eliminada correctamente' };
+  }
+
+  async uploadImage(userId: string, file: UploadFile) {
+    await this.checkOwner(userId);
+
+    if (!file) {
+      throw new BadRequestException('Debe enviarse un archivo de imagen');
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      throw new BadRequestException('La imagen no puede superar los 5MB');
+    }
+
+    const allowedTypes = [
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/webp',
+    ];
+    if (!allowedTypes.includes(file.mimetype)) {
+      throw new BadRequestException(
+        'Formato de imagen no permitido. Use PNG, JPG o WebP',
+      );
+    }
+
+    const bucket = this.storage.bucket(process.env.FIREBASE_STORAGE_BUCKET);
+    const extension = file.originalname.split('.').pop();
+    const uniqueId = uuidv4();
+    const fileName = `news-images/${uniqueId}.${extension}`;
+    const fileRef = bucket.file(fileName);
+
+    await fileRef.save(file.buffer, {
+      metadata: {
+        contentType: file.mimetype,
+      },
+      public: true,
+    });
+
+    await fileRef.makePublic();
+
+    const imageUrl = `https://storage.googleapis.com/${process.env.FIREBASE_STORAGE_BUCKET}/${fileName}`;
+
+    return {
+      message: 'Imagen subida correctamente',
+      imageUrl,
+    };
   }
 }

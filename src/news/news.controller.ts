@@ -7,9 +7,12 @@ import {
   Body,
   Param,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { NewsService } from './news.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { NewsService, UploadFile } from './news.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 import { CreateNewsDto } from './dto/create-news.dto';
@@ -24,6 +27,31 @@ export class NewsController {
   @ApiOperation({ summary: 'Listar todas las noticias (público o autenticado)' })
   async getAllNews() {
     return this.newsService.getAllNews();
+  }
+
+  @Post('image')
+  @ApiBearerAuth()
+  @UseGuards(FirebaseAuthGuard)
+  @UseInterceptors(FileInterceptor('image'))
+  @ApiOperation({ summary: 'Subir imagen para una noticia (solo owner)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'Imagen (PNG, JPG o WebP, máx 5MB)',
+        },
+      },
+    },
+  })
+  async uploadImage(
+    @GetUser('uid') userId: string,
+    @UploadedFile() file: UploadFile,
+  ) {
+    return this.newsService.uploadImage(userId, file);
   }
 
   @Post()
