@@ -102,23 +102,20 @@ export class NewsService {
     const fileName = `news-images/${uniqueId}.${extension}`;
     const fileRef = bucket.file(fileName);
 
+    // Make the file publicly accessible from the start
     await fileRef.save(file.buffer, {
       metadata: {
         contentType: file.mimetype,
-        metadata: {
-          firebaseStorageDownloadTokens: uniqueId,
-        }
       },
-      public: true,
+      public: true, // Esto es clave
+      predefinedAcl: 'publicRead' // Asegura que se establece ACL pública
     });
 
+    // Como salvaguarda adicional
     await fileRef.makePublic();
 
-    // Firebase Storage usa un formato de URL diferente para las imágenes públicas por defecto
-    // que incluyen un token o requieren permisos de read. 
-    // Usando el formato de URL con alt=media que suele funcionar mejor para Firebase Storage
-    const encodedFileName = encodeURIComponent(fileName);
-    const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${process.env.FIREBASE_STORAGE_BUCKET}/o/${encodedFileName}?alt=media&token=${uniqueId}`;
+    // Ahora podemos usar la URL directa de Google Cloud Storage
+    const imageUrl = `https://storage.googleapis.com/${process.env.FIREBASE_STORAGE_BUCKET}/${fileName}`;
 
     return {
       message: 'Imagen subida correctamente',

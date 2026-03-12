@@ -393,22 +393,19 @@ export class UsersService {
       const fileName = `profile-images/${uniqueId}.${extension}`;
       const fileRef = bucket.file(fileName);
 
-      // Subir nueva imagen
+      // Subir nueva imagen con ACL pública
       await fileRef.save(file.buffer, {
         metadata: {
           contentType: file.mimetype,
-          metadata: {
-            firebaseStorageDownloadTokens: uniqueId,
-          }
         },
         public: true,
+        predefinedAcl: 'publicRead'
       });
 
-      // Hacer público el archivo
+      // Hacer público el archivo como salvaguarda
       await fileRef.makePublic();
 
-      const encodedFileName = encodeURIComponent(fileName);
-      const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${process.env.FIREBASE_STORAGE_BUCKET}/o/${encodedFileName}?alt=media&token=${uniqueId}`;
+      const imageUrl = `https://storage.googleapis.com/${process.env.FIREBASE_STORAGE_BUCKET}/${fileName}`;
 
       // Actualizar URL en Firestore
       const userDocRef = this.firestore.collection('users').doc(userId);
