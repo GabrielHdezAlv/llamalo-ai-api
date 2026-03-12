@@ -12,7 +12,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
-import { NewsService, UploadFile } from './news.service';
+import { NewsService } from './news.service';
+import type { UploadFile } from './news.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 import { CreateNewsDto } from './dto/create-news.dto';
