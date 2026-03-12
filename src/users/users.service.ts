@@ -404,7 +404,8 @@ export class UsersService {
       // Hacer público el archivo
       await fileRef.makePublic();
 
-      const imageUrl = `https://storage.googleapis.com/${process.env.FIREBASE_STORAGE_BUCKET}/${fileName}`;
+      const encodedFileName = encodeURIComponent(fileName);
+      const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${process.env.FIREBASE_STORAGE_BUCKET}/o/${encodedFileName}?alt=media`;
 
       // Actualizar URL en Firestore
       const userDocRef = this.firestore.collection('users').doc(userId);
