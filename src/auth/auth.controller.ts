@@ -25,6 +25,23 @@ export class AuthController {
     return this.authService.registerUser(createUserDto);
   }
 
+  @Post('google')
+  @ApiOperation({ summary: 'Autenticación con Google' })
+  @ApiResponse({
+    status: 200,
+    description: 'Login exitoso',
+    schema: {
+      type: 'object',
+      properties: {
+        token: { type: 'string' },
+        userId: { type: 'string' },
+      },
+    },
+  })
+  async googleLogin(@Body() body: { token: string }) {
+    return this.authService.googleLogin(body.token);
+  }
+
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);

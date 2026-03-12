@@ -253,6 +253,97 @@ export class AuthService {
     }
   }
 
+  // ✅ Login con Google
+  async googleLogin(idToken: string) {
+    if (!idToken) {
+      throw new BadRequestException('El token de Google es obligatorio.');
+    }
+
+    try {
+      // 1. Verificar el token usando Firebase Admin
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const userId = decodedToken.uid;
+      const email = decodedToken.email;
+      const name = decodedToken.name || '';
+      const picture = decodedToken.picture || '';
+
+      console.log(`🔐 [Auth] Intento de login con Google para: ${email} (uid: ${userId})`);
+
+      // 2. Comprobar si el usuario ya existe en Firestore
+      const userRef = this.firestore.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+
+      if (!userDoc.exists) {
+        // 3. Es un usuario nuevo: Lo creamos en Firestore
+        const nameParts = name.split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+        await userRef.set({
+          userId: userId,
+          profileImage: picture,
+          name: firstName,
+          lastname: lastName,
+          enterprise: {
+            name: '',
+            url: '',
+          },
+          email: email,
+          country: '',
+          marketingConsent: true, // Asumimos true por ser login social, se podría pedir después
+          accountStatus: 1, // 1 = Activo (Google ya ha verificado el email)
+          rol: 'client_user',
+          verificationToken: null,
+          verificationTokenExpiresAt: null,
+          createdAt: admin.firestore.Timestamp.now(),
+          integrations: {
+            shopify: [],
+          },
+          twilio: [],
+          phoneNumbers: [],
+          agents: [],
+        });
+
+        console.log(`✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`);
+      } else {
+        const userData = userDoc.data();
+
+        // Validar si la cuenta estaba eliminada (status 2) o inactiva (status 0)
+        if (userData?.accountStatus === 2) {
+          console.warn(`⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta eliminada (accountStatus: 2)`);
+          throw new UnauthorizedException('Esta cuenta ha sido eliminada');
+        }
+
+        if (userData?.accountStatus === 0) {
+          console.warn(`⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta inactiva (accountStatus: 0)`);
+          throw new UnauthorizedException('Esta cuenta está inactiva');
+        }
+        
+        // Si el estado es 3 (no validado) pero entran con Google, lo pasamos a 1 (activo)
+        if (userData?.accountStatus === 3) {
+          await userRef.update({
+            accountStatus: 1,
+            emailVerifiedAt: admin.firestore.Timestamp.now(),
+            verificationToken: null
+          });
+          console.log(`✅ [Auth] Usuario ${userId} pasó de estado 3 a 1 tras login con Google`);
+        }
+      }
+
+      console.log(`✅ [Auth] Login exitoso con Google para: ${email}`);
+
+      // 4. Devolver el mismo token (o uno de sesión, en este caso el de idToken para que el frontend lo guarde)
+      return { token: idToken, userId: userId };
+    } catch (error: any) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      
+      console.error(`❌ [Auth] Error en login de Google: ${error.message}`);
+      throw new UnauthorizedException('Token de Google inválido o expirado');
+    }
+  }
+
   // ✅ Recuperar contraseña
   async recoverPassword(recoverDto: RecoverDto) {
     const { email } = recoverDto;
