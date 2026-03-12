@@ -105,6 +105,9 @@ export class NewsService {
     await fileRef.save(file.buffer, {
       metadata: {
         contentType: file.mimetype,
+        metadata: {
+          firebaseStorageDownloadTokens: uniqueId,
+        }
       },
       public: true,
     });
@@ -115,7 +118,7 @@ export class NewsService {
     // que incluyen un token o requieren permisos de read. 
     // Usando el formato de URL con alt=media que suele funcionar mejor para Firebase Storage
     const encodedFileName = encodeURIComponent(fileName);
-    const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${process.env.FIREBASE_STORAGE_BUCKET}/o/${encodedFileName}?alt=media`;
+    const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${process.env.FIREBASE_STORAGE_BUCKET}/o/${encodedFileName}?alt=media&token=${uniqueId}`;
 
     return {
       message: 'Imagen subida correctamente',
