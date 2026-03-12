@@ -14,6 +14,7 @@ import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 import { TestCallModule } from './test-call/test-call.module';
 import { SupportChatModule } from './support-chat/support-chat.module';
 import { CryptoModule } from './crypto/crypto.module';
+import { NewsModule } from './news/news.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { CryptoModule } from './crypto/crypto.module';
     KnowledgeBaseModule,
     TestCallModule,
     SupportChatModule,
+    NewsModule,
   ],
   controllers: [],
   providers: [],
