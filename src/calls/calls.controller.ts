@@ -414,6 +414,10 @@ export class CallsController {
         if (twilioConfig) {
           addStreamParameter('twilioSid', twilioConfig.twilioSid);
           addStreamParameter('twilioToken', twilioConfig.twilioToken);
+          addStreamParameter(
+            'twilioAccountId',
+            twilioConfig.twilioAccountId.toString(),
+          );
         }
       }
 
