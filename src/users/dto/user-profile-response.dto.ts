@@ -139,4 +139,16 @@ export class UserProfileResponseDto {
     description: 'Indica si el usuario completó el onboarding',
   })
   hasCompletedSetup?: boolean;
+
+  @ApiProperty({
+    example: 100,
+    description: 'Límite de minutos asignados al usuario',
+  })
+  minutesLimit?: number;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Minutos extra asignados al usuario',
+  })
+  extraMinutes?: number;
 }

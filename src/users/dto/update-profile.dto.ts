@@ -84,4 +84,20 @@ export class UpdateProfileDto {
   })
   @IsOptional()
   hasCompletedSetup?: boolean | string;
+
+  @ApiProperty({
+    example: 100,
+    description: 'Límite de minutos asignados al usuario',
+    required: false,
+  })
+  @IsOptional()
+  minutesLimit?: number;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Minutos extra disponibles para el usuario',
+    required: false,
+  })
+  @IsOptional()
+  extraMinutes?: number;
 }

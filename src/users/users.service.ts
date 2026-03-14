@@ -69,6 +69,7 @@ interface UserData {
   }>;
   phoneNumbers?: PhoneNumber[];
   agents?: Agent[];
+  minutesLimit?: number;
 }
 
 export type UserProfileResponse = {
@@ -131,6 +132,7 @@ export type UserProfileResponse = {
     };
     totalMinutes: number;
   }>;
+  minutesLimit?: number;
 };
 
 export interface UploadFile {
@@ -242,6 +244,8 @@ export class UsersService {
           importedBy: phone.importedBy || 'Twilio',
         })),
         agents: userData?.agents || [],
+        minutesLimit: userData?.minutesLimit ?? 100, // Límite por defecto si no existe
+        extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -335,6 +339,14 @@ export class UsersService {
           updateDto.hasCompletedSetup === 'true' || 
           updateDto.hasCompletedSetup === true;
       }
+      
+      if (updateDto.minutesLimit !== undefined) {
+        updates.minutesLimit = Number(updateDto.minutesLimit);
+      }
+
+      if (updateDto.extraMinutes !== undefined) {
+        updates.extraMinutes = Number(updateDto.extraMinutes);
+      }
 
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
@@ -359,6 +371,8 @@ export class UsersService {
         accountStatus: updatedData?.accountStatus,
         rol: updatedData?.rol || 'client_user',
         hasCompletedSetup: updatedData?.hasCompletedSetup ?? true,
+        minutesLimit: updatedData?.minutesLimit ?? 100,
+        extraMinutes: updatedData?.extraMinutes ?? 0,
         createdAt: updatedData?.createdAt,
       };
     } catch (error) {
