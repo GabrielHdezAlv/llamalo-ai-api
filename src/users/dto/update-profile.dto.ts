@@ -76,4 +76,12 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsIn(['owner', 'client_user'])
   rol?: 'owner' | 'client_user';
+
+  @ApiProperty({
+    example: true,
+    description: 'Indica si el usuario completó el onboarding',
+    required: false,
+  })
+  @IsOptional()
+  hasCompletedSetup?: boolean | string;
 }

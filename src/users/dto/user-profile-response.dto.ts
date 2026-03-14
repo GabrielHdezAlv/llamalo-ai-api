@@ -133,4 +133,10 @@ export class UserProfileResponseDto {
     };
     totalMinutes: number;
   }>;
+
+  @ApiProperty({
+    example: true,
+    description: 'Indica si el usuario completó el onboarding',
+  })
+  hasCompletedSetup?: boolean;
 }

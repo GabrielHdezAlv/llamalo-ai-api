@@ -53,6 +53,7 @@ interface UserData {
   marketingConsent?: boolean;
   accountStatus?: number;
   rol?: 'owner' | 'client_user';
+  hasCompletedSetup?: boolean;
   createdAt?: admin.firestore.Timestamp | string;
   scheduledDeletionDate?: admin.firestore.Timestamp;
   integrations?: {
@@ -84,6 +85,7 @@ export type UserProfileResponse = {
   marketingConsent?: boolean;
   accountStatus?: number;
   rol?: 'owner' | 'client_user';
+  hasCompletedSetup?: boolean;
   createdAt?: string | null;
   twilio?: Array<{
     twilioAccountId: number;
@@ -225,6 +227,7 @@ export class UsersService {
         marketingConsent: userData?.marketingConsent,
         accountStatus: userData?.accountStatus,
         rol: userData?.rol || 'client_user',
+        hasCompletedSetup: userData?.hasCompletedSetup ?? true,
         createdAt: createdAtStr,
         twilio: userData?.twilio,
         agent: (userData?.agents?.[0] || {}) as Record<string, unknown>, // Compatibilidad: devolver primer agente como agent
@@ -325,6 +328,13 @@ export class UsersService {
       if (updateDto.accountStatus !== undefined)
         updates.accountStatus = updateDto.accountStatus;
       if (updateDto.rol !== undefined) updates.rol = updateDto.rol;
+      
+      // ✅ Si pasamos 'true' o 'false' textualmente desde FormData (FormData pasa strings)
+      if (updateDto.hasCompletedSetup !== undefined) {
+        updates.hasCompletedSetup = 
+          updateDto.hasCompletedSetup === 'true' || 
+          updateDto.hasCompletedSetup === true;
+      }
 
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
@@ -348,6 +358,7 @@ export class UsersService {
         marketingConsent: updatedData?.marketingConsent,
         accountStatus: updatedData?.accountStatus,
         rol: updatedData?.rol || 'client_user',
+        hasCompletedSetup: updatedData?.hasCompletedSetup ?? true,
         createdAt: updatedData?.createdAt,
       };
     } catch (error) {
@@ -399,7 +410,7 @@ export class UsersService {
           contentType: file.mimetype,
         },
         public: true,
-        predefinedAcl: 'publicRead'
+        predefinedAcl: 'publicRead',
       });
 
       // Hacer público el archivo como salvaguarda

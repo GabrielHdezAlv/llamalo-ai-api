@@ -101,6 +101,10 @@ export class UsersController {
           type: 'boolean',
           description: 'Consentimiento de marketing',
         },
+        hasCompletedSetup: {
+          type: 'boolean',
+          description: 'Indica si el usuario completó el onboarding',
+        },
         image: {
           type: 'string',
           format: 'binary',

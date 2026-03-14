@@ -115,6 +115,7 @@ export class AuthService {
         twilio: [],
         phoneNumbers: [],
         agents: [],
+        hasCompletedSetup: false,
       });
       console.log(
         `✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`,
@@ -302,6 +303,7 @@ export class AuthService {
           twilio: [],
           phoneNumbers: [],
           agents: [],
+          hasCompletedSetup: false,
         });
 
         console.log(`✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`);
