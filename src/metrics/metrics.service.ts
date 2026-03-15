@@ -2105,19 +2105,40 @@ export class MetricsService {
       return;
     }
 
-    // Buscar manualmente el usuario que tiene esta cuenta Twilio
-    // (Firestore no soporta array-contains con objetos parciales)
-    const usersRef = this.firestore.collection('users');
-    const allUsersSnapshot = await usersRef.get();
-
+    // 1. Buscar userId en el índice inverso O(1): twilio_index/{AccountSid} → userId
     let userDocRef: FirebaseFirestore.DocumentReference | null = null;
 
-    for (const doc of allUsersSnapshot.docs) {
-      const data = doc.data() as Record<string, unknown>;
-      const twilioAccounts = (data.twilio as Array<{ twilioSid: string }>) || [];
-      if (twilioAccounts.some((acc) => acc.twilioSid === AccountSid)) {
-        userDocRef = doc.ref;
-        break;
+    const indexDoc = await this.firestore
+      .collection('twilio_index')
+      .doc(AccountSid)
+      .get();
+
+    if (indexDoc.exists) {
+      const userId = (indexDoc.data() as Record<string, string>)?.userId;
+      if (userId) {
+        userDocRef = this.firestore.collection('users').doc(userId);
+      }
+    }
+
+    // 2. Fallback: escanear toda la colección (cuentas conectadas antes del índice)
+    if (!userDocRef) {
+      console.warn(
+        `[Webhook] AccountSid ${AccountSid} no encontrado en twilio_index, usando fallback (full scan)`,
+      );
+      const allUsersSnapshot = await this.firestore.collection('users').get();
+      for (const doc of allUsersSnapshot.docs) {
+        const data = doc.data() as Record<string, unknown>;
+        const twilioAccounts = (data.twilio as Array<{ twilioSid: string }>) || [];
+        if (twilioAccounts.some((acc) => acc.twilioSid === AccountSid)) {
+          userDocRef = doc.ref;
+          // Escribir índice para próximas llamadas (auto-reparación)
+          this.firestore
+            .collection('twilio_index')
+            .doc(AccountSid)
+            .set({ userId: doc.id, updatedAt: new Date().toISOString() }, { merge: true })
+            .catch(() => {});
+          break;
+        }
       }
     }
 
@@ -2129,7 +2150,6 @@ export class MetricsService {
     const durationMinutes = durationSeconds / 60;
     const monthKey = this.getCurrentMonthKey();
 
-    // Incrementar el contador del mes actual usando notación de punto para campo anidado
     await userDocRef.update({
       [`minutesByMonth.${monthKey}`]: admin.firestore.FieldValue.increment(durationMinutes),
     });

@@ -82,6 +82,22 @@ export class TwilioService {
     }
   }
 
+  /**
+   * Escribe o actualiza el índice inverso twilioSid → userId en Firestore.
+   * Colección: twilio_index / {twilioSid} → { userId }
+   * Permite al webhook encontrar el usuario en O(1) sin escanear toda la colección.
+   */
+  private async upsertTwilioIndex(userId: string, twilioSid: string): Promise<void> {
+    try {
+      await this.firestore
+        .collection('twilio_index')
+        .doc(twilioSid)
+        .set({ userId, updatedAt: new Date().toISOString() }, { merge: true });
+    } catch (err) {
+      console.error(`[Twilio] Error actualizando twilio_index para ${twilioSid}:`, err);
+    }
+  }
+
   // ✅ Configurar Twilio
   async setTwilioConfig(userId: string, config: TwilioConfigDto) {
     try {
@@ -170,6 +186,11 @@ export class TwilioService {
       }
 
       await userDocRef.set({ twilio: twilioArray }, { merge: true });
+
+      // Actualizar índice inverso twilioSid → userId (permite al webhook encontrar el usuario en O(1))
+      this.upsertTwilioIndex(userId, config.twilioSid).catch(
+        (err) => console.error('[Twilio] Error actualizando twilio_index:', err),
+      );
 
       // Registrar webhook automáticamente en todos los números de la cuenta
       // Se hace de forma no bloqueante para no retrasar la respuesta al usuario
