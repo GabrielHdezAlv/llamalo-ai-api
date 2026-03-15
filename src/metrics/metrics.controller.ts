@@ -1,10 +1,11 @@
-import { Controller, Get, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Query, HttpCode, HttpStatus } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
   ApiQuery,
+  ApiExcludeEndpoint,
 } from '@nestjs/swagger';
 import { MetricsService } from './metrics.service';
 import { DashboardMetricsResponseDto } from './dto/dashboard-metrics-response.dto';
@@ -71,6 +72,13 @@ export class MetricsController {
     @GetUser('uid') userId: string,
   ): Promise<DashboardMetricsResponseDto> {
     return this.metricsService.getDashboardMetrics(userId);
+  }
+
+  @Post('twilio-webhook')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiExcludeEndpoint()
+  async twilioCallWebhook(@Body() body: Record<string, string>): Promise<void> {
+    await this.metricsService.handleTwilioCallWebhook(body);
   }
 
   @Get('twilio-detailed')

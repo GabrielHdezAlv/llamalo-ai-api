@@ -171,6 +171,12 @@ export class TwilioService {
 
       await userDocRef.set({ twilio: twilioArray }, { merge: true });
 
+      // Registrar webhook automáticamente en todos los números de la cuenta
+      // Se hace de forma no bloqueante para no retrasar la respuesta al usuario
+      this.registerWebhookOnAllNumbers(config.twilioSid, config.twilioToken).catch(
+        (err) => console.error('[Twilio] Error registrando webhook al conectar cuenta:', err),
+      );
+
       return {
         message: 'Configuración de Twilio actualizada correctamente.',
       };
@@ -274,6 +280,132 @@ export class TwilioService {
       throw new BadRequestException(
         `Error al obtener la configuración de Twilio: ${(error as Error).message}`,
       );
+    }
+  }
+
+  /**
+   * URL del webhook de Twilio. Se lee de variable de entorno para flexibilidad
+   * entre entornos (dev/staging/prod).
+   */
+  private get webhookUrl(): string {
+    return process.env.BACKEND_URL
+      ? `${process.env.BACKEND_URL}/metrics/twilio-webhook`
+      : 'https://llamaloiabackend-5294.onrender.com/metrics/twilio-webhook';
+  }
+
+  /**
+   * Registra el webhook de status callback en TODOS los números de una cuenta Twilio.
+   * Se llama automáticamente al conectar una cuenta nueva.
+   */
+  async registerWebhookOnAllNumbers(twilioSid: string, twilioToken: string): Promise<void> {
+    try {
+      const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
+
+      // 1. Obtener todos los números con su SID
+      let allNumbers: Array<{ sid: string; phoneNumber: string }> = [];
+      let nextPageUri: string | null = null;
+
+      do {
+        const url: string = nextPageUri
+          ? `https://api.twilio.com${nextPageUri}`
+          : `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/IncomingPhoneNumbers.json`;
+
+        const response = await axios.get<{
+          incoming_phone_numbers: Array<{ sid: string; phone_number: string }>;
+          next_page_uri: string | null;
+        }>(url, { headers: { Authorization: `Basic ${auth}` } });
+
+        allNumbers = [
+          ...allNumbers,
+          ...response.data.incoming_phone_numbers.map((p) => ({
+            sid: p.sid,
+            phoneNumber: p.phone_number,
+          })),
+        ];
+        nextPageUri = response.data.next_page_uri;
+      } while (nextPageUri);
+
+      // 2. Actualizar cada número con el webhook de status callback
+      await Promise.allSettled(
+        allNumbers.map((number) =>
+          this.registerWebhookOnNumber(twilioSid, twilioToken, number.sid),
+        ),
+      );
+
+      console.log(
+        `[Twilio] Webhook registrado en ${allNumbers.length} número(s) de la cuenta ${twilioSid}`,
+      );
+    } catch (err) {
+      console.error('[Twilio] Error al registrar webhook en números:', err);
+    }
+  }
+
+  /**
+   * Registra el webhook de status callback en UN número específico (por su SID de Twilio).
+   */
+  private async registerWebhookOnNumber(
+    twilioSid: string,
+    twilioToken: string,
+    phoneNumberSid: string,
+  ): Promise<void> {
+    const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
+    const params = new URLSearchParams({
+      StatusCallback: this.webhookUrl,
+      StatusCallbackMethod: 'POST',
+    });
+
+    await axios.post(
+      `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/IncomingPhoneNumbers/${phoneNumberSid}.json`,
+      params.toString(),
+      {
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      },
+    );
+  }
+
+  /**
+   * Busca el SID de Twilio de un número de teléfono en formato E.164
+   * y registra el webhook en él.
+   */
+  async registerWebhookOnPhoneNumber(
+    twilioSid: string,
+    twilioToken: string,
+    phoneE164: string,
+  ): Promise<void> {
+    try {
+      const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
+      let phoneNumberSid: string | null = null;
+      let nextPageUri: string | null = null;
+
+      do {
+        const url: string = nextPageUri
+          ? `https://api.twilio.com${nextPageUri}`
+          : `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/IncomingPhoneNumbers.json`;
+
+        const response = await axios.get<{
+          incoming_phone_numbers: Array<{ sid: string; phone_number: string }>;
+          next_page_uri: string | null;
+        }>(url, { headers: { Authorization: `Basic ${auth}` } });
+
+        const found = response.data.incoming_phone_numbers.find(
+          (p) => p.phone_number.replace(/\s|-/g, '') === phoneE164.replace(/\s|-/g, ''),
+        );
+        if (found) {
+          phoneNumberSid = found.sid;
+          break;
+        }
+        nextPageUri = response.data.next_page_uri;
+      } while (nextPageUri);
+
+      if (phoneNumberSid) {
+        await this.registerWebhookOnNumber(twilioSid, twilioToken, phoneNumberSid);
+        console.log(`[Twilio] Webhook registrado en número ${phoneE164}`);
+      }
+    } catch (err) {
+      console.error(`[Twilio] Error al registrar webhook en ${phoneE164}:`, err);
     }
   }
 
@@ -582,6 +714,15 @@ export class TwilioService {
         await userDocRef.update({
           phoneNumbers: phoneNumbersArray,
         });
+
+        // Registrar webhook en este número automáticamente (fire-and-forget)
+        this.registerWebhookOnPhoneNumber(
+          twilioConfig.twilioSid,
+          twilioConfig.twilioToken,
+          normalizedPhone,
+        ).catch((err) =>
+          console.error('[Twilio] Error registrando webhook en nuevo número:', err),
+        );
       }
 
       return {
@@ -734,6 +875,15 @@ export class TwilioService {
           phoneNumbers: updatedPhoneNumbers,
         },
         { merge: true },
+      );
+
+      // Registrar webhook en este número automáticamente (fire-and-forget)
+      this.registerWebhookOnPhoneNumber(
+        twilioSid,
+        twilioToken,
+        normalizedPhone,
+      ).catch((err) =>
+        console.error('[Twilio] Error registrando webhook en número creado:', err),
       );
 
       return {

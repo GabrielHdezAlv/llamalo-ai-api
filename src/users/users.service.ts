@@ -70,6 +70,8 @@ interface UserData {
   phoneNumbers?: PhoneNumber[];
   agents?: Agent[];
   minutesLimit?: number;
+  extraMinutes?: number;
+  minutesByMonth?: Record<string, number>;
 }
 
 export type UserProfileResponse = {
@@ -133,6 +135,8 @@ export type UserProfileResponse = {
     totalMinutes: number;
   }>;
   minutesLimit?: number;
+  extraMinutes?: number;
+  minutesByMonth?: Record<string, number>;
 };
 
 export interface UploadFile {
@@ -246,6 +250,7 @@ export class UsersService {
         agents: userData?.agents || [],
         minutesLimit: userData?.minutesLimit ?? 100, // Límite por defecto si no existe
         extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
+        minutesByMonth: userData?.minutesByMonth ?? {}, // Historial de minutos por mes
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -373,6 +378,7 @@ export class UsersService {
         hasCompletedSetup: updatedData?.hasCompletedSetup ?? true,
         minutesLimit: updatedData?.minutesLimit ?? 100,
         extraMinutes: updatedData?.extraMinutes ?? 0,
+        minutesByMonth: updatedData?.minutesByMonth ?? {},
         createdAt: updatedData?.createdAt,
       };
     } catch (error) {

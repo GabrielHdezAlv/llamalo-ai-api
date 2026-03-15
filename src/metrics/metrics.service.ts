@@ -4,6 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import axios from 'axios';
+import * as admin from 'firebase-admin';
 import { getFirestore } from '../firebase/firebase.config';
 import {
   DashboardMetricsResponseDto,
@@ -157,6 +158,13 @@ export class MetricsService {
       const llamadasExitosasUltimos7Dias =
         this.calculateLlamadasExitosasPorDia(allCalls7Days);
 
+      // 7. Persistir minutos del mes actual en Firebase (red de seguridad)
+      // Guardamos el mayor valor entre lo ya almacenado y lo recién calculado
+      // para no perder datos si se eliminan agentes/números
+      this.persistMonthlyMinutes(userId, resumen.minutos_ultimo_mes.actual).catch(
+        (err) => console.error('[Metrics] Error al persistir minutesByMonth:', err),
+      );
+
       return {
         resumen,
         agentes,
@@ -172,6 +180,38 @@ export class MetricsService {
       throw new BadRequestException(
         `Error al obtener las métricas: ${(error as Error).message}`,
       );
+    }
+  }
+
+  /**
+   * Devuelve la clave del mes actual en formato "YYYY-MM".
+   */
+  private getCurrentMonthKey(): string {
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+  }
+
+  /**
+   * Persiste los minutos del mes actual en `minutesByMonth["YYYY-MM"]` en Firestore,
+   * tomando el mayor entre el valor ya almacenado y el recién calculado desde Twilio.
+   * Se llama de forma no bloqueante (fire-and-forget) al obtener métricas.
+   */
+  private async persistMonthlyMinutes(userId: string, twilioMinutes: number): Promise<void> {
+    const userDocRef = this.firestore.collection('users').doc(userId);
+    const snapshot = await userDocRef.get();
+    if (!snapshot.exists) return;
+
+    const monthKey = this.getCurrentMonthKey();
+    const data = snapshot.data() as Record<string, unknown>;
+    const minutesByMonth = (data?.minutesByMonth as Record<string, number>) ?? {};
+    const stored = minutesByMonth[monthKey] ?? 0;
+
+    if (twilioMinutes > stored) {
+      await userDocRef.update({
+        [`minutesByMonth.${monthKey}`]: twilioMinutes,
+      });
     }
   }
 
@@ -1776,5 +1816,56 @@ export class MetricsService {
       dailyPeakHours,
       totalCalls,
     };
+  }
+
+  /**
+   * Maneja el webhook de Twilio cuando una llamada finaliza.
+   * Incrementa `minutesByMonth["YYYY-MM"]` en el documento del usuario en Firestore.
+   * Twilio envía este POST al completarse una llamada (CallStatus = 'completed').
+   */
+  async handleTwilioCallWebhook(payload: Record<string, string>): Promise<void> {
+    const { AccountSid, CallStatus, CallDuration } = payload;
+
+    if (CallStatus !== 'completed') {
+      return;
+    }
+
+    const durationSeconds = parseInt(CallDuration || '0', 10);
+    if (durationSeconds <= 0) {
+      return;
+    }
+
+    // Buscar manualmente el usuario que tiene esta cuenta Twilio
+    // (Firestore no soporta array-contains con objetos parciales)
+    const usersRef = this.firestore.collection('users');
+    const allUsersSnapshot = await usersRef.get();
+
+    let userDocRef: FirebaseFirestore.DocumentReference | null = null;
+
+    for (const doc of allUsersSnapshot.docs) {
+      const data = doc.data() as Record<string, unknown>;
+      const twilioAccounts = (data.twilio as Array<{ twilioSid: string }>) || [];
+      if (twilioAccounts.some((acc) => acc.twilioSid === AccountSid)) {
+        userDocRef = doc.ref;
+        break;
+      }
+    }
+
+    if (!userDocRef) {
+      console.warn(`[Webhook] No se encontró usuario para AccountSid: ${AccountSid}`);
+      return;
+    }
+
+    const durationMinutes = durationSeconds / 60;
+    const monthKey = this.getCurrentMonthKey();
+
+    // Incrementar el contador del mes actual usando notación de punto para campo anidado
+    await userDocRef.update({
+      [`minutesByMonth.${monthKey}`]: admin.firestore.FieldValue.increment(durationMinutes),
+    });
+
+    console.log(
+      `[Webhook] +${durationMinutes.toFixed(2)} min en ${monthKey} (AccountSid: ${AccountSid})`,
+    );
   }
 }
