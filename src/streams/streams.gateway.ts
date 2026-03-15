@@ -2778,6 +2778,15 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   private async hangupCall(session: CallSession) {
     try {
       console.log(`📞 [${session.callSid}] Iniciando colgado de llamada`);
+      
+      // Esperar a que el audio pendiente se termine de reproducir
+      const now = Date.now();
+      if (session.expectedAudioEndTime && session.expectedAudioEndTime > now) {
+        const timeToWait = session.expectedAudioEndTime - now + 1000; // 1000ms de margen adicional para la red
+        console.log(`⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar...`);
+        await new Promise(resolve => setTimeout(resolve, timeToWait));
+      }
+
       // Marcar que la llamada fue terminada por el agente (END_CALL o silencio gestionado)
       if (!session.terminadoPor) {
         session.terminadoPor = 'agente';
