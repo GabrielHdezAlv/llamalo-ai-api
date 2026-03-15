@@ -485,10 +485,13 @@ export class MetricsService {
       return motivo !== 'cliente' && motivo !== 'silencio';
     }).length;
 
+    // Para la semana anterior se usa el mismo motivoMap: las terminaciones de los últimos
+    // 14 días ya incluyen registros de ambas semanas, por lo que el criterio es consistente
     const llamadasExitosasAnterior = this.calculateCallsForPeriod(
       calls14Days,
       'semana_anterior',
       true,
+      motivoMap7Days,
     );
     const llamadasExitosasVariacion = this.calculateVariation(
       llamadasExitosasActual,
@@ -569,6 +572,7 @@ export class MetricsService {
     calls: TwilioCall[],
     period: 'semana_actual' | 'semana_anterior',
     soloExitosas: boolean = false,
+    motivoMap: Map<string, string> = new Map(),
   ): number {
     const now = new Date();
     const diasRestar = period === 'semana_actual' ? 6 : 13;
@@ -588,7 +592,13 @@ export class MetricsService {
       if (callDate < startDate || callDate > endDate) return false;
 
       if (soloExitosas) {
-        return call.status === 'completed';
+        if (call.status !== 'completed') return false;
+        // Si hay datos de Firestore, excluir las cortadas por el cliente o silencio
+        if (motivoMap.size > 0) {
+          const motivo = motivoMap.get(call.sid);
+          return motivo !== 'cliente' && motivo !== 'silencio';
+        }
+        return true;
       }
 
       return true;
