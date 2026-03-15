@@ -901,10 +901,9 @@ export class MetricsService {
       const resumenComparativoSemanal = this.calculateResumenComparativoSemanal(
         llamadasExitosasUltimos7Dias,
       );
-      const totalMinutosUltimoMes = await this.calculateTotalMinutosUltimoMes(
-        sid,
-        token,
-      );
+
+      // Minutos del mes: calcular directamente desde callsLastMonth (ya descargado, sin petición extra)
+      const totalMinutosUltimoMes = this.calculateMinutosFromCalls(callsLastMonth);
 
       // Métricas históricas: Firestore es la fuente principal (sin petición extra a Twilio)
       const duracionMediaLlamadas = this.calculateDuracionMediaLlamadas(
@@ -1151,100 +1150,22 @@ export class MetricsService {
   }
 
   /**
-   * Calcula el total de minutos del último mes sumando duraciones de llamadas
+   * Suma las duraciones de un array de llamadas ya descargado y devuelve los minutos totales.
+   * Síncrono: reutiliza datos en memoria, sin petición extra a Twilio.
    */
-  private async calculateTotalMinutosUltimoMes(
-    sid: string,
-    token: string,
-  ): Promise<number> {
-    try {
-      // Obtener rango del último mes
-      const { startDate, endDate } = this.getLastMonthRange();
+  private calculateMinutosFromCalls(calls: TwilioCall[]): number {
+    const totalSegundos = calls.reduce((total, call) => {
+      const duration = parseInt(call.duration || '0', 10);
+      return total + duration;
+    }, 0);
 
-      // Obtener todas las llamadas del mes
-      const calls = await this.fetchTwilioCalls(sid, token, startDate, endDate);
+    const totalMinutos = Math.round((totalSegundos / 60) * 10) / 10;
 
-      // Sumar duraciones de todas las llamadas (inbound + outbound)
-      const totalSegundos = calls.reduce((total, call) => {
-        const duration = parseInt(call.duration || '0', 10);
-        return total + duration;
-      }, 0);
+    console.log(
+      `[Metrics] Minutos último mes - Total llamadas: ${calls.length}, Total segundos: ${totalSegundos}, Total minutos: ${totalMinutos}`,
+    );
 
-      // Convertir a minutos
-      const totalMinutos = Math.round((totalSegundos / 60) * 10) / 10; // Redondear a 1 decimal
-
-      console.log(
-        `[Metrics] Minutos último mes (suma directa) - Total llamadas: ${calls.length}, Total segundos: ${totalSegundos}, Total minutos: ${totalMinutos}`,
-      );
-
-      // Opcional: Comparar con método de Usage Records para debug
-      try {
-        const usageRecordsMinutes =
-          await this.calculateTotalMinutosUltimoMesUsageRecords(sid, token);
-        console.log(
-          `[Metrics] Comparación métodos - Suma directa: ${totalMinutos} min, Usage Records: ${usageRecordsMinutes} min, Diferencia: ${Math.abs(totalMinutos - usageRecordsMinutes)} min`,
-        );
-      } catch (error) {
-        console.log(
-          `[Metrics] No se pudo comparar con Usage Records: ${error}`,
-        );
-      }
-
-      return totalMinutos;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Error desconocido';
-      console.error(
-        '[Metrics] Error obteniendo minutos del último mes (suma directa):',
-        errorMessage,
-      );
-      return 0;
-    }
-  }
-
-  /**
-   * Calcula el total de minutos del último mes usando Usage Records API (método original)
-   */
-  private async calculateTotalMinutosUltimoMesUsageRecords(
-    sid: string,
-    token: string,
-  ): Promise<number> {
-    try {
-      const auth = Buffer.from(`${sid}:${token}`).toString('base64');
-
-      // Obtener tanto inbound como outbound calls del mes
-      const [inboundResponse, outboundResponse] = await Promise.all([
-        axios.get(
-          `https://api.twilio.com/2010-04-01/Accounts/${sid}/Usage/Records/ThisMonth.json?Category=calls-inbound`,
-          {
-            headers: {
-              Authorization: `Basic ${auth}`,
-            },
-          },
-        ),
-        axios.get(
-          `https://api.twilio.com/2010-04-01/Accounts/${sid}/Usage/Records/ThisMonth.json?Category=calls-outbound`,
-          {
-            headers: {
-              Authorization: `Basic ${auth}`,
-            },
-          },
-        ),
-      ]);
-
-      const inboundMinutes = parseInt(
-        inboundResponse.data.usage_records?.[0]?.usage || '0',
-        10,
-      );
-      const outboundMinutes = parseInt(
-        outboundResponse.data.usage_records?.[0]?.usage || '0',
-        10,
-      );
-
-      return inboundMinutes + outboundMinutes;
-    } catch (error) {
-      throw error;
-    }
+    return totalMinutos;
   }
 
   /**
