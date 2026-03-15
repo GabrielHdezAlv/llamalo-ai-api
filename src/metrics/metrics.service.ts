@@ -141,24 +141,33 @@ export class MetricsService {
         `[Metrics] Llamadas obtenidas de ${twilioAccounts.length} cuentas - Últimos 7 días: ${allCalls7Days.length}, Últimos 14 días: ${allCalls14Days.length}, Último mes: ${allCallsMonth.length}`,
       );
 
-      // 4. Calcular métricas con comparación semanal
+      // 4. Obtener registros de finalización desde Firestore para todas las cuentas
+      // Se usa la primera cuenta como referencia (misma lógica que en métricas detalladas)
+      const terminacionesDashboard = await Promise.all(
+        twilioAccounts.map((acc) =>
+          this.getCallTerminations(userId, acc.twilioAccountId, 14),
+        ),
+      ).then((results) => results.flat());
+
+      // 5. Calcular métricas con comparación semanal
       const resumen = this.calculateSummaryWithComparison(
         allCalls7Days,
         allCalls14Days,
         allCallsMonth,
+        terminacionesDashboard,
       );
 
-      // 5. Obtener agentes
+      // 6. Obtener agentes
       const agentes = await this.getAgentes(
         userId,
         resumen.minutos_ultimo_mes.actual,
       );
 
-      // 6. Calcular llamadas exitosas de los últimos 7 días por día
+      // 7. Calcular llamadas exitosas de los últimos 7 días por día
       const llamadasExitosasUltimos7Dias =
         this.calculateLlamadasExitosasPorDia(allCalls7Days);
 
-      // 7. Persistir minutos del mes actual en Firebase (red de seguridad)
+      // 8. Persistir minutos del mes actual en Firebase (red de seguridad)
       // Guardamos el mayor valor entre lo ya almacenado y lo recién calculado
       // para no perder datos si se eliminan agentes/números
       this.persistMonthlyMinutes(userId, resumen.minutos_ultimo_mes.actual).catch(
@@ -446,8 +455,9 @@ export class MetricsService {
     calls7Days: TwilioCall[],
     calls14Days: TwilioCall[],
     callsMonth: TwilioCall[],
+    terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
   ): SummaryDto {
-    // 1. Total de llamadas (últimos 7 días vs semana anterior)
+    // 1. Total de llamadas (últimos 7 días vs semana anterior) — cualquier status
     const totalLlamadasActual = calls7Days.length;
     const totalLlamadasAnterior = this.calculateCallsForPeriod(
       calls14Days,
@@ -458,10 +468,23 @@ export class MetricsService {
       totalLlamadasAnterior,
     );
 
-    // 2. Total de llamadas exitosas (últimos 7 días vs semana anterior)
-    const llamadasExitosasActual = calls7Days.filter(
-      (call) => call.status === 'completed',
-    ).length;
+    // 2. Llamadas exitosas: completed cuyo motivo de Firestore sea 'agente' (o sin registro)
+    // Excluye las cortadas por el cliente (motivo='cliente') y por silencio (motivo='silencio')
+    const motivoMap7Days = new Map<string, string>(
+      terminaciones.map((t) => [t.callSid, t.motivo]),
+    );
+    const { startDate: start7Days } = this.getLast7DaysRange();
+    const start7DaysStr = start7Days.toISOString().split('T')[0];
+
+    const llamadasExitosasActual = calls7Days.filter((call) => {
+      if (call.status !== 'completed') return false;
+      const fecha = (call.start_time || call.date_created || '').substring(0, 10);
+      if (fecha < start7DaysStr) return false;
+      const motivo = motivoMap7Days.get(call.sid);
+      // Sin registro en Firestore o motivo='agente' → exitosa
+      return motivo !== 'cliente' && motivo !== 'silencio';
+    }).length;
+
     const llamadasExitosasAnterior = this.calculateCallsForPeriod(
       calls14Days,
       'semana_anterior',
