@@ -98,26 +98,21 @@ export class MetricsService {
       const twilioAccounts = await this.getAllTwilioAccounts(userId);
 
       // 2. Calcular rangos de fechas
-      const { startDate: startDate7Days, endDate: endDate7Days } =
-        this.getLast7DaysRange();
+      // Los 7 días son subconjunto de 14 días: solo descargamos 14 días y mes, luego filtramos en memoria
+      const { startDate: startDate7Days } = this.getLast7DaysRange();
       const { startDate: startDate14Days, endDate: endDate14Days } =
         this.getLast14DaysRange();
       const { startDate: startDateMonth, endDate: endDateMonth } =
         this.getLastMonthRange();
 
-      // 3. Obtener llamadas de todas las cuentas para diferentes períodos
-      const allCalls7Days: TwilioCall[] = [];
+      const start7DaysIso = startDate7Days.toISOString();
+
+      // 3. Obtener llamadas de todas las cuentas (2 peticiones por cuenta en lugar de 3)
       const allCalls14Days: TwilioCall[] = [];
       const allCallsMonth: TwilioCall[] = [];
 
       for (const account of twilioAccounts) {
-        const [calls7Days, calls14Days, callsMonth] = await Promise.all([
-          this.fetchTwilioCalls(
-            account.twilioSid,
-            account.twilioToken,
-            startDate7Days,
-            endDate7Days,
-          ),
+        const [calls14Days, callsMonth] = await Promise.all([
           this.fetchTwilioCalls(
             account.twilioSid,
             account.twilioToken,
@@ -132,13 +127,18 @@ export class MetricsService {
           ),
         ]);
 
-        allCalls7Days.push(...calls7Days);
         allCalls14Days.push(...calls14Days);
         allCallsMonth.push(...callsMonth);
       }
 
+      // Filtrar en memoria los últimos 7 días desde el array de 14 días (sin petición extra)
+      const allCalls7Days = allCalls14Days.filter((call) => {
+        const callDate = call.start_time || call.date_created || '';
+        return callDate >= start7DaysIso;
+      });
+
       console.log(
-        `[Metrics] Llamadas obtenidas de ${twilioAccounts.length} cuentas - Últimos 7 días: ${allCalls7Days.length}, Últimos 14 días: ${allCalls14Days.length}, Último mes: ${allCallsMonth.length}`,
+        `[Metrics] Llamadas obtenidas de ${twilioAccounts.length} cuentas - Últimos 14 días: ${allCalls14Days.length} (7 días filtrados: ${allCalls7Days.length}), Último mes: ${allCallsMonth.length}`,
       );
 
       // 4. Obtener registros de finalización desde Firestore para todas las cuentas
