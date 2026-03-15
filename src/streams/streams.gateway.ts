@@ -117,6 +117,9 @@ interface CallSession {
   shopifyContext?: ShopifyContext;
   knowledgeSourceIds: string[];
   expectedAudioEndTime?: number;
+  // Razón de finalización: 'agente' | 'cliente' | 'silencio' | 'error'
+  terminadoPor?: 'agente' | 'cliente' | 'silencio' | 'error';
+  callStartTime?: number; // timestamp en ms cuando comenzó la sesión
 }
 
 @Injectable()
@@ -303,6 +306,11 @@ export class StreamsGateway {
 
           if (msg.event === 'stop') {
             console.log(`🛑 Llamada terminada.`);
+            // Si no se marcó ningún motivo previo, el cliente fue quien colgó
+            const session = this.sessions.get(currentCallSid);
+            if (session && !session.terminadoPor) {
+              session.terminadoPor = 'cliente';
+            }
             this.cleanupSession(currentCallSid);
             client.close();
           }
@@ -422,6 +430,7 @@ export class StreamsGateway {
       userDocument: userDocumentData,
       shopifyContext: shopDomain ? { shopDomain } : undefined,
       knowledgeSourceIds: agentKnowledgeSourceIds,
+      callStartTime: Date.now(),
     };
 
     // 🆕 Tarea 1.3: Personalizar Saludo Inicial del Agente de Llamadas
@@ -2756,6 +2765,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         `⏳ [${session.callSid}] Silencio detectado por ${SILENCE_TIMEOUT_MS / 1000} segundos. Interviniendo...`,
       );
 
+      // Marcar que la causa probable de finalización es silencio del cliente
+      session.terminadoPor = 'silencio';
+
       // Simular que el usuario ha dicho algo para activar la respuesta del LLM
       const silenceMessage =
         'Parece que no hay nadie. ¿Sigues ahí o deberíamos terminar la llamada?';
@@ -2780,6 +2792,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   private async hangupCall(session: CallSession) {
     try {
       console.log(`📞 [${session.callSid}] Iniciando colgado de llamada`);
+      // Marcar que la llamada fue terminada por el agente (END_CALL o silencio gestionado)
+      if (!session.terminadoPor) {
+        session.terminadoPor = 'agente';
+      }
 
       // 1. Cerrar el media stream si existe
       if (session.streamSid) {
@@ -2892,6 +2908,28 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     }
     if (session.sttSocket && session.sttSocket.readyState === WebSocket.OPEN) {
       session.sttSocket.close();
+    }
+
+    // Guardar razón de finalización en Firestore si tenemos userId
+    if (session.userId && session.customParameters?.twilioAccountId) {
+      const duracionSegundos = session.callStartTime
+        ? Math.round((Date.now() - session.callStartTime) / 1000)
+        : 0;
+      const motivo = session.terminadoPor ?? 'cliente';
+      this.metricsService
+        .saveCallTermination(
+          session.userId,
+          parseInt(session.customParameters.twilioAccountId),
+          session.callSid,
+          motivo,
+          duracionSegundos,
+        )
+        .catch((err) =>
+          console.error(
+            `❌ [${callSid}] Error guardando finalización de llamada:`,
+            err,
+          ),
+        );
     }
 
     this.sessions.delete(callSid);

@@ -112,13 +112,13 @@ export class EvaluacionExitoDto {
 
 export class RazonesFinalizacionDto {
   @ApiProperty({
-    description: 'Número de llamadas completadas con éxito (status: completed)',
+    description: 'Número de llamadas completadas correctamente por el agente (status: completed + Firestore motivo=agente)',
     example: 120,
   })
   completada: number;
 
   @ApiProperty({
-    description: 'Número de llamadas canceladas activamente por el cliente (status: canceled)',
+    description: 'Número de llamadas donde el cliente colgó durante la conversación (status: canceled o Firestore motivo=cliente)',
     example: 20,
   })
   clienteColgo: number;
@@ -128,6 +128,12 @@ export class RazonesFinalizacionDto {
     example: 10,
   })
   sinRespuesta: number;
+
+  @ApiProperty({
+    description: 'Número de llamadas finalizadas por silencio prolongado del cliente (Firestore motivo=silencio)',
+    example: 4,
+  })
+  silencio: number;
 
   @ApiProperty({
     description: 'Número de llamadas con error técnico (status: failed)',

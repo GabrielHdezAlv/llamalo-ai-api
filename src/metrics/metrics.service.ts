@@ -857,8 +857,18 @@ export class MetricsService {
       const paisesOrigen = this.calculatePaisesOrigen(allCallsForAnalysis);
       const evaluacionExito =
         this.calculateEvaluacionExito(allCallsForAnalysis);
-      const razonesFinalizacion =
-        this.calculateRazonesFinalizacion(allCallsForAnalysis);
+
+      // Obtener registros de finalización desde Firestore para clasificación exacta
+      const terminacionesFirestore = await this.getCallTerminations(
+        userId,
+        twilioAccountId,
+        90,
+      );
+      const razonesFinalizacion = this.calculateRazonesFinalizacion(
+        allCallsForAnalysis,
+        terminacionesFirestore,
+      );
+
       const latenciaMedia = await this.calculateLatenciaMedia(
         userId,
         twilioAccountId,
@@ -1275,6 +1285,102 @@ export class MetricsService {
       console.error('[Metrics] Error guardando latencia:', errorMessage);
     }
   }
+
+  /**
+   * Guarda la razón de finalización de una llamada en Firestore
+   * Colección: finalizaciones_llamadas / doc: userId_twilioAccountId_YYYY-MM
+   */
+  async saveCallTermination(
+    userId: string,
+    twilioAccountId: number,
+    callSid: string,
+    motivo: 'agente' | 'cliente' | 'silencio' | 'error',
+    duracionSegundos: number,
+  ): Promise<void> {
+    try {
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const month = today.substring(0, 7); // YYYY-MM
+      const docId = `${userId}_${twilioAccountId}_${month}`;
+
+      const docRef = this.firestore
+        .collection('finalizaciones_llamadas')
+        .doc(docId);
+
+      await docRef.set(
+        {
+          userId,
+          twilioAccountId,
+          mes: month,
+          updatedAt: new Date(),
+          [`registros.${callSid}`]: {
+            motivo,
+            duracionSegundos,
+            fecha: today,
+            registradoEn: new Date(),
+          },
+        },
+        { merge: true },
+      );
+
+      console.log(
+        `[Metrics] Finalización de llamada guardada - Usuario: ${userId}, CallSid: ${callSid}, Motivo: ${motivo}, Duración: ${duracionSegundos}s`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error('[Metrics] Error guardando finalización de llamada:', errorMessage);
+    }
+  }
+
+  /**
+   * Obtiene los registros de finalización de los últimos N días desde Firestore
+   */
+  private async getCallTerminations(
+    userId: string,
+    twilioAccountId: number,
+    diasAtras: number = 90,
+  ): Promise<{ motivo: string; fecha: string; callSid: string }[]> {
+    try {
+      const now = new Date();
+      const meses: string[] = [];
+      for (let i = 0; i < Math.ceil(diasAtras / 30) + 1; i++) {
+        const d = new Date(now);
+        d.setMonth(d.getMonth() - i);
+        meses.push(d.toISOString().substring(0, 7));
+      }
+
+      const registros: { motivo: string; fecha: string; callSid: string }[] = [];
+
+      for (const mes of meses) {
+        const docId = `${userId}_${twilioAccountId}_${mes}`;
+        const docSnap = await this.firestore
+          .collection('finalizaciones_llamadas')
+          .doc(docId)
+          .get();
+
+        if (!docSnap.exists) continue;
+
+        const data = docSnap.data();
+        if (!data?.registros) continue;
+
+        const fechaCorte = new Date();
+        fechaCorte.setDate(fechaCorte.getDate() - diasAtras);
+        const fechaCorteStr = fechaCorte.toISOString().split('T')[0];
+
+        for (const [callSid, reg] of Object.entries(data.registros as Record<string, { motivo: string; fecha: string }>)) {
+          if (reg.fecha >= fechaCorteStr) {
+            registros.push({ motivo: reg.motivo, fecha: reg.fecha, callSid });
+          }
+        }
+      }
+
+      return registros;
+    } catch (error) {
+      console.error('[Metrics] Error leyendo finalizaciones:', error);
+      return [];
+    }
+  }
+
   private calculateDuracionMediaLlamadas(calls: TwilioCall[]): number {
     if (calls.length === 0) return 0;
 
@@ -1686,54 +1792,75 @@ export class MetricsService {
   }
 
   /**
-   * Calcula las razones de finalización de las llamadas
+   * Calcula las razones de finalización de las llamadas.
+   * Combina datos de Twilio (para llamadas no conectadas) con registros precisos
+   * de Firestore (para llamadas conectadas, donde Twilio siempre reporta 'completed').
    */
   private calculateRazonesFinalizacion(
     calls: TwilioCall[],
+    terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
   ): RazonesFinalizacionDto {
-    if (calls.length === 0) {
+    if (calls.length === 0 && terminaciones.length === 0) {
       return {
         completada: 0,
         clienteColgo: 0,
         sinRespuesta: 0,
+        silencio: 0,
         errorTecnico: 0,
         tiempoAgotado: 0,
       };
     }
 
-    // Completada con éxito: completed
-    const completadaCount = calls.filter(
-      (call) => call.status === 'completed',
-    ).length;
+    // Construir mapa de callSid → motivo desde Firestore para lookup rápido
+    const motivoMap = new Map<string, string>(
+      terminaciones.map((t) => [t.callSid, t.motivo]),
+    );
 
-    // Cliente colgó: solo llamadas canceladas activamente por el cliente
-    const clienteColgoCount = calls.filter(
-      (call) => call.status === 'canceled',
-    ).length;
+    // Contadores para llamadas conectadas (status=completed en Twilio)
+    let completadaCount = 0;
+    let clienteColgoCount = 0;
+    let silencioCount = 0;
 
-    // Sin respuesta: el destino no atendió la llamada
+    for (const call of calls.filter((c) => c.status === 'completed')) {
+      const motivo = motivoMap.get(call.sid);
+      if (motivo === 'cliente') {
+        clienteColgoCount++;
+      } else if (motivo === 'silencio') {
+        silencioCount++;
+      } else {
+        // 'agente' o sin registro en Firestore → se considera completada por el agente
+        completadaCount++;
+      }
+    }
+
+    // Llamadas no conectadas: se obtienen directamente del status de Twilio
     const sinRespuestaCount = calls.filter(
       (call) => call.status === 'no-answer',
     ).length;
 
-    // Error técnico: failed
     const errorTecnicoCount = calls.filter(
       (call) => call.status === 'failed',
     ).length;
 
-    // Tiempo agotado: busy (línea ocupada o timeout)
     const tiempoAgotadoCount = calls.filter(
       (call) => call.status === 'busy',
     ).length;
 
+    // Canceladas antes de conectar (el cliente rechazó antes de que contestara el agente)
+    const canceladasCount = calls.filter(
+      (call) => call.status === 'canceled',
+    ).length;
+    clienteColgoCount += canceladasCount;
+
     console.log(
-      `[Metrics] Razones finalización - Completada: ${completadaCount}, Cliente colgó: ${clienteColgoCount}, Sin respuesta: ${sinRespuestaCount}, Error técnico: ${errorTecnicoCount}, Tiempo agotado: ${tiempoAgotadoCount}`,
+      `[Metrics] Razones finalización - Completada: ${completadaCount}, Cliente colgó: ${clienteColgoCount}, Sin respuesta: ${sinRespuestaCount}, Silencio: ${silencioCount}, Error técnico: ${errorTecnicoCount}, Tiempo agotado: ${tiempoAgotadoCount} (${terminaciones.length} registros Firestore)`,
     );
 
     return {
       completada: completadaCount,
       clienteColgo: clienteColgoCount,
       sinRespuesta: sinRespuestaCount,
+      silencio: silencioCount,
       errorTecnico: errorTecnicoCount,
       tiempoAgotado: tiempoAgotadoCount,
     };
