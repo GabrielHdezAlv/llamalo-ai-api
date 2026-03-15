@@ -881,12 +881,13 @@ export class MetricsService {
         `[Metrics] Llamadas obtenidas - Últimos 14 días: ${callsLast14Days.length}, Último mes: ${callsLastMonth.length}`,
       );
 
-      // 5. Obtener registros de finalización desde Firestore (necesario para varias métricas)
-      // Usar el id real de la cuenta seleccionada, no el parámetro opcional que puede ser undefined
+      // 5. Obtener registros de finalización desde Firestore (mes actual + mes anterior)
+      // Solo necesitamos ~31 días: razonesFinalizacion usa callsLastMonth (mes actual)
+      // y evaluacionExito ya usa metricas_historicas de Firestore (histórico acumulado)
       const terminacionesFirestore = await this.getCallTerminations(
         userId,
         twilioConfig.twilioAccountId,
-        90,
+        31,
       );
 
       // 5b. Obtener métricas históricas acumuladas de Firestore (duración, países, éxito)
@@ -1450,7 +1451,7 @@ export class MetricsService {
   private async getCallTerminations(
     userId: string,
     twilioAccountId: number,
-    diasAtras: number = 90,
+    diasAtras: number = 31,
   ): Promise<{ motivo: string; fecha: string; callSid: string }[]> {
     try {
       const now = new Date();
@@ -1461,25 +1462,30 @@ export class MetricsService {
         meses.push(d.toISOString().substring(0, 7));
       }
 
+      const fechaCorte = new Date();
+      fechaCorte.setDate(fechaCorte.getDate() - diasAtras);
+      const fechaCorteStr = fechaCorte.toISOString().split('T')[0];
+
+      // Leer todos los documentos en paralelo en lugar de secuencialmente
+      const docSnapshots = await Promise.all(
+        meses.map((mes) =>
+          this.firestore
+            .collection('finalizaciones_llamadas')
+            .doc(`${userId}_${twilioAccountId}_${mes}`)
+            .get(),
+        ),
+      );
+
       const registros: { motivo: string; fecha: string; callSid: string }[] = [];
 
-      for (const mes of meses) {
-        const docId = `${userId}_${twilioAccountId}_${mes}`;
-        const docSnap = await this.firestore
-          .collection('finalizaciones_llamadas')
-          .doc(docId)
-          .get();
-
+      for (const docSnap of docSnapshots) {
         if (!docSnap.exists) continue;
-
         const data = docSnap.data();
         if (!data?.registros) continue;
 
-        const fechaCorte = new Date();
-        fechaCorte.setDate(fechaCorte.getDate() - diasAtras);
-        const fechaCorteStr = fechaCorte.toISOString().split('T')[0];
-
-        for (const [callSid, reg] of Object.entries(data.registros as Record<string, { motivo: string; fecha: string }>)) {
+        for (const [callSid, reg] of Object.entries(
+          data.registros as Record<string, { motivo: string; fecha: string }>,
+        )) {
           if (reg.fecha >= fechaCorteStr) {
             registros.push({ motivo: reg.motivo, fecha: reg.fecha, callSid });
           }
