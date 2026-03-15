@@ -1306,21 +1306,33 @@ export class MetricsService {
         .collection('finalizaciones_llamadas')
         .doc(docId);
 
-      await docRef.set(
-        {
+      const registro = {
+        motivo,
+        duracionSegundos,
+        fecha: today,
+        registradoEn: new Date(),
+      };
+
+      const docSnap = await docRef.get();
+
+      if (docSnap.exists) {
+        // update() con dot-notation sí actualiza campos anidados dentro del mapa 'registros'
+        await docRef.update({
+          updatedAt: new Date(),
+          [`registros.${callSid}`]: registro,
+        });
+      } else {
+        // Crear el documento con el mapa 'registros' correctamente estructurado
+        await docRef.set({
           userId,
           twilioAccountId,
           mes: month,
           updatedAt: new Date(),
-          [`registros.${callSid}`]: {
-            motivo,
-            duracionSegundos,
-            fecha: today,
-            registradoEn: new Date(),
+          registros: {
+            [callSid]: registro,
           },
-        },
-        { merge: true },
-      );
+        });
+      }
 
       console.log(
         `[Metrics] Finalización de llamada guardada - Usuario: ${userId}, CallSid: ${callSid}, Motivo: ${motivo}, Duración: ${duracionSegundos}s`,
