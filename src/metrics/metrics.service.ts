@@ -855,15 +855,17 @@ export class MetricsService {
         this.calculateDuracionMediaLlamadas(allCallsForAnalysis);
       const tiposLlamadas = this.calculateTiposLlamadas(allCallsForAnalysis);
       const paisesOrigen = this.calculatePaisesOrigen(allCallsForAnalysis);
-      const evaluacionExito =
-        this.calculateEvaluacionExito(allCallsForAnalysis);
-
       // Obtener registros de finalización desde Firestore para clasificación exacta
       // Usar el id real de la cuenta seleccionada, no el parámetro opcional que puede ser undefined
       const terminacionesFirestore = await this.getCallTerminations(
         userId,
         twilioConfig.twilioAccountId,
         90,
+      );
+
+      const evaluacionExito = this.calculateEvaluacionExito(
+        allCallsForAnalysis,
+        terminacionesFirestore,
       );
       const razonesFinalizacion = this.calculateRazonesFinalizacion(
         allCallsForAnalysis,
@@ -1767,40 +1769,52 @@ export class MetricsService {
   /**
    * Calcula la evaluación de éxito de las llamadas
    */
-  private calculateEvaluacionExito(calls: TwilioCall[]): EvaluacionExitoDto {
-    if (calls.length === 0) {
+  private calculateEvaluacionExito(
+    calls: TwilioCall[],
+    terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
+  ): EvaluacionExitoDto {
+    if (calls.length === 0 && terminaciones.length === 0) {
       return { exitosas: 0, parciales: 0, fallidas: 0 };
     }
 
-    // Exitosas: completed
-    const exitosasCount = calls.filter(
-      (call) => call.status === 'completed',
-    ).length;
+    // Construir mapa callSid → motivo desde Firestore
+    const motivoMap = new Map<string, string>(
+      terminaciones.map((t) => [t.callSid, t.motivo]),
+    );
 
-    // Parciales: answered, in-progress
-    const parcialesCount = calls.filter(
-      (call) => call.status === 'answered' || call.status === 'in-progress',
-    ).length;
-
-    // Fallidas: failed, busy, no-answer, canceled
-    const fallidasCount = calls.filter((call) =>
+    // Llamadas no conectadas (nunca pasaron por el stream): siempre fallidas
+    const noConectadasCount = calls.filter((call) =>
       ['failed', 'busy', 'no-answer', 'canceled'].includes(call.status),
     ).length;
 
-    const exitosasPercentage = Math.round((exitosasCount / calls.length) * 100);
-    const parcialesPercentage = Math.round(
-      (parcialesCount / calls.length) * 100,
-    );
-    const fallidasPercentage = Math.round((fallidasCount / calls.length) * 100);
+    // Llamadas conectadas (completed): clasificar con datos de Firestore
+    let exitosasCount = 0;  // Agente cerró correctamente
+    let parcialesCount = 0; // Silencio prolongado (cliente conectado pero no respondía)
+    let clienteColgoCount = 0; // Cliente colgó a mitad
+
+    for (const call of calls.filter((c) => c.status === 'completed')) {
+      const motivo = motivoMap.get(call.sid);
+      if (motivo === 'cliente') {
+        clienteColgoCount++;
+      } else if (motivo === 'silencio') {
+        parcialesCount++;
+      } else {
+        // 'agente' o sin registro → llamada completada correctamente
+        exitosasCount++;
+      }
+    }
+
+    // Fallidas = no conectadas + cliente colgó a mitad
+    const fallidasCount = noConectadasCount + clienteColgoCount;
 
     console.log(
-      `[Metrics] Evaluación éxito - Exitosas: ${exitosasCount} (${exitosasPercentage}%), Parciales: ${parcialesCount} (${parcialesPercentage}%), Fallidas: ${fallidasCount} (${fallidasPercentage}%)`,
+      `[Metrics] Evaluación éxito - Exitosas: ${exitosasCount}, Parciales (silencio): ${parcialesCount}, Fallidas: ${fallidasCount} (no conectadas: ${noConectadasCount}, cliente colgó: ${clienteColgoCount}) | Registros Firestore: ${terminaciones.length}`,
     );
 
     return {
-      exitosas: exitosasPercentage,
-      parciales: parcialesPercentage,
-      fallidas: fallidasPercentage,
+      exitosas: exitosasCount,
+      parciales: parcialesCount,
+      fallidas: fallidasCount,
     };
   }
 

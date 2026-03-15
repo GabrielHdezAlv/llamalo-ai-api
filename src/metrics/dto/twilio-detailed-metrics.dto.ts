@@ -92,19 +92,19 @@ export class PaisOrigenDto {
 
 export class EvaluacionExitoDto {
   @ApiProperty({
-    description: 'Porcentaje de llamadas exitosas',
+    description: 'Número de llamadas completadas correctamente por el agente (Firestore motivo=agente o sin registro)',
     example: 85,
   })
   exitosas: number;
 
   @ApiProperty({
-    description: 'Porcentaje de llamadas con éxito parcial',
+    description: 'Número de llamadas conectadas pero finalizadas por silencio prolongado del cliente (Firestore motivo=silencio)',
     example: 10,
   })
   parciales: number;
 
   @ApiProperty({
-    description: 'Porcentaje de llamadas fallidas',
+    description: 'Número de llamadas fallidas: no conectadas (failed/busy/no-answer/canceled) + cliente colgó a mitad (Firestore motivo=cliente)',
     example: 5,
   })
   fallidas: number;
