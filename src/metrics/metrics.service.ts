@@ -817,13 +817,15 @@ export class MetricsService {
       // Minutos del mes: calcular directamente desde callsLastMonth (ya descargado, sin petición extra)
       const totalMinutosUltimoMes = this.calculateMinutosFromCalls(callsLastMonth);
 
-      // Métricas históricas: Firestore es la fuente principal (sin petición extra a Twilio)
+      // Métricas históricas: Firestore es la fuente principal.
+      // callsLastMonth se pasa como fallback para cuando el histórico de Firestore aún está vacío
+      // (usuarios nuevos o llamadas previas a la implementación del acumulado).
       const duracionMediaLlamadas = this.calculateDuracionMediaLlamadas(
-        [],
+        callsLastMonth,
         historicalMetrics,
       );
       const paisesOrigen = this.calculatePaisesOrigen(
-        [],
+        callsLastMonth,
         historicalMetrics,
       );
       const evaluacionExito = this.calculateEvaluacionExito(
