@@ -163,9 +163,9 @@ export class MetricsService {
         resumen.minutos_ultimo_mes.actual,
       );
 
-      // 7. Calcular llamadas exitosas de los últimos 7 días por día
+      // 7. Calcular llamadas exitosas de los últimos 7 días por día (cruzando con Firestore)
       const llamadasExitosasUltimos7Dias =
-        this.calculateLlamadasExitosasPorDia(allCalls7Days);
+        this.calculateLlamadasExitosasPorDia(allCalls7Days, terminacionesDashboard);
 
       // 8. Persistir minutos del mes actual en Firebase (red de seguridad)
       // Guardamos el mayor valor entre lo ya almacenado y lo recién calculado
@@ -640,36 +640,44 @@ export class MetricsService {
    */
   private calculateLlamadasExitosasPorDia(
     calls: TwilioCall[],
+    terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
   ): LlamadaExitosaPorDiaDto[] {
     const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
     const hoy = new Date();
 
+    // Mapa callSid → motivo para clasificación precisa
+    const motivoMap = new Map<string, string>(
+      terminaciones.map((t) => [t.callSid, t.motivo]),
+    );
+
     for (let i = 6; i >= 0; i--) {
-      // Calcular la fecha usando UTC para evitar problemas de zona horaria
       const fecha = new Date(hoy);
       fecha.setUTCDate(fecha.getUTCDate() - i);
       fecha.setUTCHours(0, 0, 0, 0);
 
-      // Obtener fecha en formato YYYY-MM-DD (usando UTC para consistencia)
       const year = fecha.getUTCFullYear();
       const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
       const day = String(fecha.getUTCDate()).padStart(2, '0');
       const fechaStr = `${year}-${month}-${day}`;
 
-      // Contar llamadas exitosas de ese día
+      // Contar llamadas exitosas del día: completed donde el agente cerró correctamente
       const llamadasExitosasDelDia = calls.filter((call) => {
         if (call.status !== 'completed') return false;
 
-        // Usar start_time si está disponible, sino usar date_created como fallback
         const fechaLlamada = call.start_time || call.date_created;
         if (!fechaLlamada) return false;
 
         const callDate = new Date(fechaLlamada);
-        const callYear = callDate.getUTCFullYear();
-        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
-        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
-        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
-        return callDateStr === fechaStr;
+        const callDateStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
+        if (callDateStr !== fechaStr) return false;
+
+        // Si hay datos de Firestore, excluir las cortadas por cliente o silencio
+        if (motivoMap.size > 0) {
+          const motivo = motivoMap.get(call.sid);
+          return motivo !== 'cliente' && motivo !== 'silencio';
+        }
+
+        return true;
       });
 
       ultimos7Dias.push({
