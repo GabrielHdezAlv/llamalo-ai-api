@@ -167,13 +167,6 @@ export class MetricsService {
       const llamadasExitosasUltimos7Dias =
         this.calculateLlamadasExitosasPorDia(allCalls7Days, terminacionesDashboard);
 
-      // 8. Persistir minutos del mes actual en Firebase (red de seguridad)
-      // Guardamos el mayor valor entre lo ya almacenado y lo recién calculado
-      // para no perder datos si se eliminan agentes/números
-      this.persistMonthlyMinutes(userId, resumen.minutos_ultimo_mes.actual).catch(
-        (err) => console.error('[Metrics] Error al persistir minutesByMonth:', err),
-      );
-
       return {
         resumen,
         agentes,
@@ -200,28 +193,6 @@ export class MetricsService {
     const year = now.getUTCFullYear();
     const month = String(now.getUTCMonth() + 1).padStart(2, '0');
     return `${year}-${month}`;
-  }
-
-  /**
-   * Persiste los minutos del mes actual en `minutesByMonth["YYYY-MM"]` en Firestore,
-   * tomando el mayor entre el valor ya almacenado y el recién calculado desde Twilio.
-   * Se llama de forma no bloqueante (fire-and-forget) al obtener métricas.
-   */
-  private async persistMonthlyMinutes(userId: string, twilioMinutes: number): Promise<void> {
-    const userDocRef = this.firestore.collection('users').doc(userId);
-    const snapshot = await userDocRef.get();
-    if (!snapshot.exists) return;
-
-    const monthKey = this.getCurrentMonthKey();
-    const data = snapshot.data() as Record<string, unknown>;
-    const minutesByMonth = (data?.minutesByMonth as Record<string, number>) ?? {};
-    const stored = minutesByMonth[monthKey] ?? 0;
-
-    if (twilioMinutes > stored) {
-      await userDocRef.update({
-        [`minutesByMonth.${monthKey}`]: twilioMinutes,
-      });
-    }
   }
 
   /**
@@ -697,40 +668,42 @@ export class MetricsService {
     minutosTotales: number,
   ): Promise<AgenteDto[]> {
     try {
-      // Obtener el usuario actual
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
 
-      if (!userSnapshot.exists) {
-        return [];
-      }
+      if (!userSnapshot.exists) return [];
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const agentConfig = userData?.agent as
-        | Record<string, unknown>
-        | undefined;
+      const tieneTwilioConfig = !!userData?.twilio;
 
-      const agentes: AgenteDto[] = [];
+      // Nueva estructura: agents[] (array de agentes)
+      const agentsArray = (userData?.agents as Array<Record<string, unknown>>) || [];
 
-      // Si el usuario tiene configuración de agente, agregarlo
-      if (agentConfig && agentConfig.name) {
-        const tieneTwilioConfig = !!userData?.twilio;
-        const minutosPorAgente = minutosTotales; // Mismo valor para todos
-
-        agentes.push({
-          nombre: agentConfig.name as string,
-          tipo: 'inbound', // Siempre inbound por ahora
-          minutos_totales: minutosPorAgente,
-          estado: tieneTwilioConfig ? 'activo' : 'inactivo',
-        });
+      if (agentsArray.length > 0) {
+        return agentsArray
+          .filter((a) => a.name)
+          .map((a) => ({
+            nombre: a.name as string,
+            tipo: (a.direction === 'outbound' ? 'outbound' : 'inbound') as 'inbound' | 'outbound',
+            minutos_totales: minutosTotales,
+            estado: tieneTwilioConfig ? 'activo' : 'inactivo',
+          }));
       }
 
-      // Si no hay agentes, retornar array vacío o un agente por defecto
-      if (agentes.length === 0) {
-        return [];
+      // Estructura antigua: agent (objeto único)
+      const agentConfig = userData?.agent as Record<string, unknown> | undefined;
+      if (agentConfig?.name) {
+        return [
+          {
+            nombre: agentConfig.name as string,
+            tipo: 'inbound',
+            minutos_totales: minutosTotales,
+            estado: tieneTwilioConfig ? 'activo' : 'inactivo',
+          },
+        ];
       }
 
-      return agentes;
+      return [];
     } catch (error) {
       console.error('Error obteniendo agentes:', error);
       return [];
@@ -1177,9 +1150,12 @@ export class MetricsService {
     twilioAccountId?: number,
   ): Promise<number> {
     try {
-      // Obtener fecha de inicio del último mes
-      const { startDate } = this.getLastMonthRange();
-      const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      // Usar los últimos 3 días para reflejar el rendimiento reciente
+      // (la media mensual arrastraría llamadas malas de hace semanas)
+      const threeDaysAgo = new Date();
+      threeDaysAgo.setUTCDate(threeDaysAgo.getUTCDate() - 2);
+      threeDaysAgo.setUTCHours(0, 0, 0, 0);
+      const startDateStr = threeDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD
 
       // Consultar colección de latencias agregadas
       let query = this.firestore
@@ -1243,34 +1219,20 @@ export class MetricsService {
     try {
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       const docId = `${userId}_${twilioAccountId}_${today}`;
+      const docRef = this.firestore.collection('latencias_agregadas').doc(docId);
 
-      const docRef = this.firestore
-        .collection('latencias_agregadas')
-        .doc(docId);
-
-      // Obtener documento actual si existe
-      const docSnapshot = await docRef.get();
-
-      if (docSnapshot.exists) {
-        // Si existe, añadir la nueva latencia al array existente
-        const data = docSnapshot.data();
-        const latencias = (data && data.latencias) || [];
-        latencias.push(latenciaMs);
-
-        await docRef.update({
-          latencias,
-          updatedAt: new Date(),
-        });
-      } else {
-        // Si no existe, crear nuevo documento
-        await docRef.set({
+      // Operación atómica: set con merge evita la race condition del patrón read-then-write.
+      // arrayUnion añade el valor al array existente sin sobrescribir otras escrituras concurrentes.
+      await docRef.set(
+        {
           userId,
           twilioAccountId,
           periodo: today,
-          latencias: [latenciaMs],
+          latencias: admin.firestore.FieldValue.arrayUnion(latenciaMs),
           updatedAt: new Date(),
-        });
-      }
+        },
+        { merge: true },
+      );
 
       console.log(
         `[Metrics] Latencia guardada - Usuario: ${userId}, Latencia: ${latenciaMs}ms, Día: ${today}`,
@@ -2075,52 +2037,37 @@ export class MetricsService {
     const { startDate: startDate7Days, endDate: endDate7Days } =
       this.getLast7DaysRange();
 
+    // Pre-agrupar todas las llamadas por fecha en una sola pasada O(N)
+    // evitando el doble bucle O(7×N) anterior
+    const callsByDate = new Map<string, { hour: number }[]>();
+    for (const call of calls) {
+      const fechaLlamada = call.start_time || call.date_created;
+      if (!fechaLlamada) continue;
+      const d = new Date(fechaLlamada);
+      const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+      const hour = d.getUTCHours();
+      if (!callsByDate.has(dateStr)) callsByDate.set(dateStr, []);
+      callsByDate.get(dateStr)!.push({ hour });
+    }
+
     const dailyPeakHours: DailyPeakHour[] = [];
     const hoy = new Date();
     let totalCalls = 0;
 
-    // Procesar cada día de los últimos 7 días
     for (let i = 6; i >= 0; i--) {
       const fecha = new Date(hoy);
       fecha.setUTCDate(fecha.getUTCDate() - i);
-      fecha.setUTCHours(0, 0, 0, 0);
+      const fechaStr = `${fecha.getUTCFullYear()}-${String(fecha.getUTCMonth() + 1).padStart(2, '0')}-${String(fecha.getUTCDate()).padStart(2, '0')}`;
 
-      const year = fecha.getUTCFullYear();
-      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(fecha.getUTCDate()).padStart(2, '0');
-      const fechaStr = `${year}-${month}-${day}`;
-
-      // Inicializar array de 24 horas para este día
       const hourlyCalls = new Array(24).fill(0);
+      const callsDelDia = callsByDate.get(fechaStr) || [];
 
-      // Filtrar llamadas de este día y agrupar por hora
-      const callsDelDia = calls.filter((call) => {
-        const fechaLlamada = call.start_time || call.date_created;
-        if (!fechaLlamada) return false;
+      for (const { hour } of callsDelDia) {
+        hourlyCalls[hour]++;
+      }
 
-        const callDate = new Date(fechaLlamada);
-        const callYear = callDate.getUTCFullYear();
-        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
-        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
-        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
-
-        return callDateStr === fechaStr;
-      });
-
-      // Contar llamadas por hora
-      callsDelDia.forEach((call) => {
-        const fechaLlamada = call.start_time || call.date_created;
-        if (fechaLlamada) {
-          const callDate = new Date(fechaLlamada);
-          const hour = callDate.getUTCHours();
-          hourlyCalls[hour]++;
-        }
-      });
-
-      // Encontrar hora pico
       const maxCalls = Math.max(...hourlyCalls);
       const peakHour = maxCalls > 0 ? hourlyCalls.indexOf(maxCalls) : 0;
-
       const dayTotal = callsDelDia.length;
       totalCalls += dayTotal;
 
