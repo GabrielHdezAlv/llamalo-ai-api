@@ -870,16 +870,15 @@ export class MetricsService {
       const { startDate: startDateMonth, endDate: endDateMonth } =
         this.getLastMonthRange();
 
-      // 4. Obtener todas las llamadas necesarias
-      const [callsLast14Days, callsLastMonth, allCallsForAnalysis] =
-        await Promise.all([
-          this.fetchTwilioCalls(sid, token, startDate14Days, endDate14Days), // 14 días para comparación
-          this.fetchTwilioCalls(sid, token, startDateMonth, endDateMonth),
-          this.fetchAllCallsForAnalysis(sid, token), // Para análisis completos
-        ]);
+      // 4. Obtener llamadas necesarias (solo 2 peticiones a Twilio)
+      // Las métricas históricas (duración, países, éxito) se leen de Firestore en el paso 5b
+      const [callsLast14Days, callsLastMonth] = await Promise.all([
+        this.fetchTwilioCalls(sid, token, startDate14Days, endDate14Days), // 14 días para comparación
+        this.fetchTwilioCalls(sid, token, startDateMonth, endDateMonth),   // Mes actual para tipos y razones
+      ]);
 
       console.log(
-        `[Metrics] Llamadas obtenidas - Últimos 14 días: ${callsLast14Days.length}, Último mes: ${callsLastMonth.length}, Total análisis: ${allCallsForAnalysis.length}`,
+        `[Metrics] Llamadas obtenidas - Últimos 14 días: ${callsLast14Days.length}, Último mes: ${callsLastMonth.length}`,
       );
 
       // 5. Obtener registros de finalización desde Firestore (necesario para varias métricas)
@@ -907,17 +906,17 @@ export class MetricsService {
         token,
       );
 
-      // Métricas históricas: usar Firestore si disponible, Twilio como fallback
+      // Métricas históricas: Firestore es la fuente principal (sin petición extra a Twilio)
       const duracionMediaLlamadas = this.calculateDuracionMediaLlamadas(
-        allCallsForAnalysis,
+        [],
         historicalMetrics,
       );
       const paisesOrigen = this.calculatePaisesOrigen(
-        allCallsForAnalysis,
+        [],
         historicalMetrics,
       );
       const evaluacionExito = this.calculateEvaluacionExito(
-        allCallsForAnalysis,
+        [],
         terminacionesFirestore,
         historicalMetrics,
       );
