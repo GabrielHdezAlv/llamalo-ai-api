@@ -882,9 +882,20 @@ export class MetricsService {
         `[Metrics] Llamadas obtenidas - Últimos 14 días: ${callsLast14Days.length}, Último mes: ${callsLastMonth.length}, Total análisis: ${allCallsForAnalysis.length}`,
       );
 
-      // 5. Calcular todas las métricas
+      // 5. Obtener registros de finalización desde Firestore (necesario para varias métricas)
+      // Usar el id real de la cuenta seleccionada, no el parámetro opcional que puede ser undefined
+      const terminacionesFirestore = await this.getCallTerminations(
+        userId,
+        twilioConfig.twilioAccountId,
+        90,
+      );
+
+      // 6. Calcular todas las métricas
       const llamadasExitosasUltimos7Dias =
-        this.calculateLlamadasExitosasPorDiaConComparacion(callsLast14Days);
+        this.calculateLlamadasExitosasPorDiaConComparacion(
+          callsLast14Days,
+          terminacionesFirestore,
+        );
       const resumenComparativoSemanal = this.calculateResumenComparativoSemanal(
         llamadasExitosasUltimos7Dias,
       );
@@ -896,13 +907,6 @@ export class MetricsService {
         this.calculateDuracionMediaLlamadas(allCallsForAnalysis);
       const tiposLlamadas = this.calculateTiposLlamadas(allCallsForAnalysis);
       const paisesOrigen = this.calculatePaisesOrigen(allCallsForAnalysis);
-      // Obtener registros de finalización desde Firestore para clasificación exacta
-      // Usar el id real de la cuenta seleccionada, no el parámetro opcional que puede ser undefined
-      const terminacionesFirestore = await this.getCallTerminations(
-        userId,
-        twilioConfig.twilioAccountId,
-        90,
-      );
 
       const evaluacionExito = this.calculateEvaluacionExito(
         allCallsForAnalysis,
@@ -1008,16 +1012,28 @@ export class MetricsService {
    */
   private calculateLlamadasExitosasPorDiaConComparacion(
     calls: TwilioCall[],
+    terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
   ): LlamadaExitosaPorDiaDto[] {
     const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
     const hoy = new Date();
 
+    // Mapa callSid → motivo para clasificación precisa desde Firestore
+    const motivoMap = new Map<string, string>(
+      terminaciones.map((t) => [t.callSid, t.motivo]),
+    );
+
     // Obtener datos de los últimos 14 días para comparación
     const datosPorFecha = new Map<string, number>();
 
-    // Primero, procesar todas las llamadas para tener un mapa de fechas
+    // Procesar llamadas para tener un mapa de fechas con criterio consistente
     calls.forEach((call) => {
       if (call.status !== 'completed') return;
+
+      // Si hay datos de Firestore, excluir las cortadas por el cliente o silencio
+      if (motivoMap.size > 0) {
+        const motivo = motivoMap.get(call.sid);
+        if (motivo === 'cliente' || motivo === 'silencio') return;
+      }
 
       const fechaLlamada = call.start_time || call.date_created;
       if (!fechaLlamada) return;
