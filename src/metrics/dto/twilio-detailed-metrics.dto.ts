@@ -58,14 +58,14 @@ export class ResumenComparativoSemanalDto {
 
 export class TiposLlamadasDto {
   @ApiProperty({
-    description: 'Porcentaje de llamadas entrantes',
-    example: 75,
+    description: 'Número de llamadas entrantes',
+    example: 150,
   })
   inbound: number;
 
   @ApiProperty({
-    description: 'Porcentaje de llamadas salientes',
-    example: 25,
+    description: 'Número de llamadas salientes',
+    example: 50,
   })
   outbound: number;
 }

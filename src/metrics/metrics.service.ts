@@ -1463,16 +1463,13 @@ export class MetricsService {
       (call) => call.direction === 'outbound',
     ).length;
 
-    const inboundPercentage = Math.round((inboundCount / calls.length) * 100);
-    const outboundPercentage = Math.round((outboundCount / calls.length) * 100);
-
     console.log(
-      `[Metrics] Tipos llamadas - Inbound: ${inboundCount} (${inboundPercentage}%), Outbound: ${outboundCount} (${outboundPercentage}%)`,
+      `[Metrics] Tipos llamadas - Inbound: ${inboundCount} (${Math.round((inboundCount / calls.length) * 100)}%), Outbound: ${outboundCount} (${Math.round((outboundCount / calls.length) * 100)}%)`,
     );
 
     return {
-      inbound: inboundPercentage,
-      outbound: outboundPercentage,
+      inbound: inboundCount,
+      outbound: outboundCount,
     };
   }
 
