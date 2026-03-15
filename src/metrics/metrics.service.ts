@@ -890,6 +890,9 @@ export class MetricsService {
         90,
       );
 
+      // 5b. Obtener métricas históricas acumuladas de Firestore (duración, países, éxito)
+      const historicalMetrics = await this.getHistoricalMetrics(userId);
+
       // 6. Calcular todas las métricas
       const llamadasExitosasUltimos7Dias =
         this.calculateLlamadasExitosasPorDiaConComparacion(
@@ -903,17 +906,29 @@ export class MetricsService {
         sid,
         token,
       );
-      const duracionMediaLlamadas =
-        this.calculateDuracionMediaLlamadas(allCallsForAnalysis);
-      const tiposLlamadas = this.calculateTiposLlamadas(allCallsForAnalysis);
-      const paisesOrigen = this.calculatePaisesOrigen(allCallsForAnalysis);
 
+      // Métricas históricas: usar Firestore si disponible, Twilio como fallback
+      const duracionMediaLlamadas = this.calculateDuracionMediaLlamadas(
+        allCallsForAnalysis,
+        historicalMetrics,
+      );
+      const paisesOrigen = this.calculatePaisesOrigen(
+        allCallsForAnalysis,
+        historicalMetrics,
+      );
       const evaluacionExito = this.calculateEvaluacionExito(
         allCallsForAnalysis,
         terminacionesFirestore,
+        historicalMetrics,
+      );
+
+      // Métricas mensuales: usar callsLastMonth
+      const tiposLlamadas = this.calculateTiposLlamadas(
+        callsLastMonth,
+        historicalMetrics,
       );
       const razonesFinalizacion = this.calculateRazonesFinalizacion(
-        allCallsForAnalysis,
+        callsLastMonth,
         terminacionesFirestore,
       );
 
@@ -1347,6 +1362,111 @@ export class MetricsService {
   }
 
   /**
+   * Acumula métricas históricas en Firestore al finalizar cada llamada.
+   * Colección: metricas_historicas / doc: userId
+   * Usa FieldValue.increment para contadores atómicos sin sobrescribir datos anteriores.
+   */
+  async saveHistoricalMetrics(
+    userId: string,
+    duracionSegundos: number,
+    direction: 'inbound' | 'outbound',
+    motivo: 'agente' | 'cliente' | 'silencio' | 'error',
+    paisPrefijo: string | null,
+  ): Promise<void> {
+    try {
+      const docRef = this.firestore.collection('metricas_historicas').doc(userId);
+
+      const increment = admin.firestore.FieldValue.increment;
+
+      const updates: Record<string, admin.firestore.FieldValue | string> = {
+        totalLlamadas: increment(1),
+        totalSegundos: increment(duracionSegundos),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Contadores por dirección
+      if (direction === 'inbound') {
+        updates['inbound'] = increment(1);
+      } else {
+        updates['outbound'] = increment(1);
+      }
+
+      // Contadores por motivo de finalización
+      if (motivo === 'agente') {
+        updates['exitosas'] = increment(1);
+      } else if (motivo === 'silencio') {
+        updates['parciales'] = increment(1);
+        updates['clienteColgo'] = increment(1);
+      } else if (motivo === 'cliente') {
+        updates['fallidas'] = increment(1);
+        updates['clienteColgo'] = increment(1);
+      } else {
+        updates['fallidas'] = increment(1);
+        updates['errorTecnico'] = increment(1);
+      }
+
+      // Contador por país de origen
+      if (paisPrefijo) {
+        updates[`paises.${paisPrefijo}`] = increment(1);
+      } else {
+        updates['paises.SIN_IDENTIFICAR'] = increment(1);
+      }
+
+      await docRef.set(updates, { merge: true });
+
+      console.log(
+        `[Metrics] Métricas históricas actualizadas - Usuario: ${userId}, Duración: ${duracionSegundos}s, Dirección: ${direction}, Motivo: ${motivo}`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error('[Metrics] Error guardando métricas históricas:', errorMessage);
+    }
+  }
+
+  /**
+   * Lee las métricas históricas acumuladas de Firestore para un usuario.
+   */
+  async getHistoricalMetrics(userId: string): Promise<{
+    totalLlamadas: number;
+    totalSegundos: number;
+    inbound: number;
+    outbound: number;
+    exitosas: number;
+    parciales: number;
+    fallidas: number;
+    clienteColgo: number;
+    errorTecnico: number;
+    paises: Record<string, number>;
+  } | null> {
+    try {
+      const docSnap = await this.firestore
+        .collection('metricas_historicas')
+        .doc(userId)
+        .get();
+
+      if (!docSnap.exists) return null;
+
+      const data = docSnap.data() as Record<string, unknown>;
+      return {
+        totalLlamadas: (data?.totalLlamadas as number) || 0,
+        totalSegundos: (data?.totalSegundos as number) || 0,
+        inbound: (data?.inbound as number) || 0,
+        outbound: (data?.outbound as number) || 0,
+        exitosas: (data?.exitosas as number) || 0,
+        parciales: (data?.parciales as number) || 0,
+        fallidas: (data?.fallidas as number) || 0,
+        clienteColgo: (data?.clienteColgo as number) || 0,
+        errorTecnico: (data?.errorTecnico as number) || 0,
+        paises: (data?.paises as Record<string, number>) || {},
+      };
+    } catch (error) {
+      console.error('[Metrics] Error leyendo métricas históricas:', error);
+      return null;
+    }
+  }
+
+  /**
    * Guarda la razón de finalización de una llamada en Firestore
    * Colección: finalizaciones_llamadas / doc: userId_twilioAccountId_YYYY-MM
    */
@@ -1453,7 +1573,23 @@ export class MetricsService {
     }
   }
 
-  private calculateDuracionMediaLlamadas(calls: TwilioCall[]): number {
+  private calculateDuracionMediaLlamadas(
+    calls: TwilioCall[],
+    historicalMetrics?: Awaited<ReturnType<typeof this.getHistoricalMetrics>>,
+  ): number {
+    // Prioridad: datos históricos de Firestore (más completos y rápidos)
+    if (historicalMetrics && historicalMetrics.totalLlamadas > 0) {
+      const duracionMediaSegundos =
+        historicalMetrics.totalSegundos / historicalMetrics.totalLlamadas;
+      const duracionMediaMinutos =
+        Math.round((duracionMediaSegundos / 60) * 10) / 10;
+      console.log(
+        `[Metrics] Duración media (Firestore histórico) - Total llamadas: ${historicalMetrics.totalLlamadas}, Total segundos: ${historicalMetrics.totalSegundos}, Media minutos: ${duracionMediaMinutos}`,
+      );
+      return duracionMediaMinutos;
+    }
+
+    // Fallback: calcular desde llamadas de Twilio
     if (calls.length === 0) return 0;
 
     const totalSegundos = calls.reduce((total, call) => {
@@ -1463,19 +1599,24 @@ export class MetricsService {
 
     const duracionMediaSegundos = totalSegundos / calls.length;
     const duracionMediaMinutos =
-      Math.round((duracionMediaSegundos / 60) * 10) / 10; // Redondear a 1 decimal
+      Math.round((duracionMediaSegundos / 60) * 10) / 10;
 
     console.log(
-      `[Metrics] Duración media - Total llamadas: ${calls.length}, Total segundos: ${totalSegundos}, Media minutos: ${duracionMediaMinutos}`,
+      `[Metrics] Duración media (Twilio fallback) - Total llamadas: ${calls.length}, Total segundos: ${totalSegundos}, Media minutos: ${duracionMediaMinutos}`,
     );
 
     return duracionMediaMinutos;
   }
 
   /**
-   * Calcula la distribución porcentual de tipos de llamadas
+   * Calcula la distribución de tipos de llamadas (inbound/outbound).
+   * Usa llamadas del mes actual (callsLastMonth) como fuente primaria.
+   * Los datos históricos de Firestore solo se usan como fallback si no hay llamadas del mes.
    */
-  private calculateTiposLlamadas(calls: TwilioCall[]): TiposLlamadasDto {
+  private calculateTiposLlamadas(
+    calls: TwilioCall[],
+    _historicalMetrics?: Awaited<ReturnType<typeof this.getHistoricalMetrics>>,
+  ): TiposLlamadasDto {
     if (calls.length === 0) {
       return { inbound: 0, outbound: 0 };
     }
@@ -1488,7 +1629,7 @@ export class MetricsService {
     ).length;
 
     console.log(
-      `[Metrics] Tipos llamadas - Inbound: ${inboundCount} (${Math.round((inboundCount / calls.length) * 100)}%), Outbound: ${outboundCount} (${Math.round((outboundCount / calls.length) * 100)}%)`,
+      `[Metrics] Tipos llamadas (mes actual) - Inbound: ${inboundCount}, Outbound: ${outboundCount}`,
     );
 
     return {
@@ -1498,9 +1639,43 @@ export class MetricsService {
   }
 
   /**
-   * Calcula los países de origen de las llamadas
+   * Calcula los países de origen de las llamadas.
+   * Prioriza datos históricos de Firestore (metricas_historicas.paises) y usa Twilio como fallback.
    */
-  private calculatePaisesOrigen(calls: TwilioCall[]): PaisOrigenDto[] {
+  private calculatePaisesOrigen(
+    calls: TwilioCall[],
+    historicalMetrics?: Awaited<ReturnType<typeof this.getHistoricalMetrics>>,
+  ): PaisOrigenDto[] {
+    // Prioridad: datos acumulados en Firestore (histórico completo)
+    if (
+      historicalMetrics &&
+      Object.keys(historicalMetrics.paises).length > 0
+    ) {
+      const paisesCount = historicalMetrics.paises;
+      const totalLlamadas = Object.values(paisesCount).reduce(
+        (sum, v) => sum + v,
+        0,
+      );
+
+      const paisesOrigen = Object.entries(paisesCount)
+        .map(([pais, cantidad]) => ({
+          pais: pais === 'SIN_IDENTIFICAR' ? 'SIN IDENTIFICAR' : pais,
+          cantidad,
+          porcentaje:
+            totalLlamadas > 0
+              ? Math.round((cantidad / totalLlamadas) * 100 * 10) / 10
+              : 0,
+        }))
+        .sort((a, b) => b.cantidad - a.cantidad)
+        .slice(0, 10);
+
+      console.log(
+        `[Metrics] Países origen (Firestore histórico): ${paisesOrigen.length}`,
+      );
+      return paisesOrigen;
+    }
+
+    // Fallback: calcular desde llamadas de Twilio
     const paisesCount: Record<string, number> = {};
 
     calls.forEach((call) => {
@@ -1512,30 +1687,32 @@ export class MetricsService {
         call.from !== '' &&
         call.from !== 'private'
       ) {
-        // Extraer código de país del número de teléfono
         const countryCode = this.extractCountryCode(call.from);
         if (countryCode) {
           paisesCount[countryCode] = (paisesCount[countryCode] || 0) + 1;
         }
       } else {
-        // Contar números ocultos/privados
         paisesCount['SIN IDENTIFICAR'] =
           (paisesCount['SIN IDENTIFICAR'] || 0) + 1;
       }
     });
 
-    // Convertir a array y ordenar por cantidad descendente
     const totalLlamadas = calls.length;
     const paisesOrigen = Object.entries(paisesCount)
       .map(([pais, cantidad]) => ({
         pais,
         cantidad,
-        porcentaje: Math.round((cantidad / totalLlamadas) * 100 * 10) / 10, // Redondear a 1 decimal
+        porcentaje:
+          totalLlamadas > 0
+            ? Math.round((cantidad / totalLlamadas) * 100 * 10) / 10
+            : 0,
       }))
       .sort((a, b) => b.cantidad - a.cantidad)
-      .slice(0, 10); // Top 10 países
+      .slice(0, 10);
 
-    console.log(`[Metrics] Países origen encontrados: ${paisesOrigen.length}`);
+    console.log(
+      `[Metrics] Países origen (Twilio fallback): ${paisesOrigen.length}`,
+    );
 
     return paisesOrigen;
   }
@@ -1543,6 +1720,10 @@ export class MetricsService {
   /**
    * Extrae el código de país de un número de teléfono
    */
+  extractCountryCodePublic(phoneNumber: string): string | null {
+    return this.extractCountryCode(phoneNumber);
+  }
+
   private extractCountryCode(phoneNumber: string): string | null {
     // Eliminar caracteres no numéricos excepto +
     const cleanPhone = phoneNumber.replace(/[^\d+]/g, '');
@@ -1826,7 +2007,21 @@ export class MetricsService {
   private calculateEvaluacionExito(
     calls: TwilioCall[],
     terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
+    historicalMetrics?: Awaited<ReturnType<typeof this.getHistoricalMetrics>>,
   ): EvaluacionExitoDto {
+    // Prioridad: datos históricos acumulados de Firestore (completo y sin límite de 90 días)
+    if (historicalMetrics && historicalMetrics.totalLlamadas > 0) {
+      console.log(
+        `[Metrics] Evaluación éxito (Firestore histórico) - Exitosas: ${historicalMetrics.exitosas}, Parciales: ${historicalMetrics.parciales}, Fallidas: ${historicalMetrics.fallidas}`,
+      );
+      return {
+        exitosas: historicalMetrics.exitosas,
+        parciales: historicalMetrics.parciales,
+        fallidas: historicalMetrics.fallidas,
+      };
+    }
+
+    // Fallback: calcular desde llamadas de Twilio + registros de finalización
     if (calls.length === 0 && terminaciones.length === 0) {
       return { exitosas: 0, parciales: 0, fallidas: 0 };
     }
@@ -1862,7 +2057,7 @@ export class MetricsService {
     const fallidasCount = noConectadasCount + clienteColgoCount;
 
     console.log(
-      `[Metrics] Evaluación éxito - Exitosas: ${exitosasCount}, Parciales (silencio): ${parcialesCount}, Fallidas: ${fallidasCount} (no conectadas: ${noConectadasCount}, cliente colgó: ${clienteColgoCount}) | Registros Firestore: ${terminaciones.length}`,
+      `[Metrics] Evaluación éxito (Twilio fallback) - Exitosas: ${exitosasCount}, Parciales (silencio): ${parcialesCount}, Fallidas: ${fallidasCount} (no conectadas: ${noConectadasCount}, cliente colgó: ${clienteColgoCount}) | Registros Firestore: ${terminaciones.length}`,
     );
 
     return {

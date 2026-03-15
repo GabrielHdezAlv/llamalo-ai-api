@@ -120,6 +120,8 @@ interface CallSession {
   // Razón de finalización: 'agente' | 'cliente' | 'silencio' | 'error'
   terminadoPor?: 'agente' | 'cliente' | 'silencio' | 'error';
   callStartTime?: number; // timestamp en ms cuando comenzó la sesión
+  callerPhone?: string; // número de teléfono del llamante para métricas de país
+  callDirection?: 'inbound' | 'outbound';
 }
 
 @Injectable()
@@ -431,6 +433,8 @@ export class StreamsGateway {
       shopifyContext: shopDomain ? { shopDomain } : undefined,
       knowledgeSourceIds: agentKnowledgeSourceIds,
       callStartTime: Date.now(),
+      callerPhone: customParameters?.callerPhone,
+      callDirection: 'inbound',
     };
 
     // 🆕 Tarea 1.3: Personalizar Saludo Inicial del Agente de Llamadas
@@ -2916,6 +2920,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         ? Math.round((Date.now() - session.callStartTime) / 1000)
         : 0;
       const motivo = session.terminadoPor ?? 'cliente';
+
       this.metricsService
         .saveCallTermination(
           session.userId,
@@ -2927,6 +2932,25 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         .catch((err) =>
           console.error(
             `❌ [${callSid}] Error guardando finalización de llamada:`,
+            err,
+          ),
+        );
+
+      // Acumular métricas históricas en Firestore
+      const paisPrefijo = session.callerPhone
+        ? this.metricsService.extractCountryCodePublic(session.callerPhone)
+        : null;
+      this.metricsService
+        .saveHistoricalMetrics(
+          session.userId,
+          duracionSegundos,
+          session.callDirection ?? 'inbound',
+          motivo,
+          paisPrefijo,
+        )
+        .catch((err) =>
+          console.error(
+            `❌ [${callSid}] Error guardando métricas históricas:`,
             err,
           ),
         );
