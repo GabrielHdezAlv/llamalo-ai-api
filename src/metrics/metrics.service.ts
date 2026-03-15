@@ -828,8 +828,10 @@ export class MetricsService {
         callsLastMonth,
         historicalMetrics,
       );
+      // Evaluación de éxito: mismo período y fuente que razonesFinalizacion (mes actual)
+      // El histórico de Firestore actúa solo como fallback si no hay llamadas del mes
       const evaluacionExito = this.calculateEvaluacionExito(
-        [],
+        callsLastMonth,
         terminacionesFirestore,
         historicalMetrics,
       );
@@ -1195,7 +1197,6 @@ export class MetricsService {
         updates['exitosas'] = increment(1);
       } else if (motivo === 'silencio') {
         updates['parciales'] = increment(1);
-        updates['clienteColgo'] = increment(1);
       } else if (motivo === 'cliente') {
         updates['fallidas'] = increment(1);
         updates['clienteColgo'] = increment(1);
@@ -1805,10 +1806,51 @@ export class MetricsService {
     terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
     historicalMetrics?: Awaited<ReturnType<typeof this.getHistoricalMetrics>>,
   ): EvaluacionExitoDto {
-    // Prioridad: datos históricos acumulados de Firestore (completo y sin límite de 90 días)
+    // Fuente primaria: callsLastMonth + terminacionesFirestore (mismo período que razonesFinalizacion)
+    // Garantiza que ambas métricas sean comparables entre sí (mismo universo de datos)
+    if (calls.length > 0) {
+      const motivoMap = new Map<string, string>(
+        terminaciones.map((t) => [t.callSid, t.motivo]),
+      );
+
+      // Llamadas no conectadas (nunca llegaron al stream): siempre fallidas
+      const noConectadasCount = calls.filter((call) =>
+        ['failed', 'busy', 'no-answer', 'canceled'].includes(call.status),
+      ).length;
+
+      let exitosasCount = 0;
+      let parcialesCount = 0;
+      let clienteColgoCount = 0;
+
+      for (const call of calls.filter((c) => c.status === 'completed')) {
+        const motivo = motivoMap.get(call.sid);
+        if (motivo === 'cliente') {
+          clienteColgoCount++;
+        } else if (motivo === 'silencio') {
+          parcialesCount++;
+        } else {
+          // 'agente' o sin registro en Firestore → agente cerró correctamente
+          exitosasCount++;
+        }
+      }
+
+      const fallidasCount = noConectadasCount + clienteColgoCount;
+
+      console.log(
+        `[Metrics] Evaluación éxito (mes actual) - Exitosas: ${exitosasCount}, Parciales: ${parcialesCount}, Fallidas: ${fallidasCount} (no conectadas: ${noConectadasCount}, cliente colgó: ${clienteColgoCount}) | Registros Firestore: ${terminaciones.length}`,
+      );
+
+      return {
+        exitosas: exitosasCount,
+        parciales: parcialesCount,
+        fallidas: fallidasCount,
+      };
+    }
+
+    // Fallback: histórico de Firestore si no hay llamadas del mes (usuario nuevo o sin actividad reciente)
     if (historicalMetrics && historicalMetrics.totalLlamadas > 0) {
       console.log(
-        `[Metrics] Evaluación éxito (Firestore histórico) - Exitosas: ${historicalMetrics.exitosas}, Parciales: ${historicalMetrics.parciales}, Fallidas: ${historicalMetrics.fallidas}`,
+        `[Metrics] Evaluación éxito (Firestore histórico fallback) - Exitosas: ${historicalMetrics.exitosas}, Parciales: ${historicalMetrics.parciales}, Fallidas: ${historicalMetrics.fallidas}`,
       );
       return {
         exitosas: historicalMetrics.exitosas,
@@ -1817,50 +1859,7 @@ export class MetricsService {
       };
     }
 
-    // Fallback: calcular desde llamadas de Twilio + registros de finalización
-    if (calls.length === 0 && terminaciones.length === 0) {
-      return { exitosas: 0, parciales: 0, fallidas: 0 };
-    }
-
-    // Construir mapa callSid → motivo desde Firestore
-    const motivoMap = new Map<string, string>(
-      terminaciones.map((t) => [t.callSid, t.motivo]),
-    );
-
-    // Llamadas no conectadas (nunca pasaron por el stream): siempre fallidas
-    const noConectadasCount = calls.filter((call) =>
-      ['failed', 'busy', 'no-answer', 'canceled'].includes(call.status),
-    ).length;
-
-    // Llamadas conectadas (completed): clasificar con datos de Firestore
-    let exitosasCount = 0;  // Agente cerró correctamente
-    let parcialesCount = 0; // Silencio prolongado (cliente conectado pero no respondía)
-    let clienteColgoCount = 0; // Cliente colgó a mitad
-
-    for (const call of calls.filter((c) => c.status === 'completed')) {
-      const motivo = motivoMap.get(call.sid);
-      if (motivo === 'cliente') {
-        clienteColgoCount++;
-      } else if (motivo === 'silencio') {
-        parcialesCount++;
-      } else {
-        // 'agente' o sin registro → llamada completada correctamente
-        exitosasCount++;
-      }
-    }
-
-    // Fallidas = no conectadas + cliente colgó a mitad
-    const fallidasCount = noConectadasCount + clienteColgoCount;
-
-    console.log(
-      `[Metrics] Evaluación éxito (Twilio fallback) - Exitosas: ${exitosasCount}, Parciales (silencio): ${parcialesCount}, Fallidas: ${fallidasCount} (no conectadas: ${noConectadasCount}, cliente colgó: ${clienteColgoCount}) | Registros Firestore: ${terminaciones.length}`,
-    );
-
-    return {
-      exitosas: exitosasCount,
-      parciales: parcialesCount,
-      fallidas: fallidasCount,
-    };
+    return { exitosas: 0, parciales: 0, fallidas: 0 };
   }
 
   /**
