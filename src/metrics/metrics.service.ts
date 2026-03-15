@@ -861,7 +861,7 @@ export class MetricsService {
       // Obtener registros de finalización desde Firestore para clasificación exacta
       const terminacionesFirestore = await this.getCallTerminations(
         userId,
-        twilioAccountId,
+        twilioAccountId ?? 0,
         90,
       );
       const razonesFinalizacion = this.calculateRazonesFinalizacion(
