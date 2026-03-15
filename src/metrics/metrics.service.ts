@@ -1695,6 +1695,7 @@ export class MetricsService {
       return {
         completada: 0,
         clienteColgo: 0,
+        sinRespuesta: 0,
         errorTecnico: 0,
         tiempoAgotado: 0,
       };
@@ -1705,9 +1706,14 @@ export class MetricsService {
       (call) => call.status === 'completed',
     ).length;
 
-    // Cliente colgó: no-answer, canceled
+    // Cliente colgó: solo llamadas canceladas activamente por el cliente
     const clienteColgoCount = calls.filter(
-      (call) => call.status === 'no-answer' || call.status === 'canceled',
+      (call) => call.status === 'canceled',
+    ).length;
+
+    // Sin respuesta: el destino no atendió la llamada
+    const sinRespuestaCount = calls.filter(
+      (call) => call.status === 'no-answer',
     ).length;
 
     // Error técnico: failed
@@ -1715,33 +1721,21 @@ export class MetricsService {
       (call) => call.status === 'failed',
     ).length;
 
-    // Tiempo agotado: busy (puede incluir timeout)
+    // Tiempo agotado: busy (línea ocupada o timeout)
     const tiempoAgotadoCount = calls.filter(
       (call) => call.status === 'busy',
     ).length;
 
-    const completadaPercentage = Math.round(
-      (completadaCount / calls.length) * 100,
-    );
-    const clienteColgoPercentage = Math.round(
-      (clienteColgoCount / calls.length) * 100,
-    );
-    const errorTecnicoPercentage = Math.round(
-      (errorTecnicoCount / calls.length) * 100,
-    );
-    const tiempoAgotadoPercentage = Math.round(
-      (tiempoAgotadoCount / calls.length) * 100,
-    );
-
     console.log(
-      `[Metrics] Razones finalización - Completada: ${completadaCount} (${completadaPercentage}%), Cliente colgó: ${clienteColgoCount} (${clienteColgoPercentage}%), Error técnico: ${errorTecnicoCount} (${errorTecnicoPercentage}%), Tiempo agotado: ${tiempoAgotadoCount} (${tiempoAgotadoPercentage}%)`,
+      `[Metrics] Razones finalización - Completada: ${completadaCount}, Cliente colgó: ${clienteColgoCount}, Sin respuesta: ${sinRespuestaCount}, Error técnico: ${errorTecnicoCount}, Tiempo agotado: ${tiempoAgotadoCount}`,
     );
 
     return {
-      completada: completadaPercentage,
-      clienteColgo: clienteColgoPercentage,
-      errorTecnico: errorTecnicoPercentage,
-      tiempoAgotado: tiempoAgotadoPercentage,
+      completada: completadaCount,
+      clienteColgo: clienteColgoCount,
+      sinRespuesta: sinRespuestaCount,
+      errorTecnico: errorTecnicoCount,
+      tiempoAgotado: tiempoAgotadoCount,
     };
   }
 

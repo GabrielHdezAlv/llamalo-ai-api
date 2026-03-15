@@ -112,26 +112,32 @@ export class EvaluacionExitoDto {
 
 export class RazonesFinalizacionDto {
   @ApiProperty({
-    description: 'Porcentaje de llamadas completadas con éxito',
-    example: 80,
+    description: 'Número de llamadas completadas con éxito (status: completed)',
+    example: 120,
   })
   completada: number;
 
   @ApiProperty({
-    description: 'Porcentaje de llamadas donde el cliente colgó',
-    example: 15,
+    description: 'Número de llamadas canceladas activamente por el cliente (status: canceled)',
+    example: 20,
   })
   clienteColgo: number;
 
   @ApiProperty({
-    description: 'Porcentaje de llamadas con error técnico',
-    example: 3,
+    description: 'Número de llamadas sin respuesta del destino (status: no-answer)',
+    example: 10,
+  })
+  sinRespuesta: number;
+
+  @ApiProperty({
+    description: 'Número de llamadas con error técnico (status: failed)',
+    example: 5,
   })
   errorTecnico: number;
 
   @ApiProperty({
-    description: 'Porcentaje de llamadas por tiempo agotado',
-    example: 2,
+    description: 'Número de llamadas con línea ocupada o tiempo agotado (status: busy)',
+    example: 3,
   })
   tiempoAgotado: number;
 }
