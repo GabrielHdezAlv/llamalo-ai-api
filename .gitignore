@@ -60,3 +60,6 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Usar yarn como único gestor de paquetes (Render usa yarn)
+package-lock.json
