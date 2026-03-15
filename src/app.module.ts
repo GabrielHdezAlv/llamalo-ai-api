@@ -20,7 +20,9 @@ import { MailerLiteModule } from './mailerlite/mailerlite.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      envFilePath: `.env.${process.env.NODE_ENV || 'development'}`,
+      // Carga .env como base y .env.{entorno} para sobrescribir (ej: .env.development)
+      // Así funciona tanto si usas .env como .env.development
+      envFilePath: ['.env', `.env.${process.env.NODE_ENV || 'development'}`],
       isGlobal: true,
     }),
     ScheduleModule.forRoot(),
