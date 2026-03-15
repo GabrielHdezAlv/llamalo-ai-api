@@ -15,6 +15,7 @@ import { TestCallModule } from './test-call/test-call.module';
 import { SupportChatModule } from './support-chat/support-chat.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { NewsModule } from './news/news.module';
+import { MailerLiteModule } from './mailerlite/mailerlite.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { NewsModule } from './news/news.module';
     TestCallModule,
     SupportChatModule,
     NewsModule,
+    MailerLiteModule,
   ],
   controllers: [],
   providers: [],

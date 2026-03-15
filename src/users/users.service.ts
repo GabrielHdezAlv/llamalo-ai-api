@@ -7,6 +7,7 @@ import * as admin from 'firebase-admin';
 import { v4 as uuidv4 } from 'uuid';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { getFirestore } from '../firebase/firebase.config';
+import { MailerLiteService } from '../mailerlite/mailerlite.service';
 
 interface PhoneNumber {
   phoneId: number;
@@ -150,6 +151,8 @@ export interface UploadFile {
 export class UsersService {
   private firestore = getFirestore();
   private storage = admin.storage();
+
+  constructor(private readonly mailerLiteService: MailerLiteService) {}
 
   private filterPhoneNumbers(phoneNumbers: PhoneNumber[], query?: string) {
     if (!query || !query.trim()) {
@@ -359,6 +362,16 @@ export class UsersService {
 
       // ✏️ Actualizar Firestore
       await docRef.update(updates);
+
+      // 🔄 Sincronizar con MailerLite si se actualizaron campos relevantes
+      if (
+        updates.hasCompletedSetup !== undefined ||
+        updates.minutesLimit !== undefined ||
+        updates.accountStatus !== undefined ||
+        updates.rol !== undefined
+      ) {
+        this.mailerLiteService.syncUser(userId).catch(() => {});
+      }
 
       // 🔄 Obtener de nuevo el perfil actualizado
       const updatedSnapshot = await docRef.get();

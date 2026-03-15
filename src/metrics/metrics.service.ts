@@ -13,6 +13,7 @@ import {
   LlamadaExitosaPorDiaDto,
   MetricaConComparacionDto,
 } from './dto/dashboard-metrics-response.dto';
+import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import {
   TwilioDetailedMetricsResponseDto,
   ComparacionDiaAnteriorDto,
@@ -51,6 +52,8 @@ export class MetricsService {
   private firestore = getFirestore();
   // Factor de ahorro: cada minuto de IA ahorra 2.5 minutos de trabajo manual
   private readonly TIEMPO_AHORRO_FACTOR = 2.5;
+
+  constructor(private readonly mailerLiteService: MailerLiteService) {}
 
   /**
    * Obtiene todas las cuentas Twilio de un usuario
@@ -2060,6 +2063,10 @@ export class MetricsService {
     await userDocRef.update({
       [`minutesByMonth.${monthKey}`]: admin.firestore.FieldValue.increment(durationMinutes),
     });
+
+    // 🔄 Sincronizar con MailerLite (actualizar grupos de minutos usados)
+    const userId = userDocRef.id;
+    this.mailerLiteService.syncUser(userId).catch(() => {});
 
     console.log(
       `[Webhook] +${durationMinutes.toFixed(2)} min en ${monthKey} (AccountSid: ${AccountSid})`,

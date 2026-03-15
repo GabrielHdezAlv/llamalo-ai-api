@@ -9,6 +9,7 @@ import { LoginDto } from './dto/login.dto';
 import { RecoverDto } from './dto/recover.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { EmailService } from './email.service';
+import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import axios from 'axios';
 import * as bcrypt from 'bcryptjs';
 import * as admin from 'firebase-admin';
@@ -20,7 +21,10 @@ export class AuthService {
   private firestore = getFirestore();
   private readonly logger = new Logger(AuthService.name);
 
-  constructor(private readonly emailService: EmailService) {
+  constructor(
+    private readonly emailService: EmailService,
+    private readonly mailerLiteService: MailerLiteService,
+  ) {
     // Validar que FIREBASE_API_KEY esté configurada al inicializar el servicio
     if (!this.firebaseApiKey) {
       console.error(
@@ -120,6 +124,9 @@ export class AuthService {
       console.log(
         `✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`,
       );
+
+      // 🔄 Sincronizar con MailerLite
+      this.mailerLiteService.syncUser(firebaseResponse.localId).catch(() => {});
 
       // 5️⃣ Enviar email de verificación
       try {
@@ -307,6 +314,9 @@ export class AuthService {
         });
 
         console.log(`✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`);
+        
+        // 🔄 Sincronizar con MailerLite
+        this.mailerLiteService.syncUser(userId).catch(() => {});
       } else {
         const userData = userDoc.data();
 
@@ -480,6 +490,9 @@ export class AuthService {
       });
 
       this.logger.log(`✅ [Auth] Email verificado para usuario: ${userId}`);
+
+      // 🔄 Sincronizar con MailerLite (pasará a grupo "Cuenta ACTIVADA")
+      this.mailerLiteService.syncUser(userId).catch(() => {});
 
       return {
         message: 'Email verificado correctamente',
