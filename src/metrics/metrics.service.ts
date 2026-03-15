@@ -859,9 +859,10 @@ export class MetricsService {
         this.calculateEvaluacionExito(allCallsForAnalysis);
 
       // Obtener registros de finalización desde Firestore para clasificación exacta
+      // Usar el id real de la cuenta seleccionada, no el parámetro opcional que puede ser undefined
       const terminacionesFirestore = await this.getCallTerminations(
         userId,
-        twilioAccountId ?? 0,
+        twilioConfig.twilioAccountId,
         90,
       );
       const razonesFinalizacion = this.calculateRazonesFinalizacion(
