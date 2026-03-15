@@ -50,31 +50,22 @@ export class TwilioService {
     return [];
   }
 
-  // 🔒 Verificar si twilioSid o twilioToken están en uso por otro usuario
+  // 🔒 Verificar si twilioSid está en uso por otro usuario usando el índice inverso (O(1))
   private async checkTwilioCredentialsInUse(
     userId: string,
     twilioSid: string,
-    twilioToken: string,
+    _twilioToken: string,
   ): Promise<void> {
-    // Obtener todos los usuarios
-    const allUsersSnapshot = await this.firestore.collection('users').get();
+    // Consultar el índice inverso en lugar de hacer full scan de users
+    const indexDoc = await this.firestore
+      .collection('twilio_index')
+      .doc(twilioSid)
+      .get();
 
-    for (const userDoc of allUsersSnapshot.docs) {
-      // Ignorar el usuario actual
-      if (userDoc.id === userId) {
-        continue;
-      }
-
-      const userData = userDoc.data() as Record<string, unknown>;
-      const twilioArray = this.normalizeTwilioArray(userData?.twilio);
-
-      const isInUse = twilioArray.some(
-        (account) =>
-          account.twilioSid === twilioSid ||
-          account.twilioToken === twilioToken,
-      );
-
-      if (isInUse) {
+    if (indexDoc.exists) {
+      const ownerUserId = (indexDoc.data() as Record<string, string>)?.userId;
+      // Si está en el índice y pertenece a otro usuario → credenciales en uso
+      if (ownerUserId && ownerUserId !== userId) {
         throw new BadRequestException(
           'Error: No se han podido asignar estos datos de configuración de Twilio, para más información contacte con nuestro equipo de soporte',
         );

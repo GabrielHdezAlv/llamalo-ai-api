@@ -437,38 +437,19 @@ export class StreamsGateway {
       callDirection: 'inbound',
     };
 
-    // 🆕 Tarea 1.3: Personalizar Saludo Inicial del Agente de Llamadas
-    if (userId) {
-      try {
-        const userDocRef = admin.firestore().collection('users').doc(userId);
-        const userDoc = await userDocRef.get();
-        if (userDoc.exists) {
-          session.userDocument = userDoc.data();
-
-          if (session.userDocument?.companyName && session.pendingGreeting) {
-            const companyName = session.userDocument.companyName;
-            console.log(
-              `👋 [${callSid}] Personalizando saludo con empresa: ${companyName}`,
-            );
-
-            // Personalización simple: "Hola, bienvenido a [Empresa]..."
-            if (
-              session.pendingGreeting.trim().toLowerCase().startsWith('hola')
-            ) {
-              session.pendingGreeting = session.pendingGreeting.replace(
-                /^Hola([,.])?/i,
-                `Hola$1 bienvenido a ${companyName}.`,
-              );
-            } else {
-              session.pendingGreeting = `Bienvenido a ${companyName}. ${session.pendingGreeting}`;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(
-          `⚠️ [${callSid}] No se pudo cargar userDocument para saludo:`,
-          e,
+    // Personalizar saludo con el companyName del usuario (reutiliza userDocumentData ya cargado)
+    if (userId && userDocumentData?.companyName && session.pendingGreeting) {
+      const companyName = userDocumentData.companyName as string;
+      console.log(
+        `👋 [${callSid}] Personalizando saludo con empresa: ${companyName}`,
+      );
+      if (session.pendingGreeting.trim().toLowerCase().startsWith('hola')) {
+        session.pendingGreeting = session.pendingGreeting.replace(
+          /^Hola([,.])?/i,
+          `Hola$1 bienvenido a ${companyName}.`,
         );
+      } else {
+        session.pendingGreeting = `Bienvenido a ${companyName}. ${session.pendingGreeting}`;
       }
     }
 
@@ -1074,13 +1055,13 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     session.readyForAudio = false;
     try {
       session.sttSocket?.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn(`⚠️ [${session.callSid}] Error cerrando sttSocket:`, err);
     }
     try {
       session.voiceAgentSocket?.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn(`⚠️ [${session.callSid}] Error cerrando voiceAgentSocket:`, err);
     }
     session.sttSocket = undefined;
     session.voiceAgentSocket = undefined;
@@ -1100,8 +1081,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     let message: Record<string, unknown> = {};
     try {
       message = JSON.parse(raw);
-    } catch {
-      console.warn(`⚠️ [${session.callSid}] Mensaje STT no parseable`, raw);
+    } catch (err) {
+      console.warn(`⚠️ [${session.callSid}] Mensaje STT no parseable:`, err, raw);
       return;
     }
 
@@ -2374,8 +2355,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       try {
         console.log(`⏳ Esperando TTS anterior antes de procesar nuevo texto`);
         await session.currentTTSRequest;
-      } catch {
-        // Ignorar errores previos
+      } catch (err) {
+        console.warn(`⚠️ [${session.callSid}] Error en TTS anterior ignorado:`, err);
       }
     }
 
@@ -2542,7 +2523,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             `❌ [${session.callSid}] ElevenLabs error details:`,
             JSON.stringify(errorJson, null, 2),
           );
-        } catch {
+        } catch (parseErr) {
+          console.warn(`⚠️ [${session.callSid}] Error parseando respuesta ElevenLabs:`, parseErr);
           errorMessage = errorBody || errorMessage;
         }
         throw new Error(`ElevenLabs TTS error: ${errorMessage}`);

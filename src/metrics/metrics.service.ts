@@ -713,68 +713,6 @@ export class MetricsService {
   /**
    * Calcula las llamadas de los últimos 7 días
    */
-  private calculateLast7Days(calls: TwilioCall[]): LlamadaExitosaPorDiaDto[] {
-    // Obtener los últimos 7 días
-    const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
-    const hoy = new Date();
-
-    for (let i = 6; i >= 0; i--) {
-      // Calcular la fecha usando UTC para evitar problemas de zona horaria
-      const fecha = new Date(hoy);
-      fecha.setUTCDate(fecha.getUTCDate() - i);
-      fecha.setUTCHours(0, 0, 0, 0);
-
-      // Obtener fecha en formato YYYY-MM-DD (usando UTC para consistencia)
-      const year = fecha.getUTCFullYear();
-      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(fecha.getUTCDate()).padStart(2, '0');
-      const fechaStr = `${year}-${month}-${day}`;
-
-      // Contar llamadas de ese día
-      // Usar start_time si está disponible, sino usar date_created como fallback
-      // Las fechas de Twilio vienen en UTC, así que comparamos en UTC
-      const llamadasDelDia = calls.filter((call) => {
-        // Intentar usar start_time primero, si no está disponible usar date_created
-        const fechaLlamada = call.start_time || call.date_created;
-        if (!fechaLlamada) {
-          console.warn(
-            `[Metrics] Llamada sin start_time ni date_created: ${call.sid}`,
-          );
-          return false;
-        }
-        const callDate = new Date(fechaLlamada);
-        const callYear = callDate.getUTCFullYear();
-        const callMonth = String(callDate.getUTCMonth() + 1).padStart(2, '0');
-        const callDay = String(callDate.getUTCDate()).padStart(2, '0');
-        const callDateStr = `${callYear}-${callMonth}-${callDay}`;
-        return callDateStr === fechaStr;
-      });
-
-      ultimos7Dias.push({
-        fecha: fechaStr,
-        total: llamadasDelDia.length,
-      });
-    }
-
-    // Resumen final para verificar que todas las llamadas se estén contando
-    const totalContadas = ultimos7Dias.reduce((sum, dia) => sum + dia.total, 0);
-    const llamadasSinFecha = calls.filter(
-      (call) => !call.start_time && !call.date_created,
-    ).length;
-
-    console.log(
-      `[Metrics] Resumen final - Total recibidas: ${calls.length}, Total contadas: ${totalContadas}, Sin fecha: ${llamadasSinFecha}`,
-    );
-
-    if (totalContadas + llamadasSinFecha !== calls.length) {
-      console.warn(
-        `[Metrics] ADVERTENCIA: Hay ${calls.length - totalContadas - llamadasSinFecha} llamadas que no se están contando`,
-      );
-    }
-
-    return ultimos7Dias;
-  }
-
   /**
    * Obtiene métricas detalladas de Twilio
    * Incluye todas las métricas solicitadas para análisis avanzado
@@ -969,30 +907,6 @@ export class MetricsService {
   /**
    * Obtiene todas las llamadas para análisis (sin límite de tiempo)
    */
-  private async fetchAllCallsForAnalysis(
-    sid: string,
-    token: string,
-  ): Promise<TwilioCall[]> {
-    // Para análisis completos, obtenemos llamadas de los últimos 90 días
-    const now = new Date();
-    const startDate = new Date(now);
-    startDate.setUTCDate(startDate.getUTCDate() - 90);
-    startDate.setUTCHours(0, 0, 0, 0);
-
-    const endDate = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    );
-
-    return this.fetchTwilioCalls(sid, token, startDate, endDate);
-  }
 
   /**
    * Calcula las llamadas exitosas de los últimos 7 días con comparación semanal
@@ -1376,26 +1290,18 @@ export class MetricsService {
         registradoEn: new Date(),
       };
 
-      const docSnap = await docRef.get();
-
-      if (docSnap.exists) {
-        // update() con dot-notation sí actualiza campos anidados dentro del mapa 'registros'
-        await docRef.update({
-          updatedAt: new Date(),
-          [`registros.${callSid}`]: registro,
-        });
-      } else {
-        // Crear el documento con el mapa 'registros' correctamente estructurado
-        await docRef.set({
+      // set+merge con dot-notation es atómico: evita la race condition del patrón
+      // read-then-write cuando dos llamadas terminan simultáneamente para el mismo mes
+      await docRef.set(
+        {
           userId,
           twilioAccountId,
           mes: month,
           updatedAt: new Date(),
-          registros: {
-            [callSid]: registro,
-          },
-        });
-      }
+          [`registros.${callSid}`]: registro,
+        },
+        { merge: true },
+      );
 
       console.log(
         `[Metrics] Finalización de llamada guardada - Usuario: ${userId}, CallSid: ${callSid}, Motivo: ${motivo}, Duración: ${duracionSegundos}s`,
