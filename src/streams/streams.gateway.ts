@@ -1195,6 +1195,15 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         },
       ];
 
+      // Detectar si el agente actual es Xenon (para decidir si pasarle la Tool o no)
+      const agentName = session.customParameters?.agentName?.toLowerCase() || '';
+      const isXenon =
+        agentName.includes('xenon') ||
+        session.instructions.toLowerCase().includes('xenon');
+
+      // Solo pasar la tool de escalar a soporte si el agente es Xenon
+      const safeTools = isXenon ? tools : undefined;
+
       // Llamada a OpenAI en modo STREAM
       let stream;
       try {
@@ -1206,7 +1215,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             { role: 'system', content: enrichedInstructions },
             ...session.history,
           ],
-          tools: tools,
+          ...(safeTools && { tools: safeTools }),
           stream: true,
         });
       } catch (err) {
