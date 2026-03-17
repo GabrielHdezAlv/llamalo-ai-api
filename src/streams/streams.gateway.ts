@@ -187,7 +187,7 @@ export class StreamsGateway {
   // LLM
   private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
   private readonly llmTemperature = Number(
-    process.env.OPENAI_TEMPERATURE ?? 0.4, // Subido a 0.4 para respuestas de voz más naturales en ventas
+    process.env.OPENAI_TEMPERATURE ?? 0.7, // Subido a 0.7 para respuestas de voz más creativas y conversacionales
   );
   private readonly llmMaxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 200);
 
@@ -1314,13 +1314,20 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           const lastChar = token.slice(-1);
           const isSentenceEnd = strongEnders.has(lastChar);
 
-          // Enviar en comas si la frase ya tiene >8 palabras, O si es el PRIMER chunk y tiene al menos 1 palabra (ej: "Claro,", "Sí,")
+          // Enviar en comas si la frase ya tiene >5 palabras (para evitar que hable sin respirar),
+          // O si es el PRIMER chunk y tiene al menos 1 palabra (ej: "Claro,", "Sí,")
           const wordsCount = sentenceBuffer.trim().split(' ').length;
+          
+          // FORZAR PUNTUACIÓN (Anti-Metralleta):
+          // Si el bot ha dicho 15 palabras y no hay puntuación, forzamos un corte enviando lo que hay.
+          // El TTS interpretará este corte del chunk como una micro pausa natural.
+          const isTooLongWithoutPause = wordsCount >= 15;
+
           const isPauseEnd =
             weakEnders.has(lastChar) &&
-            (wordsCount > 8 || (isFirstChunk && wordsCount >= 1));
+            (wordsCount > 5 || (isFirstChunk && wordsCount >= 1));
 
-          if (isSentenceEnd || isPauseEnd) {
+          if (isSentenceEnd || isPauseEnd || isTooLongWithoutPause) {
             if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
 
             const sentenceToSend = sentenceBuffer.trim();

@@ -116,7 +116,7 @@ ${payload.userDescription}
 Genera instrucciones completas basadas en esta descripción. Si el usuario describe políticas de devolución de coches, crea un agente especializado en atención al cliente para venta de coches. Si describe soporte técnico, crea un agente de soporte. ADAPTA TODO EL CONTENIDO a lo que el usuario describe.`;
 
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
-    const temperature = Number(process.env.OPENAI_TEMPERATURE ?? 0.4);
+    const temperature = Number(process.env.OPENAI_TEMPERATURE ?? 0.7);
     // No reutilizar OPENAI_MAX_TOKENS global (puede estar bajo para llamadas). Usar uno propio.
     const baseMaxTokens = 3500;
 
