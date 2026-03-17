@@ -4,6 +4,8 @@ import axios from 'axios';
 import OpenAI from 'openai';
 import { Readable } from 'stream';
 import * as admin from 'firebase-admin';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   ShopifyService,
   NormalizedStore,
@@ -633,6 +635,22 @@ export class TestCallGateway {
 
   private buildInstructions(session: TestCallSession): string {
     let instructions = session.config.agentInstruction;
+
+    // Inyectar reglas de voz
+    try {
+      const voiceRulesPath = path.resolve(
+        process.cwd(),
+        'src/prompts/voice-rules.md',
+      );
+      if (fs.existsSync(voiceRulesPath)) {
+        const voiceRules = fs.readFileSync(voiceRulesPath, 'utf8');
+        if (voiceRules) {
+          instructions += `\n\n${voiceRules}`;
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Error al leer voice-rules.md en TestCall:', err);
+    }
 
     if (
       session.shopifyContext?.store ||

@@ -781,88 +781,14 @@ export class StreamsGateway {
    * Enriquece las instrucciones del sistema con datos de Shopify si están disponibles
    * Formatea los datos de la tienda y productos destacados como JSON dentro del prompt
    */
-  private enrichInstructionsWithShopify(session: CallSession): string {
+  private enrichInstructions(session: CallSession): string {
     const baseInstructions = session.instructions;
 
     try {
-      const shopifyContext = session.shopifyContext;
-
-      // Si NO hay contexto de Shopify (ej. Xenon o llamadas sin integración), no hacer nada
-      if (!shopifyContext) {
-        return baseInstructions;
-      }
-
-      // Si HAY contexto de Shopify pero no tiene datos, añadir instrucciones de Fallback
-      if (
-        !shopifyContext.store &&
-        !shopifyContext.featuredProducts?.length &&
-        !shopifyContext.orders?.length
-      ) {
-        console.warn(
-          `⚠️ [DEBUG-${session.callSid}] Sin datos de Shopify. Inyectando instrucciones de fallback.`,
-        );
-        const fallbackInstructions = `
-============================================================
-## 🚫 NO SE ENCONTRARON DATOS DE SHOPIFY 🚫
-============================================================
-No se ha encontrado información de la tienda ni pedidos asociados a este número de teléfono (${session.customParameters?.callerPhone || 'Desconocido'}).
-
-**Instrucciones obligatorias si el usuario pregunta por un pedido:**
-1. NO inventes información.
-2. Explica amablemente que no encuentras el registro automáticamente.
-3. Pide al usuario el **Número de Pedido** o el **Email** con el que realizó la compra para poder ayudarle mejor (o escálalo a un humano).
-============================================================
-`;
-        return `${baseInstructions}\n${fallbackInstructions}`;
-      }
-
-      // Construir contexto de Shopify como JSON estructurado
-      const shopifyData: {
-        tienda?: NormalizedStore;
-        productosDestacados?: NormalizedProduct[];
-        pedidosRecientes?: NormalizedOrder[];
-      } = {};
-
-      try {
-        if (shopifyContext.store) {
-          shopifyData.tienda = shopifyContext.store;
-        }
-
-        if (
-          shopifyContext.featuredProducts &&
-          shopifyContext.featuredProducts.length > 0
-        ) {
-          shopifyData.productosDestacados = shopifyContext.featuredProducts;
-        }
-
-        if (shopifyContext.orders && shopifyContext.orders.length > 0) {
-          shopifyData.pedidosRecientes = shopifyContext.orders;
-        }
-      } catch (dataError) {
-        console.warn(
-          `⚠️ [${session.callSid}] Error construyendo datos de Shopify para enriquecimiento:`,
-          dataError instanceof Error ? dataError.message : String(dataError),
-        );
-        // Continuar sin datos si hay error construyendo el objeto
-        return baseInstructions;
-      }
-
-      // Formatear como JSON para que el LLM lo entienda fácilmente
-      let shopifyContextJson: string;
-      try {
-        shopifyContextJson = JSON.stringify(shopifyData, null, 2);
-      } catch (jsonError) {
-        console.error(
-          `❌ [${session.callSid}] Error serializando datos Shopify a JSON:`,
-          jsonError instanceof Error ? jsonError.message : String(jsonError),
-        );
-        return baseInstructions;
-      }
-
-      // 1. Cargar reglas de voz (Cachear para latencia)
+      // 1. Cargar reglas de voz (siempre)
       const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
 
-      // 2. Cargar conocimiento de empresa (Cachear para latencia)
+      // 2. Cargar conocimiento de empresa (siempre)
       const privacyPolicy = this.readStaticFile(
         'src/knowledge/xenon/privacy_policy.txt',
       );
@@ -879,74 +805,104 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           companyKnowledge += `\n### Términos y Condiciones:\n${terms}\n`;
       }
 
-      // 3. Cargar plantilla de Shopify (Cachear para latencia)
-      let shopifyPromptTemplate = this.readStaticFile(
-        'src/prompts/shopify-context.md',
-      );
+      // 3. Inyectar Datos Clave del Usuario (siempre que existan)
+      let userDataString = '';
+      if (session.userDocument) {
+        const companyName = session.userDocument.companyName;
+        const userEmail = session.userDocument.email;
+        const shopifyDomain = session.userDocument.shopifyDomain;
+        const callerPhone = session.customParameters?.callerPhone;
 
-      // Fallback por si falla la lectura
-      if (!shopifyPromptTemplate) {
-        shopifyPromptTemplate = `\nContexto Shopify:\n\`\`\`json\n{{SHOPIFY_CONTEXT_JSON}}\n\`\`\`\n`;
+        userDataString += `\n============================================================\n## 👤 CONTEXTO DEL USUARIO 👤\n============================================================\n`;
+        if (session.userId)
+          userDataString += `- ID de Usuario: ${session.userId}\n`;
+        if (companyName)
+          userDataString += `- Nombre de la Empresa: ${companyName}\n`;
+        if (userEmail) userDataString += `- Email de Contacto: ${userEmail}\n`;
+        if (shopifyDomain)
+          userDataString += `- Dominio Shopify Asociado: ${shopifyDomain}\n`;
+        if (callerPhone)
+          userDataString += `- Teléfono desde el que llama: ${callerPhone}\n`;
+        userDataString += `============================================================\n\n`;
       }
 
-      // Reemplazar la variable por el JSON real
-      const finalShopifyContext = shopifyPromptTemplate.replace(
-        '{{SHOPIFY_CONTEXT_JSON}}',
-        shopifyContextJson,
-      );
+      // 4. Datos de Shopify (solo si existen)
+      let finalShopifyContext = '';
+      let fallbackInstructions = '';
+      const shopifyContext = session.shopifyContext;
 
-      // Ensamblar el prompt final
-      try {
-        // 🆕 Tarea 1.2: Inyectar Datos Clave del Usuario en el System Prompt
-        let userDataString = '';
-        if (session.userDocument) {
-          const companyName = session.userDocument.companyName;
-          const userEmail = session.userDocument.email;
-          const shopifyDomain = session.userDocument.shopifyDomain;
-          const callerPhone = session.customParameters?.callerPhone; // El teléfono desde el que llama
+      if (shopifyContext) {
+        if (
+          !shopifyContext.store &&
+          !shopifyContext.featuredProducts?.length &&
+          !shopifyContext.orders?.length
+        ) {
+          console.warn(
+            `⚠️ [DEBUG-${session.callSid}] Sin datos de Shopify. Inyectando instrucciones de fallback.`,
+          );
+          fallbackInstructions = `
+============================================================
+## 🚫 NO SE ENCONTRARON DATOS DE SHOPIFY 🚫
+============================================================
+No se ha encontrado información de la tienda ni pedidos asociados a este número de teléfono (${session.customParameters?.callerPhone || 'Desconocido'}).
 
-          userDataString += `\n============================================================\n## 👤 CONTEXTO DEL USUARIO 👤\n============================================================\n`;
-          if (session.userId)
-            userDataString += `- ID de Usuario: ${session.userId}\n`;
-          if (companyName)
-            userDataString += `- Nombre de la Empresa: ${companyName}\n`;
-          if (userEmail)
-            userDataString += `- Email de Contacto: ${userEmail}\n`;
-          if (shopifyDomain)
-            userDataString += `- Dominio Shopify Asociado: ${shopifyDomain}\n`;
-          if (callerPhone)
-            userDataString += `- Teléfono desde el que llama: ${callerPhone}\n`;
-          userDataString += `============================================================\n\n`;
+**Instrucciones obligatorias si el usuario pregunta por un pedido:**
+1. NO inventes información.
+2. Explica amablemente que no encuentras el registro automáticamente.
+3. Pide al usuario el **Número de Pedido** o el **Email** con el que realizó la compra para poder ayudarle mejor (o escálalo a un humano).
+============================================================
+`;
+        } else {
+          // Construir contexto de Shopify como JSON estructurado
+          const shopifyData: any = {};
+          if (shopifyContext.store) shopifyData.tienda = shopifyContext.store;
+          if (shopifyContext.featuredProducts?.length)
+            shopifyData.productosDestacados = shopifyContext.featuredProducts;
+          if (shopifyContext.orders?.length)
+            shopifyData.pedidosRecientes = shopifyContext.orders;
+
+          let shopifyContextJson = '';
+          try {
+            shopifyContextJson = JSON.stringify(shopifyData, null, 2);
+            let shopifyPromptTemplate = this.readStaticFile(
+              'src/prompts/shopify-context.md',
+            );
+            if (!shopifyPromptTemplate) {
+              shopifyPromptTemplate = `\nContexto Shopify:\n\`\`\`json\n{{SHOPIFY_CONTEXT_JSON}}\n\`\`\`\n`;
+            }
+            finalShopifyContext = shopifyPromptTemplate.replace(
+              '{{SHOPIFY_CONTEXT_JSON}}',
+              shopifyContextJson,
+            );
+          } catch (jsonError) {
+            console.error(
+              `❌ [${session.callSid}] Error serializando datos Shopify a JSON:`,
+              jsonError instanceof Error
+                ? jsonError.message
+                : String(jsonError),
+            );
+          }
         }
-
-        const enrichedInstructions = [
-          userDataString, // Inyectar datos de usuario al inicio
-          baseInstructions,
-          voiceRules ? `\n${voiceRules}\n` : '',
-          companyKnowledge,
-          finalShopifyContext,
-        ]
-          .filter(Boolean)
-          .join('\n');
-
-        return enrichedInstructions;
-      } catch (stringError) {
-        console.error(
-          `❌ [${session.callSid}] Error construyendo instrucciones enriquecidas:`,
-          stringError instanceof Error
-            ? stringError.message
-            : String(stringError),
-        );
-        // Retornar instrucciones base si hay error construyendo el string
-        return baseInstructions;
       }
+
+      // 5. Ensamblar el prompt final
+      const enrichedInstructions = [
+        userDataString,
+        baseInstructions,
+        voiceRules ? `\n${voiceRules}\n` : '',
+        companyKnowledge,
+        fallbackInstructions,
+        finalShopifyContext,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      return enrichedInstructions;
     } catch (error) {
-      // Manejar cualquier error inesperado sin bloquear el flujo
       console.error(
-        `❌ [${session.callSid}] Error en enrichInstructionsWithShopify:`,
+        `❌ [${session.callSid}] Error en enrichInstructions:`,
         error instanceof Error ? error.message : String(error),
       );
-      // Retornar instrucciones base como fallback
       return baseInstructions;
     }
   }
@@ -1061,7 +1017,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     try {
       session.voiceAgentSocket?.close();
     } catch (err) {
-      console.warn(`⚠️ [${session.callSid}] Error cerrando voiceAgentSocket:`, err);
+      console.warn(
+        `⚠️ [${session.callSid}] Error cerrando voiceAgentSocket:`,
+        err,
+      );
     }
     session.sttSocket = undefined;
     session.voiceAgentSocket = undefined;
@@ -1082,7 +1041,11 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     try {
       message = JSON.parse(raw);
     } catch (err) {
-      console.warn(`⚠️ [${session.callSid}] Mensaje STT no parseable:`, err, raw);
+      console.warn(
+        `⚠️ [${session.callSid}] Mensaje STT no parseable:`,
+        err,
+        raw,
+      );
       return;
     }
 
@@ -1194,10 +1157,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         }
       }
 
-      // Enriquecer las instrucciones con datos de Shopify
+      // Enriquecer las instrucciones con datos de Shopify, Reglas de Voz, etc.
       let enrichedInstructions: string;
       try {
-        enrichedInstructions = this.enrichInstructionsWithShopify(session);
+        enrichedInstructions = this.enrichInstructions(session);
       } catch (error) {
         enrichedInstructions = session.instructions;
       }
@@ -1340,7 +1303,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
           // 🔍 Detectar señal de colgado [END_CALL]
           if (sentenceBuffer.includes('[END_CALL]')) {
-            console.log(`🔚 [${session.callSid}] Señal [END_CALL] detectada en el stream.`);
+            console.log(
+              `🔚 [${session.callSid}] Señal [END_CALL] detectada en el stream.`,
+            );
             shouldHangup = true;
             sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/g, '');
           }
@@ -1485,7 +1450,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
-        let cleanedResponse = fullResponse.replace(/\[END_CALL\]/g, '').trim();
+        const cleanedResponse = fullResponse
+          .replace(/\[END_CALL\]/g, '')
+          .trim();
         const finalContent = session.interrupted
           ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
           : cleanedResponse;
@@ -1503,7 +1470,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       // 🔚 Colgar si se detectó la señal [END_CALL]
       if (shouldHangup && !session.interrupted) {
-        console.log(`🔚 [${session.callSid}] Ejecutando hangup tras [END_CALL]`);
+        console.log(
+          `🔚 [${session.callSid}] Ejecutando hangup tras [END_CALL]`,
+        );
         await this.hangupCall(session);
       }
     } catch (err) {
@@ -2338,7 +2307,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     let shouldHangup = false;
 
     if (processedText.includes('[END_CALL]')) {
-      console.log(`🔚 [${session.callSid}] Señal [END_CALL] detectada en TTS manual.`);
+      console.log(
+        `🔚 [${session.callSid}] Señal [END_CALL] detectada en TTS manual.`,
+      );
       shouldHangup = true;
       processedText = processedText.replace(/\[END_CALL\]/g, '').trim();
     }
@@ -2356,7 +2327,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         console.log(`⏳ Esperando TTS anterior antes de procesar nuevo texto`);
         await session.currentTTSRequest;
       } catch (err) {
-        console.warn(`⚠️ [${session.callSid}] Error en TTS anterior ignorado:`, err);
+        console.warn(
+          `⚠️ [${session.callSid}] Error en TTS anterior ignorado:`,
+          err,
+        );
       }
     }
 
@@ -2371,7 +2345,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     session.currentTTSRequest = this.streamElevenLabsTTS(session, processedText)
       .then(async () => {
         if (shouldHangup && !session.interrupted) {
-          console.log(`🔚 [${session.callSid}] Colgando tras completar TTS con [END_CALL]`);
+          console.log(
+            `🔚 [${session.callSid}] Colgando tras completar TTS con [END_CALL]`,
+          );
           await this.hangupCall(session);
         }
       })
@@ -2524,7 +2500,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             JSON.stringify(errorJson, null, 2),
           );
         } catch (parseErr) {
-          console.warn(`⚠️ [${session.callSid}] Error parseando respuesta ElevenLabs:`, parseErr);
+          console.warn(
+            `⚠️ [${session.callSid}] Error parseando respuesta ElevenLabs:`,
+            parseErr,
+          );
           errorMessage = errorBody || errorMessage;
         }
         throw new Error(`ElevenLabs TTS error: ${errorMessage}`);
@@ -2778,13 +2757,15 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   private async hangupCall(session: CallSession) {
     try {
       console.log(`📞 [${session.callSid}] Iniciando colgado de llamada`);
-      
+
       // Esperar a que el audio pendiente se termine de reproducir
       const now = Date.now();
       if (session.expectedAudioEndTime && session.expectedAudioEndTime > now) {
         const timeToWait = session.expectedAudioEndTime - now + 1000; // 1000ms de margen adicional para la red
-        console.log(`⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar...`);
-        await new Promise(resolve => setTimeout(resolve, timeToWait));
+        console.log(
+          `⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, timeToWait));
       }
 
       // Marcar que la llamada fue terminada por el agente (END_CALL o silencio gestionado)
