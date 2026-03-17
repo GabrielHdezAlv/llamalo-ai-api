@@ -1242,9 +1242,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           console.log(`🗣️ [${session.callSid}] Latencia: ${latency}ms`);
         }
 
-        // Solo persistir latencias válidas (evitar negativas por condición de carrera)
+        // Solo persistir latencias válidas y realistas (evitar negativas o mayores a 15s por fallos de sincronización)
         if (
           latency >= 0 &&
+          latency < 15000 &&
           session.userId &&
           session.customParameters?.twilioAccountId
         ) {
@@ -1257,6 +1258,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           } catch (error) {
             console.warn(`[Latency] Error guardando latencia:`, error);
           }
+        } else if (latency >= 15000) {
+          console.warn(`⚠️ [${session.callSid}] Latencia ignorada por ser irrealmente alta (${latency}ms). Posible desincronización de userStartedAt.`);
         }
       }
 
