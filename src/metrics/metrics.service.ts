@@ -1110,13 +1110,18 @@ export class MetricsService {
         return 0;
       }
 
+      // Tomar solo las últimas 20 interacciones para una media más reactiva y realista
+      // (evitando que latencias antiguas o anomalías corrompan la media mostrada al cliente)
+      const RECENT_INTERACTIONS_LIMIT = 20;
+      const ultimasLatencias = todasLasLatencias.slice(-RECENT_INTERACTIONS_LIMIT);
+
       // Calcular media
       const latenciaMedia = Math.round(
-        todasLasLatencias.reduce((a, b) => a + b, 0) / todasLasLatencias.length,
+        ultimasLatencias.reduce((a, b) => a + b, 0) / ultimasLatencias.length,
       );
 
       console.log(
-        `[Metrics] Latencia media calculada - Total mediciones: ${todasLasLatencias.length}, Media: ${latenciaMedia}ms`,
+        `[Metrics] Latencia media calculada - Total mediciones (histórico): ${todasLasLatencias.length}, Usadas (últimas): ${ultimasLatencias.length}, Media: ${latenciaMedia}ms`,
       );
 
       return latenciaMedia;
