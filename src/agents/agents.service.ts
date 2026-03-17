@@ -79,11 +79,14 @@ export class AgentsService {
 
     const template = this.readAgentPromptTemplate();
 
-    const systemPrompt = `Eres un Ingeniero de Prompts Experto en Inteligencia Artificial Conversacional de la plataforma Llámalo AI.
-Tu trabajo es crear el "Prompt de Sistema Perfecto" para un Agente Telefónico de Voz.
+    const systemPrompt = `Eres un Ingeniero de Prompts Experto en Inteligencia Artificial Conversacional.
+Tu trabajo es crear el "Prompt de Sistema Perfecto" para un Agente Telefónico de Voz de una empresa.
 
-Te daré la descripción de una empresa y lo que quieren que haga su agente. 
-TÚ DEBES rellenar la plantilla que te he dado como si fuera un formulario.
+TÚ DEBES rellenar la plantilla que te he dado como si fuera un formulario basándote en los datos que te proporcionaré.
+
+REGLAS DE SEGURIDAD CRÍTICAS:
+1. **PROHIBICIÓN DE MARCA**: NUNCA menciones "Llámalo AI" ni "LlamaloAI" en las instrucciones del agente. El agente trabaja EXCLUSIVAMENTE para la empresa indicada en "Nombre de la Empresa".
+2. **IDENTIDAD**: Usa obligatoriamente el "Nombre de la Empresa" proporcionado. Si no se proporciona un nombre, usa un término genérico como "nuestra empresa", "la clínica" o "la tienda", pero JAMÁS digas que eres de Llámalo AI.
 
 Requisitos estrictos para generar el prompt:
 1. Devuelve SOLO el texto final de instrucciones. No devuelvas explicaciones ni rodees el texto con backticks de markdown.
