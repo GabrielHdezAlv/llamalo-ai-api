@@ -79,41 +79,40 @@ export class AgentsService {
 
     const template = this.readAgentPromptTemplate();
 
-    const systemPrompt = `Tu tarea es generar instrucciones personalizadas para un agente telefónico de voz basándote en la descripción específica del usuario.
+    const systemPrompt = `Eres un Ingeniero de Prompts Experto en Inteligencia Artificial Conversacional de la plataforma Llámalo AI.
+Tu trabajo es crear el "Prompt de Sistema Perfecto" para un Agente Telefónico de Voz.
 
-Requisitos:
-- Devuelve SOLO el texto final de instrucciones. No devuelvas JSON, ni explicaciones, ni rodees el texto con backticks.
-- Usa la estructura y formato del ejemplo/plantilla proporcionado como referencia, pero ADAPTA EL CONTENIDO completamente al negocio del usuario.
-- El texto debe estar en el idioma indicado por language (ISO-639-1).
-- Integra enterpriseName y agentName de forma natural.
-- Adapta el comportamiento según callType (inbound u outbound).
-- Si se proporciona shopDomain, incluye una sección sobre uso de contexto Shopify y menciona el shopDomain de forma segura.
-- **IMPORTANTE**: El contenido debe estar basado en la descripción del usuario (userDescription), no en un agente de soporte genérico.
-- La salida debe ser extensa y cubrir todas las secciones críticas: identidad, personalidad, reglas de conversación, alcance, límites, y finalización.
-- **CRÍTICO**: Reemplaza el marcador [IDIOMA_AGENTE] en la plantilla con el código de idioma proporcionado (${payload.language}) para asegurar que el agente solo hable en ese idioma.
+Te daré la descripción de una empresa y lo que quieren que haga su agente. 
+TÚ DEBES rellenar la plantilla que te he dado como si fuera un formulario.
 
-Ejemplo/plantilla de referencia (solo para estructura y formato, no para contenido):
-${template}
+Requisitos estrictos para generar el prompt:
+1. Devuelve SOLO el texto final de instrucciones. No devuelvas explicaciones ni rodees el texto con backticks de markdown.
+2. Usa la estructura exacta del ejemplo/plantilla proporcionado, pero INVENTA Y COMPLETA todas las secciones con corchetes [COMO_ESTOS] basándote en la industria del cliente.
+3. El texto debe estar en el idioma indicado por language (ISO-639-1).
+4. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 (ej: agendar una cita, vender un zapato, dar soporte técnico).
+5. **Flujo de Llamada**: Inventa 4 o 5 pasos lógicos en la sección 4 para que el agente guíe la llamada (ej: 1. Saludo, 2. Pedir DNI, 3. Buscar cita, 4. Confirmar).
+6. **Límites Estrictos**: Inventa al menos 2 límites críticos en la sección 5 basados en la industria (ej: Si es una clínica, escribe "NUNCA des consejos médicos ni recetes medicación").
+7. **Base de Conocimientos**: Transforma la descripción del usuario en una sección de conocimiento clara (sección 6) con viñetas para que el agente la pueda leer rápido.
+8. **Playbooks**: Inventa 2 escenarios comunes de la industria del cliente en la sección 8 y cómo debe reaccionar el agente.
+9. Reemplaza el marcador [IDIOMA_AGENTE] con el idioma proporcionado (${payload.language}).
+10. Si el usuario tiene shopDomain (${payload.shopDomain}), asegúrate de dejar intacta la sección 7 de Shopify.
 
-Instrucciones clave:
-- Si el usuario describe un negocio de coches, el agente debe hablar de coches, no de software LlamaloAI
-- Si el usuario describe atención al cliente de productos, enfócate en esos productos
-- Mantén el estilo conversacional y las reglas de formato, pero personaliza el contenido completamente según la descripción del usuario
-- **REGLA DE IDIOMA**: Asegúrate de reemplazar [IDIOMA_AGENTE] con "${payload.language}" en las reglas de idioma estrictas`;
+Ejemplo/plantilla de referencia (Rellena los huecos vacíos):
+${template}`;
 
     const userPrompt = `Datos para personalizar:
-- enterpriseName: ${payload.enterpriseName}
-- agentName: ${payload.agentName}
-- callType: ${payload.callType}
-- language: ${payload.language}
-- voiceId: ${payload.voiceId}
-- voiceParameters: ${JSON.stringify(payload.voiceParameters)}
-- shopDomain: ${payload.shopDomain ?? '(no proporcionado)'}
+- Nombre de la Empresa: ${payload.enterpriseName}
+- Nombre del Agente: ${payload.agentName}
+- Tipo de Llamada: ${payload.callType}
+- Idioma: ${payload.language}
+- Voice ID: ${payload.voiceId}
+- Voice Parameters: ${JSON.stringify(payload.voiceParameters)}
+- Dominio Shopify: ${payload.shopDomain ?? '(no proporcionado)'}
 
-Descripción específica del usuario (ESTA ES LA BASE DEL CONTENIDO):
+DESCRIPCIÓN DEL USUARIO (Transforma esto en la Base de Conocimientos y Flujo del Agente):
 ${payload.userDescription}
 
-Genera instrucciones completas basadas en esta descripción. Si el usuario describe políticas de devolución de coches, crea un agente especializado en atención al cliente para venta de coches. Si describe soporte técnico, crea un agente de soporte. ADAPTA TODO EL CONTENIDO a lo que el usuario describe.`;
+Genera las instrucciones completas rellenando la plantilla con todo el contexto necesario para esta empresa.`;
 
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
     const temperature = Number(process.env.OPENAI_TEMPERATURE ?? 0.7);
