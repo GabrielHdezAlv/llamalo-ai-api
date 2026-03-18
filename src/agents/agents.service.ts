@@ -100,7 +100,7 @@ Requisitos estrictos para generar el prompt:
 1. Devuelve SOLO el texto final de instrucciones. No devuelvas explicaciones ni rodees el texto con backticks de markdown.
 2. Usa la estructura exacta del ejemplo/plantilla proporcionado.
 3. **CERO COPIA DE EJEMPLOS**: Los textos entre corchetes como "[PASO 2 - Ej: Identificación de la necesidad]" o "[LIMITE_CRITICO_1...]" son SOLO EJEMPLOS del tipo de contenido que debe ir ahí. TÚ DEBES inventar el contenido real basándote ÚNICAMENTE en la "DESCRIPCIÓN DEL USUARIO".
-4. **PROHIBICIÓN DE TEMAS MÉDICOS/DENTALES POR DEFECTO**: NUNCA menciones "Clínica Dental", "Dientes", "Limpiezas" ni nada relacionado con salud A MENOS que el usuario lo pida explícitamente en su descripción. Sé coherente con el sector real del cliente.
+4. **EVITAR SESGOS MÉDICOS/DENTALES**: NUNCA menciones "Clínica Dental", "Dientes", "Limpiezas", "Ortodoncia" ni nada relacionado con odontología o salud A MENOS que la "DESCRIPCIÓN DEL USUARIO" o el "Nombre de la Empresa" indiquen claramente que ese es el negocio. Ignora cualquier sesgo previo sobre clínicas dentales.
 5. El texto debe estar en el idioma indicado por language (ISO-639-1).
 6. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 basándote únicamente en lo que el usuario ha descrito.
 7. **Flujo de Llamada**: Inventa pasos lógicos en la sección 4 que sigan el proceso real del negocio descrito.
