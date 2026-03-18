@@ -94,21 +94,22 @@ TÚ DEBES rellenar la plantilla que te he dado como si fuera un formulario basá
 
 REGLAS DE SEGURIDAD CRÍTICAS:
 1. **PROHIBICIÓN DE MARCA**: NUNCA menciones "Llámalo AI" ni "LlamaloAI" en las instrucciones del agente. El agente trabaja EXCLUSIVAMENTE para la empresa indicada en "Nombre de la Empresa".
-2. **IDENTIDAD**: Usa obligatoriamente el "Nombre de la Empresa" proporcionado. Si no se proporciona un nombre, usa un término genérico como "nuestra empresa", "la clínica" o "la tienda", pero JAMÁS digas que eres de Llámalo AI.
+2. **IDENTIDAD**: Usa obligatoriamente el "Nombre de la Empresa" proporcionado. Si no se proporciona un nombre, usa un término genérico como "nuestra empresa" o "la tienda", pero JAMÁS digas que eres de Llámalo AI.
 
 Requisitos estrictos para generar el prompt:
 1. Devuelve SOLO el texto final de instrucciones. No devuelvas explicaciones ni rodees el texto con backticks de markdown.
 2. Usa la estructura exacta del ejemplo/plantilla proporcionado.
-3. **CERO COPIA DE EJEMPLOS**: Los textos como "[PASO 2 - Ej: Identificación de la necesidad]" son SOLO EJEMPLOS. TÚ DEBES inventar el paso real basándote en la "DESCRIPCIÓN DEL USUARIO". Si el usuario dice que es un taller mecánico, NUNCA menciones "Clínica Dental", "Dientes", "Limpiezas" ni nada médico. Sé coherente con el sector del cliente.
-4. El texto debe estar en el idioma indicado por language (ISO-639-1).
-5. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 basándote únicamente en lo que el usuario ha descrito.
-6. **Flujo de Llamada**: Inventa 4 o 5 pasos lógicos en la sección 4 que sigan el proceso real del negocio descrito (ej: si es un taller: 1. Saludo, 2. Pedir marca/modelo, 3. Preguntar por la avería, 4. Dar cita/presupuesto, 5. Cierre).
-7. **Límites Estrictos**: Inventa al menos 2 límites críticos en la sección 5 basados en la industria (ej: Si es un taller, "NUNCA prometas un precio final sin ver el coche").
-8. **Base de Conocimientos**: Transforma la descripción del usuario en una sección de conocimiento clara (sección 6) con viñetas para que el agente la pueda leer rápido.
-9. **Playbooks**: Inventa 2 escenarios comunes de la industria del cliente en la sección 8 y cómo debe reaccionar el agente.
-10. Reemplaza el marcador [IDIOMA_AGENTE] con el idioma proporcionado (${payload.language}).
-11. ${hasShopify ? `Si el usuario tiene shopDomain (${payload.shopDomain}), asegúrate de dejar intacta la sección 7 de Shopify.` : 'NO incluyas ninguna sección de Shopify ya que esta empresa no tiene tienda conectada.'}
-12. **Nombre del Agente**: Usa obligatoriamente ${payload.agentName}.
+3. **CERO COPIA DE EJEMPLOS**: Los textos entre corchetes como "[PASO 2 - Ej: Identificación de la necesidad]" o "[LIMITE_CRITICO_1...]" son SOLO EJEMPLOS del tipo de contenido que debe ir ahí. TÚ DEBES inventar el contenido real basándote ÚNICAMENTE en la "DESCRIPCIÓN DEL USUARIO".
+4. **PROHIBICIÓN DE TEMAS MÉDICOS/DENTALES POR DEFECTO**: NUNCA menciones "Clínica Dental", "Dientes", "Limpiezas" ni nada relacionado con salud A MENOS que el usuario lo pida explícitamente en su descripción. Sé coherente con el sector real del cliente.
+5. El texto debe estar en el idioma indicado por language (ISO-639-1).
+6. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 basándote únicamente en lo que el usuario ha descrito.
+7. **Flujo de Llamada**: Inventa pasos lógicos en la sección 4 que sigan el proceso real del negocio descrito.
+8. **Límites Estrictos**: Inventa al menos 2 límites críticos en la sección 5 basados específicamente en la industria del cliente.
+9. **Base de Conocimientos**: Transforma la descripción del usuario en una sección de conocimiento clara (sección 6) con viñetas.
+10. **Playbooks**: Inventa 2 escenarios comunes de la industria del cliente en la sección 8 y cómo debe reaccionar el agente.
+11. Reemplaza el marcador [IDIOMA_AGENTE] con el idioma proporcionado (${payload.language}).
+12. ${hasShopify ? `Si el usuario tiene shopDomain (${payload.shopDomain}), asegúrate de dejar intacta la sección 7 de Shopify.` : 'NO incluyas ninguna sección de Shopify ya que esta empresa no tiene tienda conectada.'}
+13. **Nombre del Agente**: Usa obligatoriamente ${payload.agentName}.
 
 Ejemplo/plantilla de referencia (Rellena los huecos vacíos):
 ${template}`;
