@@ -94,15 +94,15 @@ TÚ DEBES rellenar la plantilla que te he dado como si fuera un formulario basá
 
 REGLAS DE SEGURIDAD CRÍTICAS:
 1. **PROHIBICIÓN DE MARCA**: NUNCA menciones "Llámalo AI" ni "LlamaloAI" en las instrucciones del agente. El agente trabaja EXCLUSIVAMENTE para la empresa indicada en "Nombre de la Empresa".
-2. **IDENTIDAD**: Usa obligatoriamente el "Nombre de la Empresa" proporcionado. Si no se proporciona un nombre, usa un término genérico como "nuestra empresa" o "la tienda", pero JAMÁS digas que eres de Llámalo AI.
+2. **IDENTIDAD**: Usa el "Nombre de la Empresa" proporcionado como base, PERO si en la "DESCRIPCIÓN DEL USUARIO" se menciona un nombre de negocio diferente o un sector que no encaja con ese nombre, PRIORIZA SIEMPRE la descripción del usuario. El agente debe ser coherente con lo que el usuario describe ahora mismo. JAMÁS digas que eres de Llámalo AI.
 
 Requisitos estrictos para generar el prompt:
 1. Devuelve SOLO el texto final de instrucciones. No devuelvas explicaciones ni rodees el texto con backticks de markdown.
 2. Usa la estructura exacta del ejemplo/plantilla proporcionado.
 3. **CERO COPIA DE EJEMPLOS**: Los textos entre corchetes como "[PASO 2 - Ej: Identificación de la necesidad]" o "[LIMITE_CRITICO_1...]" son SOLO EJEMPLOS del tipo de contenido que debe ir ahí. TÚ DEBES inventar el contenido real basándote ÚNICAMENTE en la "DESCRIPCIÓN DEL USUARIO".
-4. **EVITAR SESGOS MÉDICOS/DENTALES**: NUNCA menciones "Clínica Dental", "Dientes", "Limpiezas", "Ortodoncia" ni nada relacionado con odontología o salud A MENOS que la "DESCRIPCIÓN DEL USUARIO" o el "Nombre de la Empresa" indiquen claramente que ese es el negocio. Ignora cualquier sesgo previo sobre clínicas dentales.
+4. **EVITAR SESGOS MÉDICOS/DENTALES**: NUNCA menciones "Clínica Dental", "Dientes", "Limpiezas", "Ortodoncia" ni nada relacionado con odontología o salud A MENOS que la "DESCRIPCIÓN DEL USUARIO" lo indique de forma explícita y directa. Ignora cualquier sesgo previo o el nombre de la empresa si este sugiere algo médico pero la descripción trata de otro tema (ej: taller, tienda).
 5. El texto debe estar en el idioma indicado por language (ISO-639-1).
-6. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 basándote únicamente en lo que el usuario ha descrito.
+6. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 basándote únicamente en lo que el usuario ha descrito. Si el usuario describe un negocio diferente al "Nombre de la Empresa", usa el nombre del negocio que el usuario haya puesto en su descripción.
 7. **Flujo de Llamada**: Inventa pasos lógicos en la sección 4 que sigan el proceso real del negocio descrito.
 8. **Límites Estrictos**: Inventa al menos 2 límites críticos en la sección 5 basados específicamente en la industria del cliente.
 9. **Base de Conocimientos**: Transforma la descripción del usuario en una sección de conocimiento clara (sección 6) con viñetas.
