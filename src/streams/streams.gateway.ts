@@ -1517,14 +1517,14 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           `🔚 [${session.callSid}] Señal [END_CALL] detectada. Notificando al frontend y limpiando la sesión.`,
         );
         // NO colgar la llamada de Twilio, en su lugar, notificar al cliente de frontend
-        if (session.clientWs && session.clientWs.id) { // Asegurarse de que el WebSocket del cliente existe
-            this.wss.to(session.clientWs.id).emit('json', {
+        if (session.client) { // Asegurarse de que el WebSocket del cliente existe
+            session.client.send(JSON.stringify({
                 type: 'session.ended',
                 reason: 'agent_hangup',
-            });
+            }));
             console.log(`📡 [${session.callSid}] Evento 'session.ended' con razón 'agent_hangup' emitido al cliente.`);
         } else {
-            console.warn(`⚠️ [${session.callSid}] No se pudo emitir evento 'session.ended' al cliente: clientWs o clientWs.id no definido.`);
+            console.warn(`⚠️ [${session.callSid}] No se pudo emitir evento 'session.ended' al cliente: client no definido.`);
         }
 
         // Limpiar la sesión en el backend sin colgar la llamada real de Twilio
