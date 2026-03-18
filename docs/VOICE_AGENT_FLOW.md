@@ -11,7 +11,7 @@ Actualmente, **solo hay un flujo activo** para la lógica del agente, pero utili
 El stack actual es:
 1. **Telefonía:** Twilio (WebSockets)
 2. **STT (Voz a Texto):** Deepgram (usando su API de Voice Agent, pero con las respuestas automáticas deshabilitadas).
-3. **LLM (Cerebro/IA):** OpenAI (usando `gpt-4o-mini` por defecto).
+3. **LLM (Cerebro/IA):** OpenAI (usando `gpt-4o` por defecto).
 4. **TTS (Texto a Voz):** ElevenLabs.
 
 *Nota: Deepgram solo se usa como "oído" (transcriptor). Cuando detecta que el usuario terminó de hablar, envía un evento de texto al backend, el cual usamos para llamar a OpenAI.*

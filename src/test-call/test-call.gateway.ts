@@ -133,7 +133,7 @@ export class TestCallGateway {
     process.env.DG_LISTEN_MODEL ?? 'nova-3';
 
   // OpenAI
-  private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+  private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o';
   private readonly llmTemperature = Number(
     process.env.OPENAI_TEMPERATURE ?? 0.4,
   );

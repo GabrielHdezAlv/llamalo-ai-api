@@ -185,7 +185,7 @@ export class StreamsGateway {
   );
 
   // LLM
-  private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+  private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o';
   private readonly llmTemperature = Number(
     process.env.OPENAI_TEMPERATURE ?? 0.7, // Subido a 0.7 para respuestas de voz más creativas y conversacionales
   );

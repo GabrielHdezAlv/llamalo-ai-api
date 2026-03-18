@@ -217,9 +217,9 @@ export class SetAgentConfigDto {
   contactEmail?: string;
 
   @ApiProperty({
-    description: 'Modelo de OpenAI a usar (p. ej. gpt-4o-mini)',
+    description: 'Modelo de OpenAI a usar (p. ej. gpt-4o)',
     required: false,
-    example: 'gpt-4o-mini',
+    example: 'gpt-4o',
   })
   @IsOptional()
   @IsString()

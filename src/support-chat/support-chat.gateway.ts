@@ -597,7 +597,7 @@ export class SupportChatGateway {
       ];
 
       const stream = await this.openai.chat.completions.create({
-        model: session.config.model ?? 'gpt-4o-mini',
+        model: session.config.model ?? 'gpt-4o',
         temperature: 0.4, // Subido a 0.4 para más expresividad/ventas
         max_tokens: 500,
         messages: [

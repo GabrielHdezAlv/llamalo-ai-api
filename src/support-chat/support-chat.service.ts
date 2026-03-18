@@ -39,7 +39,7 @@ const DEFAULT_CONFIG: SupportAgentConfigResponseDto = {
     boost: true,
     speed: 1,
   },
-  model: 'gpt-4o-mini',
+  model: 'gpt-4o',
   enabled: true,
   updatedAt: new Date(),
 };

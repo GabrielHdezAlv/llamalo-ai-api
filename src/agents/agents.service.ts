@@ -90,15 +90,17 @@ REGLAS DE SEGURIDAD CRÍTICAS:
 
 Requisitos estrictos para generar el prompt:
 1. Devuelve SOLO el texto final de instrucciones. No devuelvas explicaciones ni rodees el texto con backticks de markdown.
-2. Usa la estructura exacta del ejemplo/plantilla proporcionado, pero INVENTA Y COMPLETA todas las secciones con corchetes [COMO_ESTOS] basándote en la industria del cliente.
-3. El texto debe estar en el idioma indicado por language (ISO-639-1).
-4. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 (ej: agendar una cita, vender un zapato, dar soporte técnico).
-5. **Flujo de Llamada**: Inventa 4 o 5 pasos lógicos en la sección 4 para que el agente guíe la llamada (ej: 1. Saludo, 2. Pedir DNI, 3. Buscar cita, 4. Confirmar).
-6. **Límites Estrictos**: Inventa al menos 2 límites críticos en la sección 5 basados en la industria (ej: Si es una clínica, escribe "NUNCA des consejos médicos ni recetes medicación").
-7. **Base de Conocimientos**: Transforma la descripción del usuario en una sección de conocimiento clara (sección 6) con viñetas para que el agente la pueda leer rápido.
-8. **Playbooks**: Inventa 2 escenarios comunes de la industria del cliente en la sección 8 y cómo debe reaccionar el agente.
-9. Reemplaza el marcador [IDIOMA_AGENTE] con el idioma proporcionado (${payload.language}).
-10. Si el usuario tiene shopDomain (${payload.shopDomain}), asegúrate de dejar intacta la sección 7 de Shopify.
+2. Usa la estructura exacta del ejemplo/plantilla proporcionado.
+3. **CERO COPIA DE EJEMPLOS**: Los textos como "[PASO 2 - Ej: Identificación de la necesidad]" son SOLO EJEMPLOS. TÚ DEBES inventar el paso real basándote en la "DESCRIPCIÓN DEL USUARIO". Si el usuario dice que es un taller mecánico, NUNCA menciones "Clínica Dental", "Dientes", "Limpiezas" ni nada médico. Sé coherente con el sector del cliente.
+4. El texto debe estar en el idioma indicado por language (ISO-639-1).
+5. **Objetivo Principal**: Escribe un objetivo hiper claro en la sección 1 basándote únicamente en lo que el usuario ha descrito.
+6. **Flujo de Llamada**: Inventa 4 o 5 pasos lógicos en la sección 4 que sigan el proceso real del negocio descrito (ej: si es un taller: 1. Saludo, 2. Pedir marca/modelo, 3. Preguntar por la avería, 4. Dar cita/presupuesto, 5. Cierre).
+7. **Límites Estrictos**: Inventa al menos 2 límites críticos en la sección 5 basados en la industria (ej: Si es un taller, "NUNCA prometas un precio final sin ver el coche").
+8. **Base de Conocimientos**: Transforma la descripción del usuario en una sección de conocimiento clara (sección 6) con viñetas para que el agente la pueda leer rápido.
+9. **Playbooks**: Inventa 2 escenarios comunes de la industria del cliente en la sección 8 y cómo debe reaccionar el agente.
+10. Reemplaza el marcador [IDIOMA_AGENTE] con el idioma proporcionado (${payload.language}).
+11. Si el usuario tiene shopDomain (${payload.shopDomain}), asegúrate de dejar intacta la sección 7 de Shopify.
+12. **Nombre del Agente**: Usa obligatoriamente ${payload.agentName}.
 
 Ejemplo/plantilla de referencia (Rellena los huecos vacíos):
 ${template}`;
@@ -117,7 +119,7 @@ ${payload.userDescription}
 
 Genera las instrucciones completas rellenando la plantilla con todo el contexto necesario para esta empresa.`;
 
-    const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+    const model = process.env.OPENAI_MODEL ?? 'gpt-4o';
     const temperature = Number(process.env.OPENAI_TEMPERATURE ?? 0.7);
     // No reutilizar OPENAI_MAX_TOKENS global (puede estar bajo para llamadas). Usar uno propio.
     const baseMaxTokens = 3500;
