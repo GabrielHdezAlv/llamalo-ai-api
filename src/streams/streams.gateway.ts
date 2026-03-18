@@ -1313,6 +1313,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           fullResponse += token;
           sentenceBuffer += token;
 
+          // Normalizar "End Call" (palabras) al token [END_CALL] como fallback
+          sentenceBuffer = sentenceBuffer.replace(
+            /\s+[Ee]nd\s+[Cc]all\s*$/g,
+            '[END_CALL]',
+          );
+
           // 🔍 Detectar señal de colgado [END_CALL]
           if (sentenceBuffer.includes('[END_CALL]')) {
             console.log(
@@ -1342,7 +1348,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           if (isSentenceEnd || isPauseEnd || isTooLongWithoutPause) {
             if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
 
-            const sentenceToSend = sentenceBuffer.trim();
+            let sentenceToSend = sentenceBuffer.trim();
+            // Strip "End Call" (palabras) y [END_CALL] antes de enviar a TTS
+            sentenceToSend = sentenceToSend
+              .replace(/\s+[Ee]nd\s+[Cc]all\s*\.?\s*$/g, '')
+              .replace(/\[END_CALL\]/g, '')
+              .trim();
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
               const currentSentence = sentenceToSend;
@@ -1360,13 +1371,24 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       // Enviar cualquier texto restante en el buffer que no haya terminado en puntuación
       if (!session.interrupted && sentenceBuffer.trim()) {
-        const remainingText = sentenceBuffer.trim();
-        ttsQueue = ttsQueue.then(async () => {
-          if (!session.interrupted) {
-            // console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
-            await this.streamElevenLabsTTS(session, remainingText);
-          }
-        });
+        let remainingText = sentenceBuffer.trim();
+        // Normalizar "End Call" (palabras) al token [END_CALL] como fallback
+        remainingText = remainingText.replace(
+          /\s+[Ee]nd\s+[Cc]all\s*$/g,
+          '[END_CALL]',
+        );
+        if (remainingText.includes('[END_CALL]')) {
+          shouldHangup = true;
+          remainingText = remainingText.replace(/\[END_CALL\]/g, '').trim();
+        }
+        if (remainingText) {
+          ttsQueue = ttsQueue.then(async () => {
+            if (!session.interrupted) {
+              // console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
+              await this.streamElevenLabsTTS(session, remainingText);
+            }
+          });
+        }
       }
 
       // Esperar a que todos los audios terminen de generarse/enviarse
@@ -2324,6 +2346,12 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
   private async streamTTSFromText(session: CallSession, text: string) {
     let processedText = text;
     let shouldHangup = false;
+
+    // Normalizar "End Call" (palabras) al token [END_CALL] como fallback
+    processedText = processedText.replace(
+      /\s+[Ee]nd\s+[Cc]all\s*$/g,
+      '[END_CALL]',
+    );
 
     if (processedText.includes('[END_CALL]')) {
       console.log(
