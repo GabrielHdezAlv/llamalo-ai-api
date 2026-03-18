@@ -77,7 +77,15 @@ export class AgentsService {
       throw new BadRequestException('OPENAI_API_KEY no configurado.');
     }
 
-    const template = this.readAgentPromptTemplate();
+    let template = this.readAgentPromptTemplate();
+
+    // ✅ LÓGICA DE SHOPIFY: Si no hay shopDomain, eliminamos la sección 7 del template
+    const hasShopify = !!(payload.shopDomain && payload.shopDomain.trim());
+    if (!hasShopify) {
+      // Eliminar desde el separador de la sección 7 hasta justo antes del separador de la sección 8
+      const shopifySectionRegex = /============================================================\n## 7\. USO DEL CONTEXTO DE SHOPIFY[\s\S]*?(?============================================================\n## 8\.)/;
+      template = template.replace(shopifySectionRegex, '');
+    }
 
     const systemPrompt = `Eres un Ingeniero de Prompts Experto en Inteligencia Artificial Conversacional.
 Tu trabajo es crear el "Prompt de Sistema Perfecto" para un Agente Telefónico de Voz de una empresa.
@@ -99,7 +107,7 @@ Requisitos estrictos para generar el prompt:
 8. **Base de Conocimientos**: Transforma la descripción del usuario en una sección de conocimiento clara (sección 6) con viñetas para que el agente la pueda leer rápido.
 9. **Playbooks**: Inventa 2 escenarios comunes de la industria del cliente en la sección 8 y cómo debe reaccionar el agente.
 10. Reemplaza el marcador [IDIOMA_AGENTE] con el idioma proporcionado (${payload.language}).
-11. Si el usuario tiene shopDomain (${payload.shopDomain}), asegúrate de dejar intacta la sección 7 de Shopify.
+11. ${hasShopify ? `Si el usuario tiene shopDomain (${payload.shopDomain}), asegúrate de dejar intacta la sección 7 de Shopify.` : 'NO incluyas ninguna sección de Shopify ya que esta empresa no tiene tienda conectada.'}
 12. **Nombre del Agente**: Usa obligatoriamente ${payload.agentName}.
 
 Ejemplo/plantilla de referencia (Rellena los huecos vacíos):
