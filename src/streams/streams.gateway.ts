@@ -1315,7 +1315,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
           // Normalizar cualquier variante de "End Call" al token [END_CALL] en cualquier parte del buffer
           sentenceBuffer = sentenceBuffer.replace(
-            /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi,
+            /\b[Ee]nd\s+[Cc]all\b/gi,
             '[END_CALL]',
           );
 
@@ -1325,8 +1325,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               `🔚 [${session.callSid}] Señal [END_CALL] (o fallback "End Call") detectada.`,
             );
             shouldHangup = true;
-            // Limpiar el buffer de CUALQUIER rastro de la señal inmediatamente
-            sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/g, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '');
+            // Limpiar el buffer de CUALQUIER rastro de la señal inmediatamente para que no llegue a TTS
+            sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/gi, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '');
           }
 
           // Si el token contiene un fin de frase o la frase es suficientemente larga y encontramos una pausa
@@ -1353,7 +1353,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             // Limpieza total: eliminar [END_CALL] y cualquier variante de "End Call" vocalizado (sin anclaje $)
             sentenceToSend = sentenceToSend
               .replace(/\[END_CALL\]/gi, '')
-              .replace(/\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi, '')
+              .replace(/\b[Ee]nd\s+[Cc]all\b/gi, '') // Regex más simple aquí
               .trim();
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
@@ -1375,7 +1375,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         let remainingText = sentenceBuffer.trim();
         // Normalizar "End Call" al token [END_CALL] (sin anclaje $)
         remainingText = remainingText.replace(
-          /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi,
+          /\b[Ee]nd\s+[Cc]all\b/gi,
           '[END_CALL]',
         );
         if (remainingText.includes('[END_CALL]')) {
@@ -1494,7 +1494,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       if (fullResponse.trim()) {
         const cleanedResponse = fullResponse
           .replace(/\[END_CALL\]/gi, '')
-          .replace(/\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi, '')
+          .replace(/\b[Ee]nd\s+[Cc]all\b/gi, '') // Limpieza más robusta
           .trim();
         const finalContent = session.interrupted
           ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
@@ -1514,9 +1514,22 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       // 🔚 Colgar si se detectó la señal [END_CALL]
       if (shouldHangup && !session.interrupted) {
         console.log(
-          `🔚 [${session.callSid}] Ejecutando hangup tras [END_CALL]`,
+          `🔚 [${session.callSid}] Señal [END_CALL] detectada. Notificando al frontend y limpiando la sesión.`,
         );
-        await this.hangupCall(session);
+        // NO colgar la llamada de Twilio, en su lugar, notificar al cliente de frontend
+        if (session.clientWs && session.clientWs.id) { // Asegurarse de que el WebSocket del cliente existe
+            this.wss.to(session.clientWs.id).emit('json', {
+                type: 'session.ended',
+                reason: 'agent_hangup',
+            });
+            console.log(`📡 [${session.callSid}] Evento 'session.ended' con razón 'agent_hangup' emitido al cliente.`);
+        } else {
+            console.warn(`⚠️ [${session.callSid}] No se pudo emitir evento 'session.ended' al cliente: clientWs o clientWs.id no definido.`);
+        }
+
+        // Limpiar la sesión en el backend sin colgar la llamada real de Twilio
+        this.cleanupSession(session.callSid);
+        // Eliminado: await this.hangupCall(session);
       }
     } catch (err) {
       console.error(
@@ -2351,7 +2364,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
     // Normalizar cualquier variante de "End Call" al token [END_CALL] (sin anclaje $)
     processedText = processedText.replace(
-      /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi,
+      /\b[Ee]nd\s+[Cc]all\b/gi,
       '[END_CALL]',
     );
 
