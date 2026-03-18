@@ -1313,9 +1313,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           fullResponse += token;
           sentenceBuffer += token;
 
-          // Normalizar cualquier variante de "End Call" al token [END_CALL]
+          // Normalizar cualquier variante de "End Call" al token [END_CALL] en cualquier parte del buffer
           sentenceBuffer = sentenceBuffer.replace(
-            /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi,
+            /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi,
             '[END_CALL]',
           );
 
@@ -1325,7 +1325,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
               `🔚 [${session.callSid}] Señal [END_CALL] (o fallback "End Call") detectada.`,
             );
             shouldHangup = true;
-            // Limpiar el buffer de CUALQUIER rastro de la señal
+            // Limpiar el buffer de CUALQUIER rastro de la señal inmediatamente
             sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/g, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '');
           }
 
@@ -1350,10 +1350,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
 
             let sentenceToSend = sentenceBuffer.trim();
-            // Limpieza agresiva: eliminar [END_CALL] y cualquier variante de "End Call" vocalizado
+            // Limpieza total: eliminar [END_CALL] y cualquier variante de "End Call" vocalizado (sin anclaje $)
             sentenceToSend = sentenceToSend
               .replace(/\[END_CALL\]/gi, '')
-              .replace(/\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi, '')
+              .replace(/\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi, '')
               .trim();
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
@@ -1373,9 +1373,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       // Enviar cualquier texto restante en el buffer que no haya terminado en puntuación
       if (!session.interrupted && sentenceBuffer.trim()) {
         let remainingText = sentenceBuffer.trim();
-        // Normalizar "End Call" al token [END_CALL]
+        // Normalizar "End Call" al token [END_CALL] (sin anclaje $)
         remainingText = remainingText.replace(
-          /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi,
+          /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi,
           '[END_CALL]',
         );
         if (remainingText.includes('[END_CALL]')) {
@@ -1493,7 +1493,8 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
         const cleanedResponse = fullResponse
-          .replace(/\[END_CALL\]/g, '')
+          .replace(/\[END_CALL\]/gi, '')
+          .replace(/\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi, '')
           .trim();
         const finalContent = session.interrupted
           ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
@@ -2348,9 +2349,9 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     let processedText = text;
     let shouldHangup = false;
 
-    // Normalizar cualquier variante de "End Call" al token [END_CALL]
+    // Normalizar cualquier variante de "End Call" al token [END_CALL] (sin anclaje $)
     processedText = processedText.replace(
-      /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi,
+      /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*/gi,
       '[END_CALL]',
     );
 
