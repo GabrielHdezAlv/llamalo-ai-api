@@ -1313,19 +1313,20 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           fullResponse += token;
           sentenceBuffer += token;
 
-          // Normalizar "End Call" (palabras) al token [END_CALL] como fallback
+          // Normalizar cualquier variante de "End Call" al token [END_CALL]
           sentenceBuffer = sentenceBuffer.replace(
-            /\s+[Ee]nd\s+[Cc]all\s*$/g,
+            /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi,
             '[END_CALL]',
           );
 
           // 🔍 Detectar señal de colgado [END_CALL]
           if (sentenceBuffer.includes('[END_CALL]')) {
             console.log(
-              `🔚 [${session.callSid}] Señal [END_CALL] detectada en el stream.`,
+              `🔚 [${session.callSid}] Señal [END_CALL] (o fallback "End Call") detectada.`,
             );
             shouldHangup = true;
-            sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/g, '');
+            // Limpiar el buffer de CUALQUIER rastro de la señal
+            sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/g, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '');
           }
 
           // Si el token contiene un fin de frase o la frase es suficientemente larga y encontramos una pausa
@@ -1349,10 +1350,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
             if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
 
             let sentenceToSend = sentenceBuffer.trim();
-            // Strip "End Call" (palabras) y [END_CALL] antes de enviar a TTS
+            // Limpieza agresiva: eliminar [END_CALL] y cualquier variante de "End Call" vocalizado
             sentenceToSend = sentenceToSend
-              .replace(/\s+[Ee]nd\s+[Cc]all\s*\.?\s*$/g, '')
-              .replace(/\[END_CALL\]/g, '')
+              .replace(/\[END_CALL\]/gi, '')
+              .replace(/\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi, '')
               .trim();
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
@@ -1372,14 +1373,14 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       // Enviar cualquier texto restante en el buffer que no haya terminado en puntuación
       if (!session.interrupted && sentenceBuffer.trim()) {
         let remainingText = sentenceBuffer.trim();
-        // Normalizar "End Call" (palabras) al token [END_CALL] como fallback
+        // Normalizar "End Call" al token [END_CALL]
         remainingText = remainingText.replace(
-          /\s+[Ee]nd\s+[Cc]all\s*$/g,
+          /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi,
           '[END_CALL]',
         );
         if (remainingText.includes('[END_CALL]')) {
           shouldHangup = true;
-          remainingText = remainingText.replace(/\[END_CALL\]/g, '').trim();
+          remainingText = remainingText.replace(/\[END_CALL\]/gi, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '').trim();
         }
         if (remainingText) {
           ttsQueue = ttsQueue.then(async () => {
@@ -2347,18 +2348,18 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     let processedText = text;
     let shouldHangup = false;
 
-    // Normalizar "End Call" (palabras) al token [END_CALL] como fallback
+    // Normalizar cualquier variante de "End Call" al token [END_CALL]
     processedText = processedText.replace(
-      /\s+[Ee]nd\s+[Cc]all\s*$/g,
+      /\b[Ee]nd\s+[Cc]all\b[.!?,]*\s*$/gi,
       '[END_CALL]',
     );
 
     if (processedText.includes('[END_CALL]')) {
       console.log(
-        `🔚 [${session.callSid}] Señal [END_CALL] detectada en TTS manual.`,
+        `🔚 [${session.callSid}] Señal [END_CALL] (o fallback "End Call") detectada en TTS manual.`,
       );
       shouldHangup = true;
-      processedText = processedText.replace(/\[END_CALL\]/g, '').trim();
+      processedText = processedText.replace(/\[END_CALL\]/gi, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '').trim();
     }
 
     if (session.interrupted || !processedText.trim()) {
