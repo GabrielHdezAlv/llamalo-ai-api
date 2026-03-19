@@ -791,22 +791,14 @@ export class StreamsGateway {
       // 1. Cargar reglas de voz (siempre)
       const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
 
-      // 2. Cargar conocimiento de empresa (siempre)
-      const privacyPolicy = this.readStaticFile(
-        'src/knowledge/xenon/privacy_policy.txt',
-      );
-      const terms = this.readStaticFile(
-        'src/knowledge/xenon/terms_and_conditions.txt',
-      );
-
+      // 2. Cargar conocimiento de empresa (OPTIMIZADO)
+      // En lugar de cargar todo el privacy_policy y terms_and_conditions que consumen miles de tokens,
+      // Solo indicamos al agente que se apoye en su conocimiento interno y herramientas, 
+      // o que pida al usuario enviar un email para detalles legales complejos.
       let companyKnowledge = '';
-      if (privacyPolicy || terms) {
-        companyKnowledge = `\n============================================================\n## 🏢 CONOCIMIENTO DE LA EMPRESA 🏢\n============================================================\n`;
-        if (privacyPolicy)
-          companyKnowledge += `\n### Políticas de Privacidad:\n${privacyPolicy}\n`;
-        if (terms)
-          companyKnowledge += `\n### Términos y Condiciones:\n${terms}\n`;
-      }
+      const knowledgeInfo = 'Para políticas de privacidad, términos de servicio o garantías, responde de forma general o solicita al usuario que consulte la web o escriba un correo a soporte. Sé muy conciso.';
+      companyKnowledge = `\n============================================================\n## 🏢 CONOCIMIENTO DE LA EMPRESA 🏢\n============================================================\n${knowledgeInfo}\n============================================================\n`;
+
 
       // 3. Inyectar Datos Clave del Usuario (siempre que existan)
       let userDataString = '';
@@ -856,13 +848,30 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 ============================================================
 `;
         } else {
-          // Construir contexto de Shopify como JSON estructurado
+          // Construir contexto de Shopify como JSON estructurado (OPTIMIZADO)
           const shopifyData: any = {};
           if (shopifyContext.store) shopifyData.tienda = shopifyContext.store;
-          if (shopifyContext.featuredProducts?.length)
-            shopifyData.productosDestacados = shopifyContext.featuredProducts;
-          if (shopifyContext.orders?.length)
-            shopifyData.pedidosRecientes = shopifyContext.orders;
+          
+          if (shopifyContext.featuredProducts?.length) {
+            // Mapeo ligero para ahorrar tokens
+            shopifyData.productosDestacados = shopifyContext.featuredProducts.map(p => ({
+              nombre: p.title,
+              precio: p.price,
+              estado: p.status,
+              id: p.id
+            }));
+          }
+          
+          if (shopifyContext.orders?.length) {
+            // Mapeo ligero para ahorrar tokens
+            shopifyData.pedidosRecientes = shopifyContext.orders.map(o => ({
+              numero: o.orderNumber,
+              estadoFinanciero: o.financialStatus,
+              estadoEnvio: o.fulfillmentStatus,
+              total: o.totalPrice,
+              fecha: o.createdAt ? o.createdAt.split('T')[0] : ''
+            }));
+          }
 
           let shopifyContextJson = '';
           try {
@@ -1272,6 +1281,10 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       // Solo pasar la tool de escalar a soporte si el agente es Xenon
       const safeTools = isXenon ? tools : undefined;
 
+      // Implementar Sliding Window: Retener solo los últimos N mensajes para no agotar tokens de OpenAI
+      const maxHistory = 10; // Últimos 5 turnos (usuario + asistente)
+      const recentHistory = session.history.slice(-maxHistory);
+
       // Llamada a OpenAI en modo STREAM
       let stream;
       try {
@@ -1281,7 +1294,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           max_tokens: this.llmMaxTokens,
           messages: [
             { role: 'system', content: enrichedInstructions },
-            ...session.history,
+            ...recentHistory,
           ],
           ...(safeTools && { tools: safeTools }),
           stream: true,
