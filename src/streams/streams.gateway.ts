@@ -98,6 +98,8 @@ interface CallSession {
   readyForAudio: boolean;
   pendingGreeting?: string;
   greetingSent: boolean;
+  /** Evita duplicar el saludo en session.history si el TTS dispara el .then tarde */
+  initialGreetingWrittenToHistory?: boolean;
   keepAliveTimer?: NodeJS.Timeout;
   silenceTimeout?: NodeJS.Timeout; // Temporizador para detectar silencio del usuario
   deepgramRequestId?: string;
@@ -2575,7 +2577,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     return '';
   }
 
-  private async streamTTSFromText(session: CallSession, text: string) {
+  private async streamTTSFromText(
+    session: CallSession,
+    text: string,
+    options?: { recordAssistantUtteranceOnComplete?: string },
+  ) {
     let processedText = text;
     let shouldHangup = false;
 
@@ -2623,6 +2629,18 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
     session.currentTTSRequest = this.streamElevenLabsTTS(session, processedText)
       .then(async () => {
+        const toRecord = options?.recordAssistantUtteranceOnComplete?.trim();
+        if (
+          toRecord &&
+          !session.interrupted &&
+          !session.initialGreetingWrittenToHistory
+        ) {
+          session.history.push({ role: 'assistant', content: toRecord });
+          session.initialGreetingWrittenToHistory = true;
+          console.log(
+            `📝 [${session.callSid}] Saludo inicial copiado al historial del LLM para evitar re-presentaciones.`,
+          );
+        }
         if (shouldHangup && !session.interrupted) {
           console.log(
             `🔚 [${session.callSid}] Colgando tras completar TTS con [END_CALL]`,
@@ -2963,7 +2981,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     //   `👋 Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
     // );
     session.greetingSent = true;
-    void this.streamTTSFromText(session, greeting).catch((error) => {
+    void this.streamTTSFromText(session, greeting, {
+      recordAssistantUtteranceOnComplete: greeting,
+    }).catch((error) => {
       session.greetingSent = false;
       console.error(
         `❌ [${session.callSid}] Error reproduciendo greeting con ElevenLabs TTS:`,
@@ -3334,18 +3354,34 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     }
 
     // 4. Intent: Hola / Saludo inicial redundante
-    if (
+    const userTurnCount =
+      session?.history.filter((m) => m.role === 'user').length ?? 0;
+    const hasAssistantInHistory =
+      session?.history.some((m) => m.role === 'assistant') ?? false;
+
+    const holaExact =
       cleanText === 'hola' ||
       cleanText === 'buenas' ||
       cleanText === 'buenos dias' ||
       cleanText === 'buenas tardes' ||
       cleanText === 'buenas noches' ||
       cleanText === 'hola buenas' ||
-      cleanText === 'hola hola'
-    ) {
-      // Si el agente ya saludó y es la primera vez que el usuario habla,
-      // respondemos algo más natural para evitar el bucle de "Hola" -> "Hola"
-      if (session && session.greetingSent && session.history.length <= 1) {
+      cleanText === 'hola hola';
+
+    // STT suele devolver "hola que tal", "hola buenos dias", etc. — capturar saludos cortos
+    const words = cleanText.split(/\s+/).filter(Boolean);
+    const holaLoose =
+      /^hola\b/.test(cleanText) &&
+      words.length <= 5 &&
+      cleanText.length <= 56;
+
+    if (holaExact || holaLoose) {
+      // Ya hubo saludo por voz (y opcionalmente ya está en history): no forzar al LLM a re-presentarse
+      if (
+        session &&
+        session.greetingSent &&
+        (userTurnCount <= 1 || hasAssistantInHistory)
+      ) {
         return 'Sí, dime, ¿en qué puedo ayudarte?';
       }
       return '¡Hola! ¿En qué puedo ayudarte?';
