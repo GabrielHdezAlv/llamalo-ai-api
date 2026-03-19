@@ -854,22 +854,24 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
           
           if (shopifyContext.featuredProducts?.length) {
             // Mapeo ligero para ahorrar tokens
-            shopifyData.productosDestacados = shopifyContext.featuredProducts.map(p => ({
-              nombre: p.title,
-              precio: p.price,
-              estado: p.status,
-              id: p.id
-            }));
+            shopifyData.productosDestacados = shopifyContext.featuredProducts.map(
+              (p) => ({
+                nombre: p.title,
+                precio: p.variants?.[0]?.price,
+                estado: p.status,
+                id: p.productId,
+              }),
+            );
           }
-          
+
           if (shopifyContext.orders?.length) {
             // Mapeo ligero para ahorrar tokens
-            shopifyData.pedidosRecientes = shopifyContext.orders.map(o => ({
-              numero: o.orderNumber,
-              estadoFinanciero: o.financialStatus,
+            shopifyData.pedidosRecientes = shopifyContext.orders.map((o) => ({
+              numero: o.orderName,
+              estado: o.status,
               estadoEnvio: o.fulfillmentStatus,
               total: o.totalPrice,
-              fecha: o.createdAt ? o.createdAt.split('T')[0] : ''
+              fecha: o.createdAt ? o.createdAt.split('T')[0] : '',
             }));
           }
 
@@ -1150,7 +1152,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
     }
 
     // ⚡ INTENT DETECTION LIGERO (Reducción de latencia)
-    const fastIntentResponse = this.detectFastIntent(correctedText);
+    const fastIntentResponse = this.detectFastIntent(correctedText, session);
     if (fastIntentResponse) {
       console.log(
         `⚡ [${session.callSid}] Intent detectado, respuesta rápida: "${fastIntentResponse}"`,
@@ -3181,7 +3183,7 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
    * Detector de Intenciones Ligero (Intent Detection)
    * Responde frases predefinidas sin consultar al LLM
    */
-  private detectFastIntent(text: string): string | null {
+  private detectFastIntent(text: string, session?: CallSession): string | null {
     const cleanText = text
       .toLowerCase()
       .normalize('NFD')
@@ -3230,6 +3232,24 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       cleanText === 'como dijiste'
     ) {
       return 'Perdona, te lo repito.';
+    }
+
+    // 4. Intent: Hola / Saludo inicial redundante
+    if (
+      cleanText === 'hola' ||
+      cleanText === 'buenas' ||
+      cleanText === 'buenos dias' ||
+      cleanText === 'buenas tardes' ||
+      cleanText === 'buenas noches' ||
+      cleanText === 'hola buenas' ||
+      cleanText === 'hola hola'
+    ) {
+      // Si el agente ya saludó y es la primera vez que el usuario habla,
+      // respondemos algo más natural para evitar el bucle de "Hola" -> "Hola"
+      if (session && session.greetingSent && session.history.length <= 1) {
+        return 'Sí, dime, ¿en qué puedo ayudarte?';
+      }
+      return '¡Hola! ¿En qué puedo ayudarte?';
     }
 
     return null;

@@ -561,6 +561,32 @@ export class SupportChatGateway {
 
     session.history.push({ role: 'user', content: text });
 
+    // ⚡ INTENT DETECTION LIGERO (Reducción de latencia)
+    const fastIntentResponse = this.detectFastIntent(text, session);
+    if (fastIntentResponse) {
+      this.logger.log(
+        `⚡ [SupportVoice] Intent detectado, respuesta rápida: "${fastIntentResponse}"`,
+      );
+      session.history.push({ role: 'assistant', content: fastIntentResponse });
+
+      this.sendJson(session.client, {
+        type: 'transcript',
+        role: 'assistant',
+        text: fastIntentResponse,
+        isFinal: true,
+      });
+
+      session.agentSpeaking = true;
+      try {
+        await this.streamTTSFromText(session, fastIntentResponse);
+      } catch (err) {
+        this.logger.error(`❌ [SupportVoice] Error en TTS rápido:`, err);
+      } finally {
+        session.llmProcessing = false;
+      }
+      return; // Cortocircuitar el LLM
+    }
+
     try {
       this.logger.log(`🤖 [SupportVoice] Construyendo prompt para: "${text}"`);
       const systemPrompt = await this.buildSystemPrompt(session, text);
@@ -1070,6 +1096,85 @@ export class SupportChatGateway {
         reject(err);
       });
     });
+  }
+
+  /**
+   * Detector de Intenciones Ligero (Intent Detection) para Xenon/Support
+   * Responde frases predefinidas sin consultar al LLM
+   */
+  private detectFastIntent(
+    text: string,
+    session?: SupportVoiceSession,
+  ): string | null {
+    const cleanText = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Quitar tildes
+      .replace(/[.,!?¡¿]/g, '')
+      .trim();
+
+    // 1. Intent: Espera / Un momento
+    if (
+      cleanText === 'espera' ||
+      cleanText === 'espera un momento' ||
+      cleanText === 'un momento' ||
+      cleanText === 'aguarda' ||
+      cleanText === 'esperame' ||
+      cleanText === 'dame un segundo' ||
+      cleanText === 'espera un rato'
+    ) {
+      return 'Claro, espero.';
+    }
+
+    // 2. Intent: No escucho
+    if (
+      cleanText === 'no te escucho' ||
+      cleanText === 'no te oigo' ||
+      cleanText === 'no se escucha' ||
+      cleanText === 'no escucho nada' ||
+      cleanText === 'se corto' ||
+      cleanText === 'se escucha mal' ||
+      cleanText === 'no hay audio' ||
+      cleanText === 'hola estas ahi' ||
+      cleanText === 'sigues ahi'
+    ) {
+      return 'Perdona, ¿me escuchas bien ahora?';
+    }
+
+    // 3. Intent: Repite
+    if (
+      cleanText === 'repite' ||
+      cleanText === 'repitelo' ||
+      cleanText === 'puedes repetir' ||
+      cleanText === 'que dijiste' ||
+      cleanText === 'como' ||
+      cleanText === 'mande' ||
+      cleanText === 'me lo repites' ||
+      cleanText === 'no entendi' ||
+      cleanText === 'como dijiste'
+    ) {
+      return 'Perdona, te lo repito.';
+    }
+
+    // 4. Intent: Hola / Saludo inicial redundante
+    if (
+      cleanText === 'hola' ||
+      cleanText === 'buenas' ||
+      cleanText === 'buenos dias' ||
+      cleanText === 'buenas tardes' ||
+      cleanText === 'buenas noches' ||
+      cleanText === 'hola buenas' ||
+      cleanText === 'hola hola'
+    ) {
+      // Si el agente ya saludó y es la primera vez que el usuario habla,
+      // respondemos algo más natural para evitar el bucle de "Hola" -> "Hola"
+      if (session && session.greetingSent && session.history.length <= 1) {
+        return 'Sí, dime, ¿en qué puedo ayudarte?';
+      }
+      return '¡Hola! ¿En qué puedo ayudarte?';
+    }
+
+    return null;
   }
 
   // ── Greeting ───────────────────────────────────────────────────────────────
