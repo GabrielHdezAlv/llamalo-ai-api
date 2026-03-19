@@ -16,6 +16,7 @@ import { SupportChatModule } from './support-chat/support-chat.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { NewsModule } from './news/news.module';
 import { MailerLiteModule } from './mailerlite/mailerlite.module';
+import { LearningModule } from './learning/learning.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { MailerLiteModule } from './mailerlite/mailerlite.module';
     SupportChatModule,
     NewsModule,
     MailerLiteModule,
+    LearningModule,
   ],
   controllers: [],
   providers: [],

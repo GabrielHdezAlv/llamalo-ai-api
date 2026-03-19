@@ -122,6 +122,8 @@ interface CallSession {
   callStartTime?: number; // timestamp en ms cuando comenzó la sesión
   callerPhone?: string; // número de teléfono del llamante para métricas de país
   callDirection?: 'inbound' | 'outbound';
+  // Conversation Manager
+  conversationState?: 'GREETING' | 'DISCOVERY' | 'SUPPORT' | 'CLOSING';
 }
 
 @Injectable()
@@ -435,6 +437,7 @@ export class StreamsGateway {
       callStartTime: Date.now(),
       callerPhone: customParameters?.callerPhone,
       callDirection: 'inbound',
+      conversationState: 'GREETING',
     };
 
     // Personalizar saludo con el companyName del usuario (reutiliza userDocumentData ya cargado)
@@ -885,9 +888,16 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         }
       }
 
-      // 5. Ensamblar el prompt final
+      // 5. Contexto de Estado de Conversación (Conversation Manager)
+      let conversationStatePrompt = '';
+      if (session.conversationState) {
+        conversationStatePrompt = `\n============================================================\n## 🔄 ESTADO DE LA CONVERSACIÓN 🔄\n============================================================\n[ESTADO ACTUAL: ${session.conversationState}]\nAdapta tu respuesta y tu objetivo actual según este estado.\n============================================================\n`;
+      }
+
+      // 6. Ensamblar el prompt final
       const enrichedInstructions = [
         userDataString,
+        conversationStatePrompt,
         baseInstructions,
         voiceRules ? `\n${voiceRules}\n` : '',
         companyKnowledge,
@@ -1129,6 +1139,45 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         `🔧 [${session.callSid}] Texto corregido: "${text.substring(0, 50)}" → "${correctedText.substring(0, 50)}"`,
       );
     }
+
+    // ⚡ INTENT DETECTION LIGERO (Reducción de latencia)
+    const fastIntentResponse = this.detectFastIntent(correctedText);
+    if (fastIntentResponse) {
+      console.log(
+        `⚡ [${session.callSid}] Intent detectado, respuesta rápida: "${fastIntentResponse}"`,
+      );
+      
+      session.history.push({ role: 'assistant', content: fastIntentResponse });
+      
+      // Registrar latencia de respuesta rápida
+      if (userStartedAt != null) {
+        const latency = Date.now() - userStartedAt;
+        session.responseLatencies.push(latency);
+        if (latency >= 0 && latency < 15000 && session.userId && session.customParameters?.twilioAccountId) {
+          try {
+            await this.metricsService.saveLatencyMeasurement(
+              session.userId,
+              parseInt(session.customParameters.twilioAccountId),
+              latency,
+            );
+          } catch (error) {
+            console.warn(`[Latency] Error guardando latencia intent:`, error);
+          }
+        }
+      }
+
+      session.agentSpeaking = true;
+      session.lastAgentStartSpeakingTime = Date.now();
+      
+      // Encolar y reproducir TTS de la respuesta rápida
+      try {
+        await this.streamElevenLabsTTS(session, fastIntentResponse);
+      } catch (err) {
+        console.error(`❌ [${session.callSid}] Error en TTS rápido:`, err);
+      }
+      return; // Cortocircuitar el LLM
+    }
+
     try {
       // 🚀 OPTIMIZACIÓN DE LATENCIA: Consultar Shopify solo si el mensaje es relevante
       const lowerText = text.toLowerCase();
@@ -1190,6 +1239,25 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
                 },
               },
               required: ['resumen_problema'],
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'cambiar_estado',
+            description:
+              'Cambia el estado lógico de la conversación (Conversation Manager). Úsalo cuando el flujo cambie naturalmente de fase. GREETING: saludo inicial; DISCOVERY: entendiendo el problema; SUPPORT: resolviendo dudas; CLOSING: despidiéndose.',
+            parameters: {
+              type: 'object',
+              properties: {
+                nuevo_estado: {
+                  type: 'string',
+                  enum: ['GREETING', 'DISCOVERY', 'SUPPORT', 'CLOSING'],
+                  description: 'El nuevo estado de la conversación.',
+                },
+              },
+              required: ['nuevo_estado'],
             },
           },
         },
@@ -1397,6 +1465,48 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
 
       // --- MANEJO DE TOOLS (LLAMADA A FUNCIONES) ---
       if (
+        functionCallName === 'cambiar_estado' &&
+        !session.interrupted
+      ) {
+        console.log(`🔀 [${session.callSid}] Ejecutando tool: ${functionCallName}`);
+        try {
+          const args = JSON.parse(functionCallArgs);
+          const { nuevo_estado } = args;
+          
+          if (['GREETING', 'DISCOVERY', 'SUPPORT', 'CLOSING'].includes(nuevo_estado)) {
+            session.conversationState = nuevo_estado as any;
+            console.log(`✅ [${session.callSid}] Estado actualizado a: ${nuevo_estado}`);
+          }
+          
+          // Registrar en el historial para que el LLM lo sepa
+          const toolCallId = `call_${Date.now()}`;
+          session.history.push({
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: toolCallId,
+              type: 'function',
+              function: { name: functionCallName, arguments: functionCallArgs },
+            }],
+          } as any);
+
+          session.history.push({
+            role: 'tool',
+            tool_call_id: toolCallId,
+            content: JSON.stringify({ success: true, message: `Estado cambiado a ${nuevo_estado}` }),
+          } as any);
+
+          // Si el LLM no generó ningún texto y solo cambió el estado, le pedimos que continúe
+          if (!fullResponse.trim() && !session.interrupted) {
+            return this.handleFinalTranscript(
+              session,
+              '(SISTEMA: Has cambiado de estado correctamente. Ahora proporciona la siguiente respuesta al usuario, si es necesario.)',
+            );
+          }
+        } catch (e) {
+          console.error(`❌ [${session.callSid}] Error procesando cambiar_estado:`, e);
+        }
+      } else if (
         functionCallName === 'escalar_a_soporte_humano' &&
         !session.interrupted
       ) {
@@ -2955,6 +3065,27 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
         : 0;
       const motivo = session.terminadoPor ?? 'cliente';
 
+      // 💾 Persistir la transcripción completa en Firestore para aprendizaje (Learning Pipeline)
+      if (session.history && session.history.length > 0) {
+        try {
+          admin.firestore().collection('calls_logs').doc(session.callSid).set({
+            callSid: session.callSid,
+            userId: session.userId,
+            twilioAccountId: session.customParameters.twilioAccountId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            duration: duracionSegundos,
+            history: session.history,
+            terminadoPor: motivo,
+            agentName: session.customParameters?.agentName || 'Desconocido',
+            callerPhone: session.callerPhone || null,
+            processedForLearning: false, // Flag para el worker
+          });
+          console.log(`💾 [${callSid}] Historial de llamada persistido en calls_logs`);
+        } catch (err) {
+          console.error(`❌ [${callSid}] Error guardando log de la llamada:`, err);
+        }
+      }
+
       this.metricsService
         .saveCallTermination(
           session.userId,
@@ -3031,6 +3162,64 @@ No se ha encontrado información de la tienda ni pedidos asociados a este númer
       return String(value);
     }
     return '';
+  }
+
+  /**
+   * Detector de Intenciones Ligero (Intent Detection)
+   * Responde frases predefinidas sin consultar al LLM
+   */
+  private detectFastIntent(text: string): string | null {
+    const cleanText = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Quitar tildes
+      .replace(/[.,!?¡¿]/g, '')
+      .trim();
+
+    // 1. Intent: Espera / Un momento
+    if (
+      cleanText === 'espera' ||
+      cleanText === 'espera un momento' ||
+      cleanText === 'un momento' ||
+      cleanText === 'aguarda' ||
+      cleanText === 'esperame' ||
+      cleanText === 'dame un segundo' ||
+      cleanText === 'espera un rato'
+    ) {
+      return 'Claro, espero.';
+    }
+
+    // 2. Intent: No escucho
+    if (
+      cleanText === 'no te escucho' ||
+      cleanText === 'no te oigo' ||
+      cleanText === 'no se escucha' ||
+      cleanText === 'no escucho nada' ||
+      cleanText === 'se corto' ||
+      cleanText === 'se escucha mal' ||
+      cleanText === 'no hay audio' ||
+      cleanText === 'hola estas ahi' ||
+      cleanText === 'sigues ahi'
+    ) {
+      return 'Perdona, ¿me escuchas bien ahora?';
+    }
+
+    // 3. Intent: Repite
+    if (
+      cleanText === 'repite' ||
+      cleanText === 'repitelo' ||
+      cleanText === 'puedes repetir' ||
+      cleanText === 'que dijiste' ||
+      cleanText === 'como' ||
+      cleanText === 'mande' ||
+      cleanText === 'me lo repites' ||
+      cleanText === 'no entendi' ||
+      cleanText === 'como dijiste'
+    ) {
+      return 'Perdona, te lo repito.';
+    }
+
+    return null;
   }
 
   /**
