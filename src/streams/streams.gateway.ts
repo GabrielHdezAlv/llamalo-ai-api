@@ -191,10 +191,16 @@ export class StreamsGateway {
 
   // LLM
   private readonly llmModel = process.env.OPENAI_MODEL ?? 'gpt-4o';
+  /** Modelo más rápido solo para el primer turno del usuario (tras el saludo), para bajar latencia inicial */
+  private readonly llmModelFirstTurn =
+    process.env.OPENAI_MODEL_FIRST_TURN ?? 'gpt-4o-mini';
   private readonly llmTemperature = Number(
     process.env.OPENAI_TEMPERATURE ?? 0.7, // Subido a 0.7 para respuestas de voz más creativas y conversacionales
   );
   private readonly llmMaxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 200);
+  private readonly llmMaxTokensFirstTurn = Number(
+    process.env.OPENAI_MAX_TOKENS_FIRST_TURN ?? 250,
+  );
 
   // Configuración general
   private readonly keepAliveIntervalMs = Number(
@@ -342,22 +348,8 @@ export class StreamsGateway {
       start?.customParameters,
     );
 
-    // 🔍 Cargar IDs de fuentes de conocimiento asíncronamente si hay un agentId
-    let agentKnowledgeSourceIds: string[] = [];
-    if (customParameters?.agentId) {
-      try {
-        const agentSources =
-          await this.agentKnowledgeService.getAgentKnowledgeSources(
-            Number(customParameters.agentId),
-          );
-        agentKnowledgeSourceIds = agentSources.map((source) => source.id);
-      } catch (err) {
-        console.error(
-          `❌ [${callSid}] Error al cargar IDs de fuentes de conocimiento:`,
-          err,
-        );
-      }
-    }
+    // Los IDs de knowledge se cargan en segundo plano para no bloquear el arranque del STT
+    // (en streams no se usan aún para RAG por turno, pero se mantienen por compatibilidad futura)
 
     if (customParameters && !customParameters.shopDomain) {
       console.warn(`⚠️ [${callSid}] shopDomain NO está en customParameters`);
@@ -436,7 +428,7 @@ export class StreamsGateway {
       userId,
       userDocument: userDocumentData,
       shopifyContext: shopDomain ? { shopDomain } : undefined,
-      knowledgeSourceIds: agentKnowledgeSourceIds,
+      knowledgeSourceIds: [],
       callStartTime: Date.now(),
       callerPhone: customParameters?.callerPhone,
       callDirection: 'inbound',
@@ -469,16 +461,48 @@ export class StreamsGateway {
       void this.connectToDeepgram(session);
     }
 
-    // Cargar contexto inicial de Shopify (espera para garantizar disponibilidad)
+    if (customParameters?.agentId) {
+      void this.loadAgentKnowledgeSourceIdsInBackground(
+        callSid,
+        Number(customParameters.agentId),
+      );
+    }
+
+    // Shopify en segundo plano: no bloquear createSession (hasta ~5s antes); el primer turno usa cache vacío o fallback en enrichInstructions
     if (userId && shopDomain && session.shopifyContext) {
-      await this.loadInitialShopifyContext(session);
+      void this.loadInitialShopifyContext(session).catch((err) => {
+        console.warn(
+          `⚠️ [${callSid}] Error en carga inicial Shopify (background):`,
+          err instanceof Error ? err.message : err,
+        );
+      });
     }
   }
 
   /**
-   * Carga el contexto inicial de Shopify (tienda y productos destacados)
-   * Se ejecuta de forma síncrona durante la inicialización para garantizar
-   * que el contexto esté disponible cuando el usuario haga su primera pregunta
+   * Carga IDs de fuentes de conocimiento sin bloquear el inicio de la llamada.
+   */
+  private async loadAgentKnowledgeSourceIdsInBackground(
+    callSid: string,
+    agentId: number,
+  ): Promise<void> {
+    try {
+      const agentSources =
+        await this.agentKnowledgeService.getAgentKnowledgeSources(agentId);
+      const session = this.sessions.get(callSid);
+      if (!session) return;
+      session.knowledgeSourceIds = agentSources.map((source) => source.id);
+    } catch (err) {
+      console.error(
+        `❌ [${callSid}] Error al cargar IDs de fuentes de conocimiento (background):`,
+        err,
+      );
+    }
+  }
+
+  /**
+   * Carga el contexto inicial de Shopify (tienda y productos destacados).
+   * Se invoca en segundo plano tras el arranque de la sesión para no retrasar STT ni la primera interacción.
    */
   private async loadInitialShopifyContext(session: CallSession): Promise<void> {
     if (!session.userId || !session.shopifyContext?.shopDomain) {
@@ -1335,13 +1359,29 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       const maxHistory = 10; // Últimos 5 turnos (usuario + asistente)
       const recentHistory = session.history.slice(-maxHistory);
 
+      // Primer turno real del usuario (saludo por voz no va en history): modelo más rápido para bajar latencia
+      const isFirstLlmTurn =
+        recentHistory.length === 1 && recentHistory[0].role === 'user';
+      const modelForTurn = isFirstLlmTurn
+        ? this.llmModelFirstTurn
+        : this.llmModel;
+      const maxTokensForTurn = isFirstLlmTurn
+        ? this.llmMaxTokensFirstTurn
+        : this.llmMaxTokens;
+
+      if (isFirstLlmTurn) {
+        console.log(
+          `⚡ [${session.callSid}] Primer turno LLM: model=${modelForTurn}, max_tokens=${maxTokensForTurn}`,
+        );
+      }
+
       // Llamada a OpenAI en modo STREAM
       let stream;
       try {
         stream = await this.openai.chat.completions.create({
-          model: this.llmModel,
+          model: modelForTurn,
           temperature: this.llmTemperature,
-          max_tokens: this.llmMaxTokens,
+          max_tokens: maxTokensForTurn,
           messages: [
             { role: 'system', content: enrichedInstructions },
             ...recentHistory,
@@ -3335,7 +3375,29 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
   private async getUserCompanyName(
     session: CallSession,
   ): Promise<string | null> {
-    // 1. Primero intentar desde customParameters (más rápido)
+    // 0. Reutilizar documento de usuario ya cargado en createSession (evita 2ª lectura a Firestore)
+    if (session.userDocument) {
+      const enterprise = session.userDocument.enterprise as
+        | { name?: string }
+        | undefined;
+      if (
+        enterprise?.name &&
+        typeof enterprise.name === 'string' &&
+        enterprise.name.trim().length > 2
+      ) {
+        return enterprise.name.trim();
+      }
+      const companyName = session.userDocument.companyName;
+      if (
+        companyName &&
+        typeof companyName === 'string' &&
+        companyName.trim().length > 2
+      ) {
+        return companyName.trim();
+      }
+    }
+
+    // 1. Intentar desde customParameters (más rápido)
     const sources = [
       session.customParameters?.enterpriseName,
       session.customParameters?.companyName,

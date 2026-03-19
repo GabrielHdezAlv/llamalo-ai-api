@@ -42,6 +42,9 @@ OPENAI_API_KEY=tu_api_key_aqui
 OPENAI_MODEL=gpt-4o
 OPENAI_TEMPERATURE=0.4
 OPENAI_MAX_TOKENS=200
+# Primer turno del usuario en llamadas Twilio (reduce latencia inicial)
+OPENAI_MODEL_FIRST_TURN=gpt-4o-mini
+OPENAI_MAX_TOKENS_FIRST_TURN=250
 ```
 
 ### Twilio
