@@ -241,6 +241,11 @@ export class StreamsGateway {
     return provider === 'elevenlabs';
   }
 
+  /** Evita métricas/TTS tras cleanupSession (misma instancia de sesión ya no está en el Map). */
+  private isCallSessionLive(session: CallSession): boolean {
+    return this.sessions.get(session.callSid) === session;
+  }
+
   private fileCache = new Map<string, string>();
 
   /**
@@ -1146,6 +1151,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       session.interrupted = false;
       void this.handleFinalTranscript(session, text.trim());
     } else {
+      // Misma regla que Deepgram: durante el saludo (allowInterruptions false) no cortar por parciales
+      if (session.allowInterruptions === false) {
+        return;
+      }
       // Solo interrumpimos si el agente ESTÁ enviando audio realmente (TTS) o lleva un buen rato hablando
       // NO interrumpimos durante el pensamiento o procesamiento inicial del LLM.
       if (
@@ -1190,6 +1199,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     // 🛑 DETENER TEMPORIZADOR DE SILENCIO: El agente va a procesar y hablar
     this.stopSilenceTimer(session);
 
+    if (!this.isCallSessionLive(session)) {
+      return;
+    }
+
     // Capturar ahora el inicio de habla para latencia; evita que un UserStartedSpeaking posterior
     // (ej. usuario repite "Hola") sobrescriba session.userSpeakingStartTime y genere latencias negativas.
     const userStartedAt = session.userSpeakingStartTime ?? undefined;
@@ -1203,6 +1216,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     // 🔥 FIX: Corrección dinámica para nombres de empresas
     const correctedText =
       role === 'user' ? await this.basicCompanyCorrection(text, session) : text;
+
+    if (!this.isCallSessionLive(session)) {
+      return;
+    }
 
     if (role === 'user') {
       session.history.push({ role: 'user', content: correctedText });
@@ -1225,6 +1242,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     if (role === 'user') {
       const fastIntentResponse = this.detectFastIntent(correctedText, session);
       if (fastIntentResponse) {
+        if (!this.isCallSessionLive(session)) {
+          return;
+        }
         console.log(
           `⚡ [${session.callSid}] Intent detectado, respuesta rápida: "${fastIntentResponse}"`,
         );
@@ -1242,7 +1262,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             latency >= 0 &&
             latency < 15000 &&
             session.userId &&
-            session.customParameters?.twilioAccountId
+            session.customParameters?.twilioAccountId &&
+            this.isCallSessionLive(session)
           ) {
             try {
               await this.metricsService.saveLatencyMeasurement(
@@ -1261,12 +1282,15 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
         // Encolar y reproducir TTS de la respuesta rápida
         try {
+          if (!this.isCallSessionLive(session)) {
+            return;
+          }
           await this.streamElevenLabsTTS(session, fastIntentResponse);
         } catch (err) {
           console.error(`❌ [${session.callSid}] Error en TTS rápido:`, err);
         } finally {
           // 🟢 REINICIAR TEMPORIZADOR DE SILENCIO: El agente terminó el intent rápido, esperamos al usuario
-          if (!session.interrupted) {
+          if (this.isCallSessionLive(session) && !session.interrupted) {
             this.resetSilenceTimer(session);
           }
         }
@@ -1302,12 +1326,20 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         }
       }
 
+      if (!this.isCallSessionLive(session)) {
+        return;
+      }
+
       // Enriquecer las instrucciones con datos de Shopify, Reglas de Voz, etc.
       let enrichedInstructions: string;
       try {
         enrichedInstructions = this.enrichInstructions(session);
       } catch (error) {
         enrichedInstructions = session.instructions;
+      }
+
+      if (!this.isCallSessionLive(session)) {
+        return;
       }
 
       const agentResponseStart = Date.now(); // Marcar inicio de respuesta del agente
@@ -1409,6 +1441,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         return;
       }
 
+      if (!this.isCallSessionLive(session)) {
+        return;
+      }
+
       // 🔥 FIX: Marcar explícitamente que el LLM está procesando ANTES de consumir el stream
       // Pero OJO, no marcamos agentSpeaking = true todavía, porque el agente NO está hablando,
       // apenas estamos conectando con OpenAI.
@@ -1431,7 +1467,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           latency >= 0 &&
           latency < 15000 &&
           session.userId &&
-          session.customParameters?.twilioAccountId
+          session.customParameters?.twilioAccountId &&
+          this.isCallSessionLive(session)
         ) {
           try {
             await this.metricsService.saveLatencyMeasurement(
@@ -1466,6 +1503,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       const weakEnders = new Set([',', ':', ';']);
 
       for await (const chunk of stream) {
+        if (!this.isCallSessionLive(session)) {
+          break;
+        }
         if (session.interrupted) {
           console.log(
             `🛑 [${session.callSid}] Generación LLM interrumpida por el usuario.`,
@@ -1552,6 +1592,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             sentenceBuffer = ''; // Reiniciar el buffer de la frase actual
           }
         }
+      }
+
+      if (!this.isCallSessionLive(session)) {
+        return;
       }
 
       // Enviar cualquier texto restante en el buffer que no haya terminado en puntuación
@@ -1716,6 +1760,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         }
       }
 
+      if (!this.isCallSessionLive(session)) {
+        return;
+      }
+
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
         const cleanedResponse = fullResponse
@@ -1730,7 +1778,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       }
 
       // Marcar que el agente terminó de hablar solo si no fue interrumpido por otro proceso
-      if (!session.interrupted) {
+      if (this.isCallSessionLive(session) && !session.interrupted) {
         session.agentSpeaking = false;
         // 🟢 REINICIAR TEMPORIZADOR DE SILENCIO: El agente terminó, ahora esperamos al usuario
         this.resetSilenceTimer(session);
@@ -1738,7 +1786,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       session.interceptedResponseText = '';
 
       // 🔚 Colgar si se detectó la señal [END_CALL]
-      if (shouldHangup && !session.interrupted) {
+      if (
+        this.isCallSessionLive(session) &&
+        shouldHangup &&
+        !session.interrupted
+      ) {
         console.log(
           `🔚 [${session.callSid}] Señal [END_CALL] detectada. Notificando al frontend y limpiando la sesión.`,
         );
@@ -2365,6 +2417,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         case 'UserStartedSpeaking':
           session.userSpeakingStartTime = Date.now();
 
+          // Durante el saludo inicial no permitimos barge-in (eco/ruido cortaba el TTS)
+          if (session.allowInterruptions === false) {
+            break;
+          }
+
           // En Deepgram V1 Listen puro o si estamos usando Agent, UserStartedSpeaking puede saltar por ruido
           // Solo limpiar si el agente realmente estaba hablando y reproduciendo audio.
           // Si el LLM está pensando y aún no ha reproducido nada, ignoramos esto para no auto-cortar la llamada por eco.
@@ -2741,6 +2798,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
     try {
       session.agentSpeaking = true;
+      // Ventana anti-eco del saludo: el LLM ya pone lastAgentStartSpeakingTime en el primer token;
+      // el TTS del saludo no pasa por ahí, así que marcamos aquí solo cuando las interrupciones están bloqueadas.
+      if (session.allowInterruptions === false) {
+        session.lastAgentStartSpeakingTime = Date.now();
+      }
 
       // console.log(
       //   `📋 Payload streamElevenLabsTTS: ${JSON.stringify({
