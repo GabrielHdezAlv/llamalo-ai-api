@@ -2385,13 +2385,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
               this.resetSilenceTimer(session); // Reiniciar temporizador de silencio
             } else {
               // Ignorar ConversationText de Deepgram cuando role=assistant (eco/TTS)
-
-              // Si detectamos que Deepgram está transcribiendo al asistente, es eco.
-              // Renovamos la protección de barge-in para evitar que este eco corte la siguiente frase.
-              if (role === 'assistant') {
-                // console.log(`ℹ️ [${session.callSid}] Eco asistente detectado (protección extendida)`);
-                session.lastAgentStartSpeakingTime = Date.now();
-              }
+              // No renovamos lastAgentStartSpeakingTime aquí para no bloquear el barge-in durante toda la locución.
+              // La protección inicial de 1500ms ya se activó al empezar el LLM/Intent.
             }
           } else {
             console.warn(
