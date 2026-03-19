@@ -426,11 +426,11 @@ export class CallsController {
       if (body.From) {
         addStreamParameter('callerPhone', body.From);
       }
-      if (shopDomain) {
+      if (shopDomain && !shopDomain.includes('example.com')) {
         addStreamParameter('shopDomain', shopDomain);
       } else {
         console.warn(
-          `⚠️ [Calls] ShopDomain no agregado (no está configurado para usuario ${userId})`,
+          `⚠️ [Calls] ShopDomain no agregado (no está configurado o es de prueba para usuario ${userId})`,
         );
       }
 

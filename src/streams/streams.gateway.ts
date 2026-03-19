@@ -821,37 +821,36 @@ export class StreamsGateway {
         userDataString += `============================================================\n\n`;
       }
 
-      // 4. Datos de Shopify (solo si existen)
+      // 4. Datos de Shopify (solo si existe dominio y está habilitado)
       let finalShopifyContext = '';
       let fallbackInstructions = '';
       const shopifyContext = session.shopifyContext;
 
-      if (shopifyContext) {
+      if (shopifyContext?.shopDomain && !shopifyContext.shopDomain.includes('example.com')) {
         if (
           !shopifyContext.store &&
           !shopifyContext.featuredProducts?.length &&
           !shopifyContext.orders?.length
         ) {
           console.warn(
-            `⚠️ [DEBUG-${session.callSid}] Sin datos de Shopify. Inyectando instrucciones de fallback.`,
+            `⚠️ [${session.callSid}] Sin datos de Shopify para dominio: ${shopifyContext.shopDomain}`,
           );
           fallbackInstructions = `
 ============================================================
 ## 🚫 NO SE ENCONTRARON DATOS DE SHOPIFY 🚫
 ============================================================
-No se ha encontrado información de la tienda ni pedidos asociados a este número de teléfono (${session.customParameters?.callerPhone || 'Desconocido'}).
+Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podido recuperar productos ni pedidos automáticamente para este número (${session.customParameters?.callerPhone || 'Desconocido'}).
 
-**Instrucciones obligatorias si el usuario pregunta por un pedido:**
+**Instrucciones:**
 1. NO inventes información.
-2. Explica amablemente que no encuentras el registro automáticamente.
-3. Pide al usuario el **Número de Pedido** o el **Email** con el que realizó la compra para poder ayudarle mejor (o escálalo a un humano).
+2. Pide al usuario el **Número de Pedido** o el **Email** para buscarlo manualmente si es necesario.
 ============================================================
 `;
         } else {
           // Construir contexto de Shopify como JSON estructurado (OPTIMIZADO)
           const shopifyData: any = {};
           if (shopifyContext.store) shopifyData.tienda = shopifyContext.store;
-          
+
           if (shopifyContext.featuredProducts?.length) {
             // Mapeo ligero para ahorrar tokens
             shopifyData.productosDestacados = shopifyContext.featuredProducts.map(

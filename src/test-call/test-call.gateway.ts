@@ -653,8 +653,10 @@ export class TestCallGateway {
     }
 
     if (
-      session.shopifyContext?.store ||
-      session.shopifyContext?.featuredProducts?.length
+      session.shopifyContext?.shopDomain &&
+      !session.shopifyContext.shopDomain.includes('example.com') &&
+      (session.shopifyContext.store ||
+        session.shopifyContext.featuredProducts?.length)
     ) {
       const shopifyData: Record<string, unknown> = {};
       if (session.shopifyContext.store) {
