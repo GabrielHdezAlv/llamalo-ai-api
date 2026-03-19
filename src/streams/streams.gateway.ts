@@ -785,9 +785,26 @@ export class StreamsGateway {
    * Formatea los datos de la tienda y productos destacados como JSON dentro del prompt
    */
   private enrichInstructions(session: CallSession): string {
-    const baseInstructions = session.instructions;
+    let baseInstructions = session.instructions;
 
     try {
+      // 0. Limpieza proactiva: Si no hay Shopify, eliminar rastro de la sección 7 de las instrucciones base
+      const hasValidShopify =
+        session.shopifyContext?.shopDomain &&
+        !session.shopifyContext.shopDomain.includes('example.com');
+
+      if (!hasValidShopify && baseInstructions) {
+        // Regex para detectar el bloque de Shopify en el template (sección 7)
+        const shopifySectionRegex =
+          /============================================================\s*## 7\. USO DEL CONTEXTO DE SHOPIFY[\s\S]*?(?============================================================\s*## 8\.)/i;
+        if (shopifySectionRegex.test(baseInstructions)) {
+          console.log(
+            `🧹 [${session.callSid}] Eliminando Sección 7 de Shopify de las instrucciones base (sin dominio)`,
+          );
+          baseInstructions = baseInstructions.replace(shopifySectionRegex, '');
+        }
+      }
+
       // 1. Cargar reglas de voz (siempre)
       const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
 

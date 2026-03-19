@@ -636,6 +636,19 @@ export class TestCallGateway {
   private buildInstructions(session: TestCallSession): string {
     let instructions = session.config.agentInstruction;
 
+    // 0. Limpieza proactiva: Si no hay Shopify, eliminar rastro de la sección 7 de las instrucciones base
+    const hasValidShopify =
+      session.shopifyContext?.shopDomain &&
+      !session.shopifyContext.shopDomain.includes('example.com');
+
+    if (!hasValidShopify && instructions) {
+      const shopifySectionRegex =
+        /============================================================\s*## 7\. USO DEL CONTEXTO DE SHOPIFY[\s\S]*?(?============================================================\s*## 8\.)/i;
+      if (shopifySectionRegex.test(instructions)) {
+        instructions = instructions.replace(shopifySectionRegex, '');
+      }
+    }
+
     // Inyectar reglas de voz
     try {
       const voiceRulesPath = path.resolve(
