@@ -114,6 +114,8 @@ interface CallSession {
   interrupted: boolean;
   allowInterruptions?: boolean;
   greetingPlaybackDone?: boolean;
+  /** Libera allowInterruptions tras el saludo cuando Twilio ha terminado de reproducir (evita clear en la cola). */
+  pendingGreetingReleaseTimer?: NodeJS.Timeout;
   currentTTSRequest?: Promise<void>;
   ttsCancelStream?: () => void;
   // Shopify integration
@@ -1147,6 +1149,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     }
 
     if (isFinal) {
+      // No procesar eco/ruido como turno de usuario mientras suena el saludo
+      if (session.allowInterruptions === false) {
+        return;
+      }
       // Reiniciar estado antes de procesar el nuevo transcript
       session.interrupted = false;
       void this.handleFinalTranscript(session, text.trim());
@@ -2279,6 +2285,68 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
   }
 
   /**
+   * Envía el resto de audio que no alcanzó un frame de 160 bytes (Twilio exige frames completos).
+   * Sin esto se pierde el final de cada locución (muy notable en el saludo).
+   */
+  private flushOutboundAudioRemainder(session: CallSession) {
+    if (!session.streamSid || !session.client) {
+      return;
+    }
+    const FRAME_SIZE = 160;
+    const FRAME_DURATION_MS = 20;
+    /** Silencio μ-law (aprox. línea en reposo) para rellenar el último frame */
+    const SILENCE_ULAW = 0xff;
+
+    let buf = session.outboundBuffer?.length
+      ? session.outboundBuffer
+      : Buffer.alloc(0);
+    if (buf.length === 0) {
+      return;
+    }
+
+    while (buf.length > 0) {
+      let frame: Buffer;
+      if (buf.length >= FRAME_SIZE) {
+        frame = buf.subarray(0, FRAME_SIZE);
+        buf = buf.subarray(FRAME_SIZE);
+      } else {
+        const padded = Buffer.alloc(FRAME_SIZE, SILENCE_ULAW);
+        buf.copy(padded, 0);
+        frame = padded;
+        buf = Buffer.alloc(0);
+      }
+      try {
+        session.client.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid: session.streamSid,
+            media: {
+              payload: frame.toString('base64'),
+              track: 'outbound',
+            },
+          }),
+        );
+        const now = Date.now();
+        if (
+          !session.expectedAudioEndTime ||
+          session.expectedAudioEndTime < now
+        ) {
+          session.expectedAudioEndTime = now + FRAME_DURATION_MS;
+        } else {
+          session.expectedAudioEndTime += FRAME_DURATION_MS;
+        }
+      } catch (err) {
+        console.error(
+          `❌ [${session.callSid}] Error enviando frame final (flush) a Twilio:`,
+          err,
+        );
+        break;
+      }
+    }
+    session.outboundBuffer = buf;
+  }
+
+  /**
    * ElevenLabs puede devolver WAV con cabecera aun cuando se solicita μ-law.
    * Si detectamos 'RIFF....WAVEfmt ' y chunk 'data', devolvemos solo el payload de datos.
    */
@@ -2492,6 +2560,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
           if (text) {
             if (role === 'user') {
+              // Eco del TTS del saludo puede llegar como "usuario" y disparar el LLM + clear
+              if (session.allowInterruptions === false) {
+                break;
+              }
               void this.handleFinalTranscript(session, text);
               this.resetSilenceTimer(session); // Reiniciar temporizador de silencio
             } else {
@@ -2511,6 +2583,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           // Intentar interceptar texto de eventos Response/AgentResponse si existen
           const text = this.extractTextFromResponse(message);
           if (text && session.agentSpeaking) {
+            if (session.allowInterruptions === false) {
+              break;
+            }
             session.interceptedResponseText += text;
             void this.streamTTSFromText(session, text);
           }
@@ -2722,8 +2797,23 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         // console.log(`🏁 Finalizando TTS request`);
         session.currentTTSRequest = undefined;
         if (wasGreetingPending) {
-          session.allowInterruptions = true;
-          session.greetingPlaybackDone = true;
+          // El stream de ElevenLabs termina antes que Twilio vacíe la cola; si reactivamos
+          // allowInterruptions al instante, UserStartedSpeaking + clear corta el final del saludo.
+          if (session.pendingGreetingReleaseTimer) {
+            clearTimeout(session.pendingGreetingReleaseTimer);
+            session.pendingGreetingReleaseTimer = undefined;
+          }
+          const marginMs = 450;
+          const playEnd = session.expectedAudioEndTime ?? Date.now();
+          const delay = Math.max(marginMs, playEnd - Date.now() + marginMs);
+          session.pendingGreetingReleaseTimer = setTimeout(() => {
+            session.pendingGreetingReleaseTimer = undefined;
+            if (!this.isCallSessionLive(session)) {
+              return;
+            }
+            session.allowInterruptions = true;
+            session.greetingPlaybackDone = true;
+          }, delay);
         }
       });
     await session.currentTTSRequest;
@@ -2901,6 +2991,45 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           .toLowerCase()
           .includes('audio/mpeg');
 
+        let streamFinalized = false;
+        let settled = false;
+
+        const settleOk = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        };
+
+        const finalizeStream = () => {
+          if (streamFinalized) return;
+          streamFinalized = true;
+          clearTimeout(timeout);
+          session.ttsCancelStream = undefined;
+
+          if (mp3Chunks && mp3Chunks.length) {
+            void this.decodeMp3AndRelay(session, Buffer.concat(mp3Chunks))
+              .then(() => {
+                this.flushOutboundAudioRemainder(session);
+                settleOk();
+              })
+              .catch((err) => {
+                console.error(
+                  `❌ [${session.callSid}] Error decodificando MP3 de ElevenLabs:`,
+                  err,
+                );
+                if (!settled) {
+                  settled = true;
+                  clearTimeout(timeout);
+                  reject(err instanceof Error ? err : new Error(String(err)));
+                }
+              });
+          } else {
+            this.flushOutboundAudioRemainder(session);
+            settleOk();
+          }
+        };
+
         audioStream.on('data', (chunk: Buffer) => {
           if (session.allowInterruptions !== false && session.interrupted) {
             console.log(
@@ -2943,43 +3072,14 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             );
             clearTimeout(timeout);
             cancel();
-            reject(err instanceof Error ? err : new Error(String(err)));
+            if (!settled) {
+              settled = true;
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
           });
         });
-        audioStream.on('end', () => {
-          clearTimeout(timeout);
-          session.ttsCancelStream = undefined;
-          if (mp3Chunks && mp3Chunks.length) {
-            void this.decodeMp3AndRelay(session, Buffer.concat(mp3Chunks))
-              .then(resolve)
-              .catch((err) => {
-                console.error(
-                  `❌ [${session.callSid}] Error decodificando MP3 de ElevenLabs:`,
-                  err,
-                );
-                reject(err instanceof Error ? err : new Error(String(err)));
-              });
-          } else {
-            resolve();
-          }
-        });
-        audioStream.on('close', () => {
-          clearTimeout(timeout);
-          session.ttsCancelStream = undefined;
-          if (mp3Chunks && mp3Chunks.length) {
-            void this.decodeMp3AndRelay(session, Buffer.concat(mp3Chunks))
-              .then(resolve)
-              .catch((err) => {
-                console.error(
-                  `❌ [${session.callSid}] Error decodificando MP3 de ElevenLabs (close):`,
-                  err,
-                );
-                reject(err instanceof Error ? err : new Error(String(err)));
-              });
-          } else {
-            resolve();
-          }
-        });
+        audioStream.on('end', finalizeStream);
+        audioStream.on('close', finalizeStream);
         audioStream.on('error', (err) => {
           clearTimeout(timeout);
           session.ttsCancelStream = undefined;
@@ -2987,7 +3087,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             `❌ [${session.callSid}] Error en stream ElevenLabs TTS:`,
             err,
           );
-          reject(err);
+          if (!settled) {
+            settled = true;
+            reject(err);
+          }
         });
       });
     } catch (error) {
@@ -3043,10 +3146,19 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     //   `👋 Reproduciendo greeting con ElevenLabs TTS: "${greeting.substring(0, 50)}${greeting.length > 50 ? '...' : ''}"`,
     // );
     session.greetingSent = true;
+    // Antes de que streamTTSFromText corra (y espere TTS previo), ya bloqueamos barge-in:
+    // reduce la ventana donde Deepgram/STT puede disparar clear durante el saludo.
+    session.allowInterruptions = false;
+    session.lastAgentStartSpeakingTime = Date.now();
     void this.streamTTSFromText(session, greeting, {
       recordAssistantUtteranceOnComplete: greeting,
     }).catch((error) => {
       session.greetingSent = false;
+      if (session.pendingGreetingReleaseTimer) {
+        clearTimeout(session.pendingGreetingReleaseTimer);
+        session.pendingGreetingReleaseTimer = undefined;
+      }
+      session.allowInterruptions = true;
       console.error(
         `❌ [${session.callSid}] Error reproduciendo greeting con ElevenLabs TTS:`,
         error,
@@ -3238,6 +3350,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
     this.stopKeepAlive(session);
     this.stopSilenceTimer(session); // Detener temporizador de silencio al limpiar sesión
+
+    if (session.pendingGreetingReleaseTimer) {
+      clearTimeout(session.pendingGreetingReleaseTimer);
+      session.pendingGreetingReleaseTimer = undefined;
+    }
 
     if (session.ttsCancelStream) {
       session.ttsCancelStream();
