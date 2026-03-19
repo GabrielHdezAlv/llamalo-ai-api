@@ -1142,7 +1142,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     }
   }
 
-  private async handleFinalTranscript(session: CallSession, text: string) {
+  private async handleFinalTranscript(
+    session: CallSession,
+    text: string,
+    role: 'user' | 'system' = 'user',
+  ) {
     // 🛑 DETENER TEMPORIZADOR DE SILENCIO: El agente va a procesar y hablar
     this.stopSilenceTimer(session);
 
@@ -1157,52 +1161,77 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     session.outboundBuffer = Buffer.alloc(0);
 
     // 🔥 FIX: Corrección dinámica para nombres de empresas
-    const correctedText = await this.basicCompanyCorrection(text, session);
+    const correctedText =
+      role === 'user' ? await this.basicCompanyCorrection(text, session) : text;
 
-    session.history.push({ role: 'user', content: correctedText });
+    if (role === 'user') {
+      session.history.push({ role: 'user', content: correctedText });
+    } else {
+      // Si es sistema (silencio), inyectamos una instrucción clara
+      session.history.push({
+        role: 'system',
+        content: `(INSTRUCCIÓN DE SISTEMA: El usuario ha estado en silencio por 15 segundos. ${text})`,
+      });
+    }
 
-    if (correctedText !== text) {
+    if (role === 'user' && correctedText !== text) {
       console.log(
         `🔧 [${session.callSid}] Texto corregido: "${text.substring(0, 50)}" → "${correctedText.substring(0, 50)}"`,
       );
     }
 
     // ⚡ INTENT DETECTION LIGERO (Reducción de latencia)
-    const fastIntentResponse = this.detectFastIntent(correctedText, session);
-    if (fastIntentResponse) {
-      console.log(
-        `⚡ [${session.callSid}] Intent detectado, respuesta rápida: "${fastIntentResponse}"`,
-      );
-      
-      session.history.push({ role: 'assistant', content: fastIntentResponse });
-      
-      // Registrar latencia de respuesta rápida
-      if (userStartedAt != null) {
-        const latency = Date.now() - userStartedAt;
-        session.responseLatencies.push(latency);
-        if (latency >= 0 && latency < 15000 && session.userId && session.customParameters?.twilioAccountId) {
-          try {
-            await this.metricsService.saveLatencyMeasurement(
-              session.userId,
-              parseInt(session.customParameters.twilioAccountId),
-              latency,
-            );
-          } catch (error) {
-            console.warn(`[Latency] Error guardando latencia intent:`, error);
+    // Solo para mensajes de usuario, no para intervenciones de sistema
+    if (role === 'user') {
+      const fastIntentResponse = this.detectFastIntent(correctedText, session);
+      if (fastIntentResponse) {
+        console.log(
+          `⚡ [${session.callSid}] Intent detectado, respuesta rápida: "${fastIntentResponse}"`,
+        );
+
+        session.history.push({
+          role: 'assistant',
+          content: fastIntentResponse,
+        });
+
+        // Registrar latencia de respuesta rápida
+        if (userStartedAt != null) {
+          const latency = Date.now() - userStartedAt;
+          session.responseLatencies.push(latency);
+          if (
+            latency >= 0 &&
+            latency < 15000 &&
+            session.userId &&
+            session.customParameters?.twilioAccountId
+          ) {
+            try {
+              await this.metricsService.saveLatencyMeasurement(
+                session.userId,
+                parseInt(session.customParameters.twilioAccountId),
+                latency,
+              );
+            } catch (error) {
+              console.warn(`[Latency] Error guardando latencia intent:`, error);
+            }
           }
         }
-      }
 
-      session.agentSpeaking = true;
-      session.lastAgentStartSpeakingTime = Date.now();
-      
-      // Encolar y reproducir TTS de la respuesta rápida
-      try {
-        await this.streamElevenLabsTTS(session, fastIntentResponse);
-      } catch (err) {
-        console.error(`❌ [${session.callSid}] Error en TTS rápido:`, err);
+        session.agentSpeaking = true;
+        session.lastAgentStartSpeakingTime = Date.now();
+
+        // Encolar y reproducir TTS de la respuesta rápida
+        try {
+          await this.streamElevenLabsTTS(session, fastIntentResponse);
+        } catch (err) {
+          console.error(`❌ [${session.callSid}] Error en TTS rápido:`, err);
+        } finally {
+          // 🟢 REINICIAR TEMPORIZADOR DE SILENCIO: El agente terminó el intent rápido, esperamos al usuario
+          if (!session.interrupted) {
+            this.resetSilenceTimer(session);
+          }
+        }
+        return; // Cortocircuitar el LLM
       }
-      return; // Cortocircuitar el LLM
     }
 
     try {
@@ -2936,10 +2965,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Marcar que la causa probable de finalización es silencio del cliente
       session.terminadoPor = 'silencio';
 
-      // Simular que el usuario ha dicho algo para activar la respuesta del LLM
-      const silenceMessage =
-        'Parece que no hay nadie. ¿Sigues ahí o deberíamos terminar la llamada?';
-      await this.handleFinalTranscript(session, silenceMessage);
+      // Simular una instrucción de sistema para activar la respuesta del LLM
+      const silenceInstruction =
+        'Parece que no hay nadie. Dile algo amable al usuario para intentar retomar la conversación o despidete amablemente si parece que ya no va a responder.';
+      await this.handleFinalTranscript(session, silenceInstruction, 'system');
     }, SILENCE_TIMEOUT_MS);
   }
 
