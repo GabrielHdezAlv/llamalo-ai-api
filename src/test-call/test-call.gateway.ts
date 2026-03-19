@@ -31,7 +31,11 @@ export interface TestCallConfig {
   shopifyDomain?: string;
 }
 
-type Message = { role: 'user' | 'assistant'; content: string };
+type Role = 'user' | 'assistant' | 'system';
+type Message =
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: any[] }
+  | { role: 'system'; content: string };
 
 export interface TestCallWebSocketClient {
   send: (data: string | Buffer) => void;

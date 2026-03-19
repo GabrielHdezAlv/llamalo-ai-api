@@ -12,7 +12,11 @@ import type { SupportAgentConfigResponseDto } from './dto/support-chat.dto';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Message = { role: 'user' | 'assistant'; content: string };
+type Role = 'user' | 'assistant' | 'system';
+type Message =
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: any[] }
+  | { role: 'system'; content: string };
 
 export interface SupportChatClient {
   send: (data: string | Buffer) => void;

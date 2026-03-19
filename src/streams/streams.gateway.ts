@@ -68,8 +68,11 @@ type DeepgramJsonEvent = {
   [key: string]: unknown;
 };
 
-type Role = 'user' | 'assistant';
-type Message = { role: Role; content: string };
+type Role = 'user' | 'assistant' | 'system';
+type Message =
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: any[] }
+  | { role: 'system'; content: string };
 
 interface ShopifyContext {
   shopDomain?: string;
