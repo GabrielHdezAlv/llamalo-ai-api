@@ -278,6 +278,8 @@ export class StreamsGateway {
 
     let currentCallSid = '';
     let mediaBeforeStartWarned = false;
+    /** Tras `stop`, Twilio puede seguir enviando chunks de media: no loguear ni buscar sesión */
+    let callStreamEnded = false;
 
     client.on('message', (raw: Buffer) => {
       void (async () => {
@@ -289,6 +291,7 @@ export class StreamsGateway {
           }
 
           if (msg.event === 'start') {
+            callStreamEnded = false;
             currentCallSid = msg.start?.callSid || '';
             console.log(`📞 [${currentCallSid}] Llamada iniciada`);
             mediaBeforeStartWarned = false;
@@ -303,6 +306,9 @@ export class StreamsGateway {
           }
 
           if (msg.event === 'media') {
+            if (callStreamEnded) {
+              return;
+            }
             if (!currentCallSid) {
               if (!mediaBeforeStartWarned) {
                 console.warn(
@@ -319,12 +325,17 @@ export class StreamsGateway {
 
           if (msg.event === 'stop') {
             console.log(`🛑 Llamada terminada.`);
+            const sid = currentCallSid;
             // Si no se marcó ningún motivo previo, el cliente fue quien colgó
-            const session = this.sessions.get(currentCallSid);
+            const session = sid ? this.sessions.get(sid) : undefined;
             if (session && !session.terminadoPor) {
               session.terminadoPor = 'cliente';
             }
-            this.cleanupSession(currentCallSid);
+            callStreamEnded = true;
+            currentCallSid = '';
+            if (sid) {
+              this.cleanupSession(sid);
+            }
             client.close();
           }
         } catch (err) {
@@ -1992,9 +2003,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
   private forwardInboundAudio(callSid: string, msg: TwilioMediaIn) {
     const session = this.sessions.get(callSid);
     if (!session) {
-      console.warn(
-        `⚠️ [${callSid}] No hay sesión registrada para media inbound`,
-      );
+      // Típico: media rezagada tras cleanupSession/stop; no spamear logs
       return;
     }
 
@@ -2996,6 +3005,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     const SILENCE_TIMEOUT_MS = 15 * 1000; // 15 segundos de silencio antes de intervenir
 
     session.silenceTimeout = setTimeout(async () => {
+      session.silenceTimeout = undefined;
+      const stillActive = this.sessions.get(session.callSid);
+      if (stillActive !== session) {
+        // Llamada ya colgada / sesión sustituida: evitar intervención fantasma
+        return;
+      }
+
       console.warn(
         `⏳ [${session.callSid}] Silencio detectado por ${SILENCE_TIMEOUT_MS / 1000} segundos. Interviniendo...`,
       );
