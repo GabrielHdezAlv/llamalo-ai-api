@@ -30,7 +30,8 @@ export class EmbeddingsService {
     const embeddings: number[][] = [];
 
     // Process in batches to avoid rate limits
-    const batchSize = 100;
+    // OpenAI supports up to 2048 elements per input array for text-embedding-3
+    const batchSize = 1000;
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
 
@@ -43,9 +44,9 @@ export class EmbeddingsService {
         const batchEmbeddings = response.data.map((item) => item.embedding);
         embeddings.push(...batchEmbeddings);
 
-        // Add delay to avoid rate limits
+        // Add a much smaller delay only if there are more batches to process
         if (i + batchSize < texts.length) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       } catch (error) {
         this.logger.error(

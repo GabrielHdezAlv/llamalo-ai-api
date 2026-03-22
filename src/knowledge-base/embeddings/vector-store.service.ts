@@ -31,12 +31,15 @@ export class VectorStoreService {
       this.embeddings.set(sourceId, chunkEmbeddings);
 
       // Store in Firestore for persistence - process in batches
-      const batchSize = 10; // Firestore limit is ~500 operations per batch
+      // Firestore limit is 500 operations per batch. We use 450 to leave a safe margin.
+      const batchSize = 450;
       const totalBatches = Math.ceil(chunks.length / batchSize);
 
       this.logger.log(
         `🔄 Storing ${chunks.length} chunks in ${totalBatches} batches...`,
       );
+
+      const batchPromises: Promise<void>[] = [];
 
       for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
         const startIndex = batchIndex * batchSize;
@@ -63,12 +66,17 @@ export class VectorStoreService {
           batch.set(chunkRef, chunkData);
         });
 
-        await batch.commit();
-
-        this.logger.log(
-          `✅ Batch ${batchIndex + 1}/${totalBatches} completed (${batchChunks.length} chunks)`,
-        );
+        // Add the commit promise to the array
+        const commitPromise = batch.commit().then(() => {
+          this.logger.log(
+            `✅ Batch ${batchIndex + 1}/${totalBatches} completed (${batchChunks.length} chunks)`,
+          );
+        });
+        batchPromises.push(commitPromise);
       }
+
+      // Wait for all batches to complete in parallel
+      await Promise.all(batchPromises);
 
       this.logger.log(
         `✅ Successfully stored ${chunks.length} chunks for source ${sourceId} in Firestore`,
