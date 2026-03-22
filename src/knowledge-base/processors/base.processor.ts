@@ -7,8 +7,7 @@ export interface ProcessedText {
     pageCount?: number;
     size?: number;
     estimatedTokens?: number;
-    title?: string;
-    url?: string;
+    [key: string]: any;
   };
 }
 

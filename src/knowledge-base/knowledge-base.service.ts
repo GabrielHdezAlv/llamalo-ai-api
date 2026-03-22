@@ -354,7 +354,9 @@ export class KnowledgeBaseService {
 
   async deleteKnowledgeSource(sourceId: string): Promise<void> {
     try {
-      const docRef = this.firestore.collection('knowledgeSources').doc(sourceId);
+      const docRef = this.firestore
+        .collection('knowledgeSources')
+        .doc(sourceId);
       const snap = await docRef.get();
       const data = snap.data() as { storagePath?: string } | undefined;
       const storagePath = data?.storagePath;
