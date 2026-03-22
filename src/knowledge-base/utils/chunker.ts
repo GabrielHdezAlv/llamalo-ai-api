@@ -23,58 +23,50 @@ export class TextChunker {
 
   createChunks(text: string, sourceId: string): TextChunk[] {
     const chunks: TextChunk[] = [];
-    const words = text.split(/\s+/);
-    let currentChunk = '';
+    // Clean text and extract words
+    const words = text.replace(/\s+/g, ' ').trim().split(' ');
+    
+    if (words.length === 0 || (words.length === 1 && words[0] === '')) {
+      return chunks;
+    }
+
     let chunkIndex = 0;
-    let positionStart = 0;
+    
+    // Step size is chunkSize minus overlap
+    const step = Math.max(1, this.chunkSize - this.chunkOverlap);
 
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
-      const testChunk = currentChunk ? `${currentChunk} ${word}` : word;
-
-      if (testChunk.length > this.chunkSize && currentChunk) {
-        // Save current chunk
+    for (let i = 0; i < words.length; i += step) {
+      // Get the block of words for the current chunk
+      const chunkWords = words.slice(i, i + this.chunkSize);
+      const currentChunk = chunkWords.join(' ').trim();
+      
+      if (currentChunk.length > 0) {
+        // Approximate position finding
+        // We use a search range to find the word position efficiently in large texts
+        const searchRange = Math.max(0, (i / words.length) * text.length - 1000);
+        const positionStart = text.indexOf(chunkWords[0], searchRange);
+        
         chunks.push({
           id: `${sourceId}_chunk_${chunkIndex}`,
-          content: currentChunk.trim(),
+          content: currentChunk,
           metadata: {
             sourceId,
             chunkIndex,
-            wordCount: currentChunk.split(/\s+/).length,
+            wordCount: chunkWords.length,
             position: {
-              start: positionStart,
-              end: positionStart + currentChunk.length,
+              start: positionStart !== -1 ? positionStart : 0,
+              end: positionStart !== -1 ? positionStart + currentChunk.length : currentChunk.length,
             },
           },
         });
-
-        // Start new chunk with overlap
-        const overlapWords = currentChunk
-          .split(/\s+/)
-          .slice(-Math.floor(this.chunkOverlap / 10));
-        currentChunk = overlapWords.join(' ');
-        positionStart = text.indexOf(currentChunk, positionStart);
+        
         chunkIndex++;
+
+        // If we've reached the end of the words, stop
+        if (i + this.chunkSize >= words.length) {
+          break;
+        }
       }
-
-      currentChunk = testChunk;
-    }
-
-    // Add last chunk if it has content
-    if (currentChunk.trim()) {
-      chunks.push({
-        id: `${sourceId}_chunk_${chunkIndex}`,
-        content: currentChunk.trim(),
-        metadata: {
-          sourceId,
-          chunkIndex,
-          wordCount: currentChunk.split(/\s+/).length,
-          position: {
-            start: positionStart,
-            end: text.length,
-          },
-        },
-      });
     }
 
     return chunks;
