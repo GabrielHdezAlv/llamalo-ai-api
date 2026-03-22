@@ -2,8 +2,10 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
+import * as admin from 'firebase-admin';
 import { getFirestore } from '../firebase/firebase.config';
 import { FieldPath } from 'firebase-admin/firestore';
 import {
@@ -51,7 +53,7 @@ export class KnowledgeBaseService {
     try {
       const sourceId = `src_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      const knowledgeSource = {
+      const knowledgeSource: Record<string, unknown> = {
         id: sourceId,
         userId,
         name: createSourceDto.name,
@@ -68,6 +70,13 @@ export class KnowledgeBaseService {
         ...(filePath && { fileName: path.basename(filePath) }),
       };
 
+      if (
+        createSourceDto.type === KnowledgeSourceType.TEXT &&
+        createSourceDto.content
+      ) {
+        knowledgeSource.storedTextContent = createSourceDto.content;
+      }
+
       // Create initial record in Firestore
       await this.firestore
         .collection('knowledgeSources')
@@ -77,6 +86,7 @@ export class KnowledgeBaseService {
       // Start async processing
       void this.processKnowledgeSource(
         sourceId,
+        userId,
         createSourceDto,
         filePath,
       ).catch((error) => {
@@ -97,9 +107,13 @@ export class KnowledgeBaseService {
 
   private async processKnowledgeSource(
     sourceId: string,
+    userId: string,
     createSourceDto: CreateKnowledgeSourceDto,
     filePath?: string,
   ): Promise<void> {
+    let pdfStoragePath: string | undefined;
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+
     try {
       this.logger.log(
         `[KnowledgeBaseService] Starting processing for source: ${sourceId}`,
@@ -112,6 +126,36 @@ export class KnowledgeBaseService {
         case KnowledgeSourceType.PDF:
           if (!filePath) {
             throw new Error('File path is required for PDF processing');
+          }
+          if (bucketName) {
+            try {
+              const bucket = admin.storage().bucket(bucketName);
+              pdfStoragePath = `knowledge-sources/${userId}/${sourceId}.pdf`;
+              await bucket.upload(filePath, {
+                destination: pdfStoragePath,
+                metadata: {
+                  contentType: 'application/pdf',
+                },
+              });
+              await this.firestore
+                .collection('knowledgeSources')
+                .doc(sourceId)
+                .update({
+                  storagePath: pdfStoragePath,
+                  updatedAt: new Date(),
+                });
+              this.logger.log(
+                `[KnowledgeBaseService] PDF stored for download: ${pdfStoragePath}`,
+              );
+            } catch (uploadErr) {
+              this.logger.warn(
+                `PDF upload to Storage failed (download will be unavailable): ${(uploadErr as Error).message}`,
+              );
+            }
+          } else {
+            this.logger.warn(
+              'FIREBASE_STORAGE_BUCKET not set; PDF originals will not be downloadable',
+            );
           }
           this.logger.log(
             `[KnowledgeBaseService] Extracting text from PDF: ${filePath}`,
@@ -245,6 +289,14 @@ export class KnowledgeBaseService {
         `Successfully processed source ${sourceId} with ${chunks.length} chunks`,
       );
     } catch (error) {
+      if (pdfStoragePath && bucketName) {
+        await admin
+          .storage()
+          .bucket(bucketName)
+          .file(pdfStoragePath)
+          .delete({ ignoreNotFound: true })
+          .catch(() => undefined);
+      }
       await this.updateSourceStatus(sourceId, KnowledgeSourceStatus.FAILED);
       throw error;
     }
@@ -302,13 +354,24 @@ export class KnowledgeBaseService {
 
   async deleteKnowledgeSource(sourceId: string): Promise<void> {
     try {
-      // Delete from Firestore
-      await this.firestore
-        .collection('knowledgeSources')
-        .doc(sourceId)
-        .delete();
+      const docRef = this.firestore.collection('knowledgeSources').doc(sourceId);
+      const snap = await docRef.get();
+      const data = snap.data() as { storagePath?: string } | undefined;
+      const storagePath = data?.storagePath;
 
-      // Delete from vector store
+      if (storagePath && process.env.FIREBASE_STORAGE_BUCKET) {
+        await admin
+          .storage()
+          .bucket(process.env.FIREBASE_STORAGE_BUCKET)
+          .file(storagePath)
+          .delete({ ignoreNotFound: true })
+          .catch((err) =>
+            this.logger.warn(`Storage delete skipped: ${err.message}`),
+          );
+      }
+
+      await docRef.delete();
+
       await this.vectorStoreService.deleteSource(sourceId);
 
       this.logger.log(`Successfully deleted source ${sourceId}`);
@@ -318,6 +381,76 @@ export class KnowledgeBaseService {
         `Failed to delete knowledge source: ${error.message}`,
       );
     }
+  }
+
+  /**
+   * Descarga: PDF desde Storage o texto plano desde Firestore (solo owner).
+   */
+  async getDownloadPayload(
+    userId: string,
+    sourceId: string,
+  ): Promise<{ buffer: Buffer; filename: string; mimeType: string }> {
+    const docRef = this.firestore.collection('knowledgeSources').doc(sourceId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      throw new NotFoundException('Fuente de conocimiento no encontrada');
+    }
+    const data = snap.data() as {
+      userId: string;
+      type: string;
+      name?: string;
+      fileName?: string;
+      storagePath?: string;
+      storedTextContent?: string;
+    };
+
+    if (data.userId !== userId) {
+      throw new ForbiddenException('No autorizado');
+    }
+
+    if (data.type === KnowledgeSourceType.PDF && data.storagePath) {
+      const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+      if (!bucketName) {
+        throw new BadRequestException('Almacenamiento no configurado');
+      }
+      const [buffer] = await admin
+        .storage()
+        .bucket(bucketName)
+        .file(data.storagePath)
+        .download();
+      const safeName = this.sanitizeDownloadFileName(
+        data.fileName || `${sourceId}.pdf`,
+      );
+      const filename = safeName.toLowerCase().endsWith('.pdf')
+        ? safeName
+        : `${safeName}.pdf`;
+      return {
+        buffer,
+        filename,
+        mimeType: 'application/pdf',
+      };
+    }
+
+    if (data.type === KnowledgeSourceType.TEXT && data.storedTextContent) {
+      const base = this.sanitizeDownloadFileName(data.name || 'texto');
+      const filename = base.toLowerCase().endsWith('.txt')
+        ? base
+        : `${base}.txt`;
+      return {
+        buffer: Buffer.from(data.storedTextContent, 'utf8'),
+        filename,
+        mimeType: 'text/plain; charset=utf-8',
+      };
+    }
+
+    throw new BadRequestException(
+      'Esta fuente no tiene un archivo descargable (solo PDF y texto con datos guardados)',
+    );
+  }
+
+  private sanitizeDownloadFileName(name: string): string {
+    const cleaned = (name || 'documento').replace(/[/\\?%*:|"<>]/g, '-').trim();
+    return cleaned.slice(0, 180) || 'documento';
   }
 
   async searchKnowledge(searchDto: SearchKnowledgeDto): Promise<any> {
@@ -492,6 +625,11 @@ export class KnowledgeBaseService {
   }
 
   private mapToDto(sourceData: any): KnowledgeSourceDto {
+    const type = sourceData.type as KnowledgeSourceType;
+    const hasDownloadableContent =
+      (type === KnowledgeSourceType.PDF && !!sourceData.storagePath) ||
+      (type === KnowledgeSourceType.TEXT && !!sourceData.storedTextContent);
+
     return {
       id: sourceData.id,
       userId: sourceData.userId,
@@ -505,6 +643,7 @@ export class KnowledgeBaseService {
       metadata: sourceData.metadata,
       tags: sourceData.tags || [],
       isPublic: sourceData.isPublic || false,
+      hasDownloadableContent,
     };
   }
 }

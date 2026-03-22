@@ -146,6 +146,13 @@ export class KnowledgeSourceDto {
 
   @ApiProperty()
   isPublic: boolean;
+
+  @ApiProperty({
+    description:
+      'True si se puede descargar el PDF original o el .txt (fuentes nuevas con archivo persistido)',
+    required: false,
+  })
+  hasDownloadableContent?: boolean;
 }
 
 export class SearchKnowledgeDto {

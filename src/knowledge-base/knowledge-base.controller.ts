@@ -10,6 +10,8 @@ import {
   UploadedFile,
   UseInterceptors,
   ParseIntPipe,
+  StreamableFile,
+  Res,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,7 +32,7 @@ import {
 } from './dto/knowledge-source.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
-import type { Express } from 'express';
+import type { Express, Response } from 'express';
 
 @ApiTags('knowledge-base')
 @ApiBearerAuth()
@@ -183,5 +185,31 @@ export class KnowledgeBaseController {
       sourceId,
       preview: 'Preview functionality would be implemented here',
     };
+  }
+
+  @Get('knowledge-base/sources/:sourceId/download')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary: 'Descargar PDF original o contenido de texto como .txt',
+  })
+  @ApiParam({
+    name: 'sourceId',
+    description: 'ID of the knowledge source',
+    example: 'src_1234567890_abc123',
+  })
+  @ApiResponse({ status: 200 })
+  async downloadSource(
+    @GetUser('uid') userId: string,
+    @Param('sourceId') sourceId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename, mimeType } =
+      await this.knowledgeBaseService.getDownloadPayload(userId, sourceId);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename.replace(/"/g, '')}"`,
+    );
+    res.setHeader('Content-Type', mimeType);
+    return new StreamableFile(buffer);
   }
 }
