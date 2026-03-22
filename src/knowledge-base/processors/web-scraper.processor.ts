@@ -41,70 +41,90 @@ export class WebScraperProcessor extends BaseProcessor {
         maxBodyLength: 5 * 1024 * 1024, // 5MB limit
         headers: {
           'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept:
+            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
         },
       });
 
       const $ = cheerio.load(response.data);
 
-      // Remove unwanted elements
+      // Extract title for metadata
+      const pageTitle =
+        $('title').text().trim() ||
+        $('h1').first().text().trim() ||
+        'Página web';
+
+      // Remove unwanted elements more aggressively
       $(
-        'script, style, nav, header, footer, aside, .ads, .menu, .cookie-banner',
+        'script, style, nav, header, footer, aside, .ads, .menu, .cookie-banner, ' +
+          'noscript, .social, .sharing, .footer-widgets, #sidebar, .sidebar, .widget, ' +
+          '.banner, .popup, .modal, .cookie-consent, iframe, svg, canvas, button, ' +
+          '[role="navigation"], [role="banner"], [role="contentinfo"]',
       ).remove();
 
       // Extract main content
-      let text = '';
+      let extractedText = '';
 
-      // Try to find main content areas
+      // Main content candidates with priority
       const mainSelectors = [
-        'main',
         'article',
+        'main',
+        '[role="main"]',
         '.content',
-        '.main-content',
+        '.post-content',
+        '.article-content',
         '#content',
         '#main',
-        'body',
+        '.main-content',
+        '.page-content',
       ];
 
+      // Try to find the candidate with the most text
+      let bestContent = '';
+      let maxLen = 0;
+
       for (const selector of mainSelectors) {
-        const element = $(selector);
-        if (element.length > 0) {
-          text = element.text();
+        $(selector).each((_, el) => {
+          const content = $(el).text().trim();
+          if (content.length > maxLen) {
+            maxLen = content.length;
+            bestContent = content;
+          }
+        });
+        // If we found a very good candidate (like an article), stop
+        if (maxLen > 1000 && (selector === 'article' || selector === 'main')) {
           break;
         }
       }
 
-      if (!text) {
-        text = $('body').text();
-      }
+      extractedText = bestContent || $('body').text();
 
-      const cleanedText = this.cleanText(text);
+      // Clean the extracted text further
+      const cleanedText = this.cleanText(extractedText);
       const wordCount = this.countWords(cleanedText);
 
       // Validate content size limits
       const maxCharacters = parseInt(
-        process.env.MAX_CONTENT_CHARACTERS || '500000',
-      ); // 500K chars default
+        process.env.MAX_CONTENT_CHARACTERS || '1000000',
+      ); // Aumentado a 1M para webs ricas
       if (cleanedText.length > maxCharacters) {
         throw new Error(
-          `El contenido extraído excede el límite de ${maxCharacters.toLocaleString()} caracteres. Por favor, use una URL más específica o divida el contenido.`,
+          `El contenido extraído excede el límite de ${maxCharacters.toLocaleString()} caracteres.`,
         );
       }
 
-      // Estimate tokens (rough approximation: 1 token ≈ 4 characters)
+      // Estimate tokens
       const estimatedTokens = Math.ceil(cleanedText.length / 4);
-      const maxTokens = parseInt(process.env.MAX_TOKENS || '1000000'); // 1M tokens default
-      if (estimatedTokens > maxTokens) {
-        throw new Error(
-          `El contenido es demasiado grande (${estimatedTokens.toLocaleString()} tokens estimados). Por favor, use una URL más específica con menos contenido. Límite recomendado: ~${maxTokens.toLocaleString()} tokens.`,
-        );
-      }
 
       return {
-        text: cleanedText,
+        text: `Título: ${pageTitle}\n\nContenido:\n${cleanedText}`,
         metadata: {
-          wordCount,
+          wordCount: wordCount + this.countWords(pageTitle),
           size: Buffer.byteLength(response.data, 'utf8'),
+          title: pageTitle,
+          url: cleanUrl,
         },
       };
     } catch (error) {
