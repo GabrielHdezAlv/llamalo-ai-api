@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getFirestore } from '../firebase/firebase.config';
 import { CreateNewsDto } from './dto/create-news.dto';
 import { UpdateNewsDto } from './dto/update-news.dto';
+import type { DocumentData } from 'firebase-admin/firestore';
 
 export interface UploadFile {
   buffer: Buffer;
@@ -28,36 +29,94 @@ export class NewsService {
     }
   }
 
+  /**
+   * Fecha de publicación en ISO 8601 para JSON y lectura en el frontend (etiquetas relativas allí).
+   */
+  private toIsoDateString(value: unknown): string | undefined {
+    if (value == null) return undefined;
+    if (typeof value === 'string' && value.trim() !== '') {
+      const d = new Date(value);
+      if (!isNaN(d.getTime())) return d.toISOString();
+      return undefined;
+    }
+    if (value instanceof admin.firestore.Timestamp) {
+      return value.toDate().toISOString();
+    }
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      'seconds' in value &&
+      typeof (value as { seconds: number }).seconds === 'number'
+    ) {
+      try {
+        return new admin.firestore.Timestamp(
+          (value as { seconds: number }).seconds,
+          (value as { nanoseconds?: number }).nanoseconds ?? 0,
+        )
+          .toDate()
+          .toISOString();
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+
+  private normalizeNewsResponse(id: string, data: DocumentData | undefined) {
+    if (!data) return { id };
+    const date =
+      this.toIsoDateString(data.date) ??
+      this.toIsoDateString(data.createdAt) ??
+      new Date().toISOString();
+    return {
+      id,
+      ...data,
+      date,
+    };
+  }
+
   async createNews(userId: string, createDto: CreateNewsDto) {
     await this.checkOwner(userId);
     const newDocRef = this.firestore.collection('news').doc();
+    // La fecha de publicación la fija el servidor (ISO 8601); el cálculo "hace X min" es solo en el frontend.
+    const { date: _omitDate, ...rest } = createDto;
+    const publishedAt = new Date().toISOString();
     const data = {
-      ...createDto,
+      ...rest,
+      date: publishedAt,
       createdAt: new Date(),
       createdBy: userId,
     };
     await newDocRef.set(data);
-    return { id: newDocRef.id, ...data };
+    const saved = await newDocRef.get();
+    return this.normalizeNewsResponse(saved.id, saved.data());
   }
 
   async getAllNews() {
     const snapshot = await this.firestore.collection('news').orderBy('createdAt', 'desc').get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map((doc) => this.normalizeNewsResponse(doc.id, doc.data()));
   }
 
   async updateNews(userId: string, id: string, updateDto: UpdateNewsDto) {
     await this.checkOwner(userId);
     const docRef = this.firestore.collection('news').doc(id);
     const snapshot = await docRef.get();
-    
+
     if (!snapshot.exists) {
       throw new NotFoundException('Noticia no encontrada');
     }
-    
-    await docRef.update({ ...updateDto, updatedAt: new Date() });
-    
+
+    const { date: incomingDate, ...rest } = updateDto;
+    const payload: Record<string, unknown> = { ...rest, updatedAt: new Date() };
+    if (incomingDate !== undefined) {
+      const iso = this.toIsoDateString(incomingDate);
+      if (iso) payload.date = iso;
+    }
+
+    await docRef.update(payload as FirebaseFirestore.UpdateData<DocumentData>);
+
     const updated = await docRef.get();
-    return { id: updated.id, ...updated.data() };
+    return this.normalizeNewsResponse(updated.id, updated.data());
   }
 
   async deleteNews(userId: string, id: string) {

@@ -29,9 +29,13 @@ export class CreateNewsDto {
   @IsString()
   imageUrl: string;
 
-  @ApiProperty()
+  /** Opcional al crear: el servidor asigna fecha/hora ISO si no se envía. */
+  @ApiPropertyOptional({
+    description: 'ISO 8601. Si se omite, se usa la fecha/hora del servidor.',
+  })
+  @IsOptional()
   @IsString()
-  date: string;
+  date?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
