@@ -956,7 +956,7 @@ export class TwilioService {
   }
 
   // ✅ Eliminar cuenta(s) de Twilio (desvincular del usuario)
-  async deleteTwilioAccount(userId: string) {
+  async deleteTwilioAccount(userId: string, twilioAccountId?: number) {
     try {
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
@@ -974,21 +974,62 @@ export class TwilioService {
         };
       }
 
-      // Eliminar el index inverso para todos los twilioSids del usuario
-      const deletePromises = twilioArray.map((account) =>
-        this.firestore.collection('twilio_index').doc(account.twilioSid).delete().catch(err => {
-          console.error(`[Twilio] Error eliminando twilio_index para ${account.twilioSid}:`, err);
-        })
+      let accountsToRemove: Array<{ twilioSid: string }> = [];
+      let updatedTwilioArray: any[] = [];
+
+      if (twilioAccountId !== undefined) {
+        // Eliminar una cuenta específica
+        const accountIndex = twilioArray.findIndex(
+          (acc) => acc.twilioAccountId === twilioAccountId,
+        );
+
+        if (accountIndex === -1) {
+          throw new NotFoundException(
+            `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
+          );
+        }
+
+        accountsToRemove = [twilioArray[accountIndex]];
+        updatedTwilioArray = twilioArray.filter(
+          (acc) => acc.twilioAccountId !== twilioAccountId,
+        );
+      } else {
+        // Eliminar todas las cuentas
+        accountsToRemove = twilioArray;
+        updatedTwilioArray = [];
+      }
+
+      // Eliminar el index inverso para las cuentas seleccionadas
+      const deletePromises = accountsToRemove.map((account) =>
+        this.firestore
+          .collection('twilio_index')
+          .doc(account.twilioSid)
+          .delete()
+          .catch((err) => {
+            console.error(
+              `[Twilio] Error eliminando twilio_index para ${account.twilioSid}:`,
+              err,
+            );
+          }),
       );
       await Promise.allSettled(deletePromises);
 
-      // Eliminar la configuración de twilio del usuario
-      await userDocRef.update({
-        twilio: FieldValue.delete()
-      });
+      // Actualizar la configuración de twilio del usuario
+      if (updatedTwilioArray.length > 0) {
+        await userDocRef.update({
+          twilio: updatedTwilioArray,
+        });
+      } else {
+        await userDocRef.update({
+          twilio: FieldValue.delete(),
+        });
+      }
 
       return {
-        message: 'Cuenta de Twilio eliminada correctamente.',
+        message:
+          twilioAccountId !== undefined
+            ? 'Cuenta de Twilio eliminada correctamente.'
+            : 'Todas las cuentas de Twilio han sido eliminadas correctamente.',
       };
     } catch (error) {
       if (
