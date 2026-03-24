@@ -263,6 +263,13 @@ export class MetricsService {
               )
             ).flat();
 
+      // 4b. Alinear `minutesByMonth` con la fuente de verdad (llamadas_registradas).
+      // El webhook de Twilio contaba todas las llamadas de la cuenta; el dashboard solo sesiones guardadas aquí.
+      await this.syncUserMinutesByMonthFromRegisteredCalls(
+        userId,
+        allCallsMonth,
+      );
+
       // 5. Calcular métricas con comparación semanal
       const resumen = this.calculateSummaryWithComparison(
         allCalls7Days,
@@ -442,12 +449,7 @@ export class MetricsService {
     );
 
     // 3. Total de minutos del último mes vs semana anterior
-    const minutosMesActual = Math.round(
-      callsMonth.reduce(
-        (total, call) => total + parseInt(call.duration || '0', 10),
-        0,
-      ) / 60,
-    );
+    const minutosMesActual = this.totalMinutesIntegerFromCalls(callsMonth);
     const minutosMesAnterior = this.calculateMinutesForPeriod(
       calls14Days,
       'semana_anterior',
@@ -753,6 +755,13 @@ export class MetricsService {
         `[Metrics] Métricas detalladas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — 14d: ${callsLast14Days.length}, mes: ${callsLastMonth.length}`,
       );
 
+      if (filterByAccountId === undefined) {
+        await this.syncUserMinutesByMonthFromRegisteredCalls(
+          userId,
+          callsLastMonth,
+        );
+      }
+
       const accountIdsForTerminaciones =
         filterByAccountId !== undefined
           ? [filterByAccountId]
@@ -790,8 +799,9 @@ export class MetricsService {
         llamadasExitosasUltimos7Dias,
       );
 
-      // Minutos del mes: calcular directamente desde callsLastMonth (ya descargado, sin petición extra)
-      const totalMinutosUltimoMes = this.calculateMinutosFromCalls(callsLastMonth);
+      // Minutos del mes: mismo criterio entero que el resumen del dashboard
+      const totalMinutosUltimoMes =
+        this.totalMinutesIntegerFromCalls(callsLastMonth);
 
       // Métricas históricas: Firestore es la fuente principal.
       // callsLastMonth se pasa como fallback para cuando el histórico de Firestore aún está vacío
@@ -1018,22 +1028,50 @@ export class MetricsService {
   }
 
   /**
-   * Suma las duraciones de un array de llamadas ya descargado y devuelve los minutos totales.
-   * Síncrono: reutiliza datos en memoria, sin petición extra a Twilio.
+   * Minutos del mes (entero) a partir de duraciones en segundos — mismo criterio que el resumen del dashboard.
    */
-  private calculateMinutosFromCalls(calls: TwilioCall[]): number {
+  private totalMinutesIntegerFromCalls(calls: TwilioCall[]): number {
     const totalSegundos = calls.reduce((total, call) => {
       const duration = parseInt(call.duration || '0', 10);
       return total + duration;
     }, 0);
+    return Math.round(totalSegundos / 60);
+  }
 
-    const totalMinutos = Math.round((totalSegundos / 60) * 10) / 10;
-
-    console.log(
-      `[Metrics] Minutos último mes - Total llamadas: ${calls.length}, Total segundos: ${totalSegundos}, Total minutos: ${totalMinutos}`,
+  /**
+   * Iguala `minutesByMonth[YYYY-MM]` (UTC) al consumo real del mes según `llamadas_registradas`.
+   * Sustituye el conteo del webhook de Twilio (todas las llamadas de la cuenta) para que coincida con el dashboard.
+   */
+  private async syncUserMinutesByMonthFromRegisteredCalls(
+    userId: string,
+    callsMonth: TwilioCall[],
+  ): Promise<void> {
+    const monthKey = this.getCurrentMonthKey();
+    const totalSegundos = callsMonth.reduce(
+      (t, c) => t + parseInt(c.duration || '0', 10),
+      0,
     );
+    const totalMinutes = totalSegundos / 60;
 
-    return totalMinutos;
+    const userRef = this.firestore.collection('users').doc(userId);
+    const snap = await userRef.get();
+    if (!snap.exists) {
+      return;
+    }
+
+    const prevRaw = (
+      snap.data()?.minutesByMonth as Record<string, number> | undefined
+    )?.[monthKey];
+    const prev = typeof prevRaw === 'number' && !Number.isNaN(prevRaw) ? prevRaw : 0;
+
+    if (Math.abs(prev - totalMinutes) < 1e-9) {
+      return;
+    }
+
+    await userRef.update({
+      [`minutesByMonth.${monthKey}`]: totalMinutes,
+    });
+    this.mailerLiteService.syncUser(userId).catch(() => {});
   }
 
   /**
@@ -1977,9 +2015,9 @@ export class MetricsService {
   }
 
   /**
-   * Maneja el webhook de Twilio cuando una llamada finaliza.
-   * Incrementa `minutesByMonth["YYYY-MM"]` en el documento del usuario en Firestore.
-   * Twilio envía este POST al completarse una llamada (CallStatus = 'completed').
+   * Webhook de Twilio al completar una llamada.
+   * Ya no incrementa `minutesByMonth`: el consumo mensual se deriva de `llamadas_registradas`
+   * y se sincroniza en `getDashboardMetrics` / `getTwilioDetailedMetrics` (evita divergencia con el dashboard).
    */
   async handleTwilioCallWebhook(payload: Record<string, string>): Promise<void> {
     const { AccountSid, CallStatus, CallDuration } = payload;
@@ -1993,7 +2031,7 @@ export class MetricsService {
       return;
     }
 
-    // 1. Buscar userId en el índice inverso O(1): twilio_index/{AccountSid} → userId
+    // Resolver usuario (misma lógica que antes; útil para logs / futuros hooks)
     let userDocRef: FirebaseFirestore.DocumentReference | null = null;
 
     const indexDoc = await this.firestore
@@ -2008,7 +2046,6 @@ export class MetricsService {
       }
     }
 
-    // 2. Fallback: escanear toda la colección (cuentas conectadas antes del índice)
     if (!userDocRef) {
       console.warn(
         `[Webhook] AccountSid ${AccountSid} no encontrado en twilio_index, usando fallback (full scan)`,
@@ -2019,7 +2056,6 @@ export class MetricsService {
         const twilioAccounts = (data.twilio as Array<{ twilioSid: string }>) || [];
         if (twilioAccounts.some((acc) => acc.twilioSid === AccountSid)) {
           userDocRef = doc.ref;
-          // Escribir índice para próximas llamadas (auto-reparación)
           this.firestore
             .collection('twilio_index')
             .doc(AccountSid)
@@ -2036,18 +2072,8 @@ export class MetricsService {
     }
 
     const durationMinutes = durationSeconds / 60;
-    const monthKey = this.getCurrentMonthKey();
-
-    await userDocRef.update({
-      [`minutesByMonth.${monthKey}`]: admin.firestore.FieldValue.increment(durationMinutes),
-    });
-
-    // 🔄 Sincronizar con MailerLite (actualizar grupos de minutos usados)
-    const userId = userDocRef.id;
-    this.mailerLiteService.syncUser(userId).catch(() => {});
-
     console.log(
-      `[Webhook] +${durationMinutes.toFixed(2)} min en ${monthKey} (AccountSid: ${AccountSid})`,
+      `[Webhook] Llamada completada ${durationMinutes.toFixed(2)} min (AccountSid: ${AccountSid}) — minutesByMonth se actualiza desde llamadas_registradas al cargar métricas`,
     );
   }
 }
