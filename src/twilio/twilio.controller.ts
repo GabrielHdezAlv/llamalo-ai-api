@@ -4,6 +4,7 @@ import {
   Post,
   Delete,
   Body,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -22,6 +23,7 @@ import { ValidatePhoneDto } from './dto/validate-phone.dto';
 import { ValidatePhoneResponseDto } from './dto/validate-phone-response.dto';
 import { DeletePhoneDto } from './dto/delete-phone.dto';
 import { DeletePhoneResponseDto } from './dto/delete-phone-response.dto';
+import { DeleteTwilioAccountDto } from './dto/delete-twilio-account.dto';
 import { CreatePhoneDto } from './dto/create-phone.dto';
 import { CreatePhoneResponseDto } from './dto/create-phone-response.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
@@ -121,10 +123,19 @@ export class TwilioController {
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({
     summary: 'Eliminar cuenta de Twilio',
-    description: 'Desvincula todas las cuentas de Twilio asociadas al usuario.',
+    description:
+      'Desvincula una cuenta específica o todas las cuentas de Twilio asociadas al usuario.',
   })
   @ApiResponse({ status: 200, description: 'Cuenta eliminada correctamente' })
-  async deleteTwilioAccount(@GetUser('uid') userId: string) {
-    return this.twilioService.deleteTwilioAccount(userId);
+  async deleteTwilioAccount(
+    @GetUser('uid') userId: string,
+    @Query() deleteTwilioAccountDto: DeleteTwilioAccountDto,
+  ) {
+    return this.twilioService.deleteTwilioAccount(
+      userId,
+      deleteTwilioAccountDto.twilioAccountId !== undefined
+        ? Number(deleteTwilioAccountDto.twilioAccountId)
+        : undefined,
+    );
   }
 }

@@ -3,7 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import axios from 'axios';
 import * as admin from 'firebase-admin';
 import { getFirestore } from '../firebase/firebase.config';
 import {
@@ -35,30 +34,82 @@ interface TwilioCall {
   from: string;
   to: string;
   status: string;
-}
-
-interface TwilioCallsResponse {
-  calls: TwilioCall[];
-  page: number;
-  page_size: number;
-  uri: string;
-  first_page_uri: string;
-  previous_page_uri: string | null;
-  next_page_uri: string | null;
+  /** Presente cuando el origen es Firestore (`llamadas_registradas`) */
+  twilioAccountId?: number;
 }
 
 @Injectable()
 export class MetricsService {
   private firestore = getFirestore();
+  /** Fuente de verdad de listados de llamadas para métricas (escrita al cerrar sesión en StreamsGateway) */
+  private readonly REGISTERED_CALLS_COLLECTION = 'llamadas_registradas';
   // Factor de ahorro: cada minuto de IA ahorra 2.5 minutos de trabajo manual
   private readonly TIEMPO_AHORRO_FACTOR = 2.5;
 
   constructor(private readonly mailerLiteService: MailerLiteService) {}
 
   /**
-   * Obtiene todas las cuentas Twilio de un usuario
+   * Persiste una llamada completada en Firestore (fuente de verdad para dashboards).
+   * Idempotente por callSid (merge).
    */
-  private async getAllTwilioAccounts(userId: string): Promise<
+  async saveRegisteredCall(params: {
+    userId: string;
+    twilioAccountId: number;
+    callSid: string;
+    durationSeconds: number;
+    direction: 'inbound' | 'outbound';
+    from: string;
+    to: string;
+    startedAtMs: number;
+  }): Promise<void> {
+    const {
+      userId,
+      twilioAccountId,
+      callSid,
+      durationSeconds,
+      direction,
+      from,
+      to,
+      startedAtMs,
+    } = params;
+    try {
+      const startedAt = admin.firestore.Timestamp.fromMillis(startedAtMs);
+      const endedAt = admin.firestore.Timestamp.fromMillis(
+        startedAtMs + Math.max(0, durationSeconds) * 1000,
+      );
+      await this.firestore
+        .collection(this.REGISTERED_CALLS_COLLECTION)
+        .doc(callSid)
+        .set(
+          {
+            userId,
+            twilioAccountId,
+            callSid,
+            durationSeconds: Math.max(0, durationSeconds),
+            direction,
+            from: from || '',
+            to: to || '',
+            startedAt,
+            endedAt,
+            status: 'completed',
+            recordedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      console.error(
+        `[Metrics] Error guardando llamada registrada ${callSid}:`,
+        errorMessage,
+      );
+    }
+  }
+
+  /**
+   * Cuentas Twilio del usuario (puede ser array vacío).
+   */
+  private async getTwilioAccountsOptional(userId: string): Promise<
     Array<{
       twilioAccountId: number;
       twilioSid: string;
@@ -67,26 +118,74 @@ export class MetricsService {
   > {
     const userDocRef = this.firestore.collection('users').doc(userId);
     const userSnapshot = await userDocRef.get();
-
-    if (!userSnapshot.exists) {
-      throw new NotFoundException('Usuario no encontrado.');
-    }
-
+    if (!userSnapshot.exists) return [];
     const userData = userSnapshot.data() as Record<string, unknown>;
-    const twilioArray =
+    return (
       (userData?.twilio as Array<{
         twilioAccountId: number;
         twilioSid: string;
         twilioToken: string;
-      }>) || [];
+      }>) || []
+    );
+  }
 
-    if (twilioArray.length === 0) {
-      throw new NotFoundException(
-        'Configuración de Twilio no encontrada para el usuario.',
+  private registeredDocToTwilioCall(
+    d: admin.firestore.DocumentData,
+  ): TwilioCall {
+    const startedAt: Date =
+      d.startedAt?.toDate?.() ?? d.endedAt?.toDate?.() ?? new Date();
+    const endedAt: Date = d.endedAt?.toDate?.() ?? startedAt;
+    const sid = (d.callSid as string) || (d.sid as string) || '';
+    return {
+      sid,
+      duration: String(d.durationSeconds ?? 0),
+      date_created: endedAt.toISOString(),
+      start_time: startedAt.toISOString(),
+      direction: (d.direction as string) || 'inbound',
+      from: (d.from as string) || '',
+      to: (d.to as string) || '',
+      status: (d.status as string) || 'completed',
+      twilioAccountId:
+        typeof d.twilioAccountId === 'number' ? d.twilioAccountId : undefined,
+    };
+  }
+
+  /**
+   * Listado de llamadas desde Firestore (no usa API REST de Twilio).
+   */
+  private async fetchRegisteredCallsFromFirestore(
+    userId: string,
+    startDate: Date,
+    endDate: Date,
+    twilioAccountId?: number,
+  ): Promise<TwilioCall[]> {
+    try {
+      const snap = await this.firestore
+        .collection(this.REGISTERED_CALLS_COLLECTION)
+        .where('userId', '==', userId)
+        .where('endedAt', '>=', admin.firestore.Timestamp.fromDate(startDate))
+        .where('endedAt', '<=', admin.firestore.Timestamp.fromDate(endDate))
+        .get();
+
+      const out: TwilioCall[] = [];
+      snap.forEach((doc) => {
+        const d = doc.data();
+        if (
+          twilioAccountId !== undefined &&
+          d.twilioAccountId !== twilioAccountId
+        ) {
+          return;
+        }
+        out.push(this.registeredDocToTwilioCall(d));
+      });
+      return out;
+    } catch (error) {
+      console.error(
+        '[Metrics] Error leyendo llamadas registradas:',
+        error instanceof Error ? error.message : error,
       );
+      return [];
     }
-
-    return twilioArray;
   }
 
   /**
@@ -97,11 +196,14 @@ export class MetricsService {
     userId: string,
   ): Promise<DashboardMetricsResponseDto> {
     try {
-      // 1. Obtener todas las cuentas Twilio del usuario
-      const twilioAccounts = await this.getAllTwilioAccounts(userId);
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
 
-      // 2. Calcular rangos de fechas
-      // Los 7 días son subconjunto de 14 días: solo descargamos 14 días y mes, luego filtramos en memoria
+      const twilioAccounts = await this.getTwilioAccountsOptional(userId);
+
       const { startDate: startDate7Days } = this.getLast7DaysRange();
       const { startDate: startDate14Days, endDate: endDate14Days } =
         this.getLast14DaysRange();
@@ -110,47 +212,56 @@ export class MetricsService {
 
       const start7DaysIso = startDate7Days.toISOString();
 
-      // 3. Obtener llamadas de todas las cuentas (2 peticiones por cuenta en lugar de 3)
-      const allCalls14Days: TwilioCall[] = [];
-      const allCallsMonth: TwilioCall[] = [];
+      const earliestFetch = new Date(
+        Math.min(startDate14Days.getTime(), startDateMonth.getTime()),
+      );
 
-      for (const account of twilioAccounts) {
-        const [calls14Days, callsMonth] = await Promise.all([
-          this.fetchTwilioCalls(
-            account.twilioSid,
-            account.twilioToken,
-            startDate14Days,
-            endDate14Days,
-          ),
-          this.fetchTwilioCalls(
-            account.twilioSid,
-            account.twilioToken,
-            startDateMonth,
-            endDateMonth,
-          ),
-        ]);
+      const allCallsFetched = await this.fetchRegisteredCallsFromFirestore(
+        userId,
+        earliestFetch,
+        endDate14Days,
+      );
 
-        allCalls14Days.push(...calls14Days);
-        allCallsMonth.push(...callsMonth);
-      }
+      const allCalls14Days = allCallsFetched.filter((call) => {
+        const t = new Date(call.start_time || call.date_created).getTime();
+        return t >= startDate14Days.getTime() && t <= endDate14Days.getTime();
+      });
 
-      // Filtrar en memoria los últimos 7 días desde el array de 14 días (sin petición extra)
+      const allCallsMonth = allCallsFetched.filter((call) => {
+        const t = new Date(call.start_time || call.date_created).getTime();
+        return t >= startDateMonth.getTime() && t <= endDateMonth.getTime();
+      });
+
       const allCalls7Days = allCalls14Days.filter((call) => {
         const callDate = call.start_time || call.date_created || '';
         return callDate >= start7DaysIso;
       });
 
       console.log(
-        `[Metrics] Llamadas obtenidas de ${twilioAccounts.length} cuentas - Últimos 14 días: ${allCalls14Days.length} (7 días filtrados: ${allCalls7Days.length}), Último mes: ${allCallsMonth.length}`,
+        `[Metrics] Llamadas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — cuentas Twilio en perfil: ${twilioAccounts.length}; 14d: ${allCalls14Days.length}, 7d filtrados: ${allCalls7Days.length}, mes: ${allCallsMonth.length}`,
       );
 
-      // 4. Obtener registros de finalización desde Firestore para todas las cuentas
-      // Se usa la primera cuenta como referencia (misma lógica que en métricas detalladas)
-      const terminacionesDashboard = await Promise.all(
-        twilioAccounts.map((acc) =>
-          this.getCallTerminations(userId, acc.twilioAccountId, 14),
-        ),
-      ).then((results) => results.flat());
+      const accountIdsForTerms =
+        twilioAccounts.length > 0
+          ? twilioAccounts.map((a) => a.twilioAccountId)
+          : [
+              ...new Set(
+                allCallsFetched
+                  .map((c) => c.twilioAccountId)
+                  .filter((id): id is number => typeof id === 'number'),
+              ),
+            ];
+
+      const terminacionesDashboard =
+        accountIdsForTerms.length === 0
+          ? []
+          : (
+              await Promise.all(
+                accountIdsForTerms.map((id) =>
+                  this.getCallTerminations(userId, id, 14),
+                ),
+              )
+            ).flat();
 
       // 5. Calcular métricas con comparación semanal
       const resumen = this.calculateSummaryWithComparison(
@@ -278,148 +389,6 @@ export class MetricsService {
     );
 
     return { startDate, endDate };
-  }
-
-  /**
-   * Obtiene todas las llamadas de Twilio en el rango de fechas
-   * Si el rango es muy grande (>30 días), divide la consulta en múltiples consultas más pequeñas
-   */
-  private async fetchTwilioCalls(
-    sid: string,
-    token: string,
-    startDate: Date,
-    endDate: Date,
-  ): Promise<TwilioCall[]> {
-    // Calcular días de diferencia
-    const diffTime = endDate.getTime() - startDate.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    // Si el rango es mayor a 30 días, dividir en múltiples consultas
-    if (diffDays > 30) {
-      return this.fetchTwilioCallsInChunks(sid, token, startDate, endDate, 30);
-    }
-
-    return this.fetchTwilioCallsSingle(sid, token, startDate, endDate);
-  }
-
-  /**
-   * Obtiene llamadas dividiendo el rango en chunks más pequeños
-   */
-  private async fetchTwilioCallsInChunks(
-    sid: string,
-    token: string,
-    startDate: Date,
-    endDate: Date,
-    chunkDays: number,
-  ): Promise<TwilioCall[]> {
-    const allCalls: TwilioCall[] = [];
-    let currentStart = new Date(startDate);
-
-    while (currentStart < endDate) {
-      const currentEnd = new Date(currentStart);
-      currentEnd.setUTCDate(currentEnd.getUTCDate() + chunkDays);
-
-      // Asegurar que no exceda el endDate
-      if (currentEnd > endDate) {
-        currentEnd.setTime(endDate.getTime());
-      }
-
-      const chunkCalls = await this.fetchTwilioCallsSingle(
-        sid,
-        token,
-        currentStart,
-        currentEnd,
-      );
-      allCalls.push(...chunkCalls);
-
-      // Mover al siguiente chunk
-      currentStart = new Date(currentEnd);
-      currentStart.setUTCDate(currentStart.getUTCDate() + 1);
-    }
-
-    return allCalls;
-  }
-
-  /**
-   * Obtiene todas las llamadas de Twilio en el rango de fechas (consulta única)
-   */
-  private async fetchTwilioCallsSingle(
-    sid: string,
-    token: string,
-    startDate: Date,
-    endDate: Date,
-  ): Promise<TwilioCall[]> {
-    const auth = Buffer.from(`${sid}:${token}`).toString('base64');
-    const allCalls: TwilioCall[] = [];
-    let nextPageUri: string | null = null;
-
-    // Formatear fechas para Twilio API usando StartTime y EndTime
-    // Según la documentación oficial de Twilio, debemos usar StartTime y EndTime, no DateCreated
-    // Twilio acepta formato YYYY-MM-DD o YYYY-MM-DDTHH:mm:ssZ
-    // Usamos formato completo con hora para mayor precisión
-    const formatDateForTwilio = (date: Date): string => {
-      // Formato ISO 8601 completo con UTC
-      return date.toISOString();
-    };
-
-    // Usar las fechas directamente (ya están en UTC)
-    const startDateStr = formatDateForTwilio(startDate);
-    const endDateStr = formatDateForTwilio(endDate);
-
-    do {
-      const url: string =
-        nextPageUri ||
-        `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json?StartTime>=${encodeURIComponent(startDateStr)}&StartTime<=${encodeURIComponent(endDateStr)}&Direction=inbound&PageSize=1000`;
-
-      try {
-        const response = await axios.get<TwilioCallsResponse>(url, {
-          headers: {
-            Authorization: `Basic ${auth}`,
-          },
-        });
-
-        const calls = response.data.calls;
-        if (calls && Array.isArray(calls)) {
-          allCalls.push(...calls);
-        }
-
-        nextPageUri = response.data.next_page_uri || null;
-      } catch (error) {
-        // Log detallado del error (sin exponer información sensible)
-        if (axios.isAxiosError(error)) {
-          console.error(
-            `[Metrics] Error de Twilio API:`,
-            error.response?.status,
-            error.response?.statusText,
-          );
-          // 🔒 No loggear el contenido completo de error.response?.data que podría contener tokens o información sensible
-          // Solo loggear el tipo de error si existe
-          if (error.response?.data) {
-            const errorType =
-              typeof error.response.data === 'object' &&
-              error.response.data !== null
-                ? (error.response.data as { message?: string; error?: string })
-                    ?.message ||
-                  (error.response.data as { message?: string; error?: string })
-                    ?.error ||
-                  'Error desconocido'
-                : 'Error desconocido';
-            console.error(`[Metrics] Tipo de error: ${errorType}`);
-          }
-        } else {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Error desconocido';
-          console.error(
-            '[Metrics] Error obteniendo llamadas de Twilio:',
-            errorMessage,
-          );
-        }
-        // Si falla, retornar las llamadas que se hayan obtenido hasta ahora
-        break;
-      }
-    } while (nextPageUri);
-
-    return allCalls;
   }
 
   /**
@@ -741,68 +710,72 @@ export class MetricsService {
           twilioToken: string;
         }>) || [];
 
-      if (twilioArray.length === 0) {
-        throw new NotFoundException(
-          'Configuración de Twilio no encontrada para el usuario.',
-        );
-      }
-
-      // 2. Seleccionar la cuenta de Twilio correcta
-      let twilioConfig: {
-        twilioAccountId: number;
-        twilioSid: string;
-        twilioToken: string;
-      };
-
+      let filterByAccountId: number | undefined;
       if (twilioAccountId !== undefined) {
-        const account = twilioArray.find(
-          (acc) => acc.twilioAccountId === twilioAccountId,
-        );
-        if (!account) {
-          throw new NotFoundException(
-            `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
-          );
+        const n = Number(twilioAccountId);
+        if (Number.isNaN(n)) {
+          throw new BadRequestException('twilioAccountId inválido.');
         }
-        twilioConfig = account;
-      } else {
-        // Si no se especifica, usar la primera cuenta
-        twilioConfig = twilioArray[0];
+        if (twilioArray.length > 0) {
+          const account = twilioArray.find(
+            (acc) => acc.twilioAccountId === n,
+          );
+          if (!account) {
+            throw new NotFoundException(
+              `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
+            );
+          }
+        }
+        filterByAccountId = n;
       }
 
-      const sid = twilioConfig.twilioSid;
-      const token = twilioConfig.twilioToken;
-
-      if (!sid || !token) {
-        throw new BadRequestException(
-          'Credenciales de Twilio no configuradas.',
-        );
-      }
-
-      // 3. Obtener datos para diferentes períodos
       const { startDate: startDate14Days, endDate: endDate14Days } =
         this.getLast14DaysRange();
       const { startDate: startDateMonth, endDate: endDateMonth } =
         this.getLastMonthRange();
 
-      // 4. Obtener llamadas necesarias (solo 2 peticiones a Twilio)
-      // Las métricas históricas (duración, países, éxito) se leen de Firestore en el paso 5b
       const [callsLast14Days, callsLastMonth] = await Promise.all([
-        this.fetchTwilioCalls(sid, token, startDate14Days, endDate14Days), // 14 días para comparación
-        this.fetchTwilioCalls(sid, token, startDateMonth, endDateMonth),   // Mes actual para tipos y razones
+        this.fetchRegisteredCallsFromFirestore(
+          userId,
+          startDate14Days,
+          endDate14Days,
+          filterByAccountId,
+        ),
+        this.fetchRegisteredCallsFromFirestore(
+          userId,
+          startDateMonth,
+          endDateMonth,
+          filterByAccountId,
+        ),
       ]);
 
       console.log(
-        `[Metrics] Llamadas obtenidas - Últimos 14 días: ${callsLast14Days.length}, Último mes: ${callsLastMonth.length}`,
+        `[Metrics] Métricas detalladas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — 14d: ${callsLast14Days.length}, mes: ${callsLastMonth.length}`,
       );
 
-      // 5. Obtener registros de finalización desde Firestore (mes actual + mes anterior)
-      // Solo necesitamos ~31 días: razonesFinalizacion usa callsLastMonth (mes actual)
-      // y evaluacionExito ya usa metricas_historicas de Firestore (histórico acumulado)
-      const terminacionesFirestore = await this.getCallTerminations(
-        userId,
-        twilioConfig.twilioAccountId,
-        31,
-      );
+      const accountIdsForTerminaciones =
+        filterByAccountId !== undefined
+          ? [filterByAccountId]
+          : twilioArray.length > 0
+            ? twilioArray.map((a) => a.twilioAccountId)
+            : [
+                ...new Set(
+                  [...callsLast14Days, ...callsLastMonth]
+                    .map((c) => c.twilioAccountId)
+                    .filter((id): id is number => typeof id === 'number'),
+                ),
+              ];
+
+      const terminacionesFirestore =
+        accountIdsForTerminaciones.length === 0
+          ? []
+          : (
+              await Promise.all(
+                accountIdsForTerminaciones.map((id) =>
+                  this.getCallTerminations(userId, id, 31),
+                ),
+              )
+            ).flat();
 
       // 5b. Obtener métricas históricas acumuladas de Firestore (duración, países, éxito)
       const historicalMetrics = await this.getHistoricalMetrics(userId);
@@ -851,7 +824,7 @@ export class MetricsService {
 
       const latenciaMedia = await this.calculateLatenciaMedia(
         userId,
-        twilioAccountId,
+        filterByAccountId,
       );
       const callMetricsByHour =
         this.calculateCallMetricsByHour(callsLast14Days);

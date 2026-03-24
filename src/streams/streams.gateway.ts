@@ -3414,6 +3414,30 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           ),
         );
 
+      const startedAtMs =
+        session.callStartTime ?? Date.now() - duracionSegundos * 1000;
+      const toNumber =
+        (session.customParameters?.to as string | undefined) ||
+        (session.customParameters?.called as string | undefined) ||
+        '';
+      this.metricsService
+        .saveRegisteredCall({
+          userId: session.userId,
+          twilioAccountId: parseInt(session.customParameters.twilioAccountId, 10),
+          callSid: session.callSid,
+          durationSeconds: duracionSegundos,
+          direction: session.callDirection ?? 'inbound',
+          from: session.callerPhone || '',
+          to: toNumber,
+          startedAtMs,
+        })
+        .catch((err) =>
+          console.error(
+            `❌ [${callSid}] Error guardando llamada registrada (métricas):`,
+            err,
+          ),
+        );
+
       // Acumular métricas históricas en Firestore
       const paisPrefijo = session.callerPhone
         ? this.metricsService.extractCountryCodePublic(session.callerPhone)

@@ -61,7 +61,7 @@ export class MetricsController {
   @ApiOperation({
     summary: 'Obtener métricas del dashboard',
     description:
-      'Retorna métricas completas del dashboard incluyendo total de llamadas, llamadas exitosas, minutos del último mes, tiempo ahorrado (todos con comparación semanal), tasa de éxito y llamadas exitosas de los últimos 7 días por día. Los datos se obtienen de todas las cuentas Twilio configuradas del usuario.',
+      'Retorna métricas completas del dashboard (llamadas, minutos del mes, comparativas, éxito por día). Los listados de llamadas por período provienen de Firestore (`llamadas_registradas`), escritos al cerrar cada sesión en el backend; no se usa la API REST de Twilio para agregar el dashboard.',
   })
   @ApiResponse({
     status: 200,
@@ -86,8 +86,7 @@ export class MetricsController {
   @ApiOperation({
     summary: 'Obtener métricas detalladas de Twilio',
     description:
-      'Retorna métricas avanzadas de Twilio incluyendo llamadas exitosas por día, minutos del mes, duración media, tipos de llamadas, países de origen, evaluación de éxito y razones de finalización. ' +
-      'Si no se especifica twilioAccountId, se usará la primera cuenta de Twilio configurada.',
+      'Métricas avanzadas (por día, minutos, duración media, tipos, países, éxito, razones de cuelgue, latencias). Las llamadas del período se leen desde Firestore (`llamadas_registradas`). Twilio en el perfil es opcional para ver histórico tras desvincular; el query `twilioAccountId` filtra por cuenta interna.',
   })
   @ApiQuery({
     name: 'twilioAccountId',
