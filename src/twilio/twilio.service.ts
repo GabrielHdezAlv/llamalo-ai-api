@@ -4,6 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import axios from 'axios';
+import { FieldValue } from 'firebase-admin/firestore';
 import { TwilioConfigDto } from './dto/twilio-config.dto';
 import { getFirestore } from '../firebase/firebase.config';
 
@@ -950,6 +951,54 @@ export class TwilioService {
       }
       throw new BadRequestException(
         `Error al crear el número de teléfono: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Eliminar cuenta(s) de Twilio (desvincular del usuario)
+  async deleteTwilioAccount(userId: string) {
+    try {
+      const userDocRef = this.firestore.collection('users').doc(userId);
+      const userSnapshot = await userDocRef.get();
+
+      if (!userSnapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado.');
+      }
+
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const twilioArray = this.normalizeTwilioArray(userData?.twilio);
+
+      if (twilioArray.length === 0) {
+        return {
+          message: 'No hay cuentas de Twilio configuradas para eliminar.',
+        };
+      }
+
+      // Eliminar el index inverso para todos los twilioSids del usuario
+      const deletePromises = twilioArray.map((account) =>
+        this.firestore.collection('twilio_index').doc(account.twilioSid).delete().catch(err => {
+          console.error(`[Twilio] Error eliminando twilio_index para ${account.twilioSid}:`, err);
+        })
+      );
+      await Promise.allSettled(deletePromises);
+
+      // Eliminar la configuración de twilio del usuario
+      await userDocRef.update({
+        twilio: FieldValue.delete()
+      });
+
+      return {
+        message: 'Cuenta de Twilio eliminada correctamente.',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al eliminar la cuenta de Twilio: ${(error as Error).message}`,
       );
     }
   }

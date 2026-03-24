@@ -116,4 +116,15 @@ export class TwilioController {
   ) {
     return this.twilioService.deletePhoneNumber(userId, deletePhoneDto.phoneId);
   }
+
+  @Delete('account')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary: 'Eliminar cuenta de Twilio',
+    description: 'Desvincula todas las cuentas de Twilio asociadas al usuario.',
+  })
+  @ApiResponse({ status: 200, description: 'Cuenta eliminada correctamente' })
+  async deleteTwilioAccount(@GetUser('uid') userId: string) {
+    return this.twilioService.deleteTwilioAccount(userId);
+  }
 }
