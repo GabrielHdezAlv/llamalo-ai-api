@@ -784,13 +784,50 @@ export class TwilioService {
       const userData = userSnapshot.data() as Record<string, unknown>;
       const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
-      const matchingAccount = twilioArray.find(
+      let matchingAccount = twilioArray.find(
         (acc) => acc.twilioSid === twilioSid && acc.twilioToken === twilioToken,
       );
 
+      let accountsUpdated = false;
       if (!matchingAccount) {
-        throw new BadRequestException(
-          'Las credenciales de Twilio proporcionadas no están configuradas en tu cuenta.',
+        // Verificar que las credenciales no estén en uso por otro usuario
+        await this.checkTwilioCredentialsInUse(
+          userId,
+          twilioSid,
+          twilioToken,
+        );
+
+        // Verificar que las credenciales no estén asociadas parcialmente a otra cuenta
+        const existingAccount = twilioArray.find(
+          (acc) =>
+            acc.twilioSid === twilioSid ||
+            acc.twilioToken === twilioToken,
+        );
+
+        if (existingAccount) {
+          throw new BadRequestException(
+            'Estas credenciales ya están asociadas a otra cuenta de Twilio en tu perfil.',
+          );
+        }
+
+        // Si no existe, agregarla automáticamente a la cuenta del usuario
+        const newAccountId = Date.now();
+        matchingAccount = {
+          twilioAccountId: newAccountId,
+          twilioSid,
+          twilioToken,
+        };
+        twilioArray.push(matchingAccount);
+        accountsUpdated = true;
+
+        // Actualizar índice inverso
+        this.upsertTwilioIndex(userId, twilioSid).catch(
+          (err) => console.error('[Twilio] Error actualizando twilio_index:', err),
+        );
+
+        // Registrar webhooks
+        this.registerWebhookOnAllNumbers(twilioSid, twilioToken).catch(
+          (err) => console.error('[Twilio] Error registrando webhook al conectar cuenta:', err),
         );
       }
 
@@ -882,12 +919,15 @@ export class TwilioService {
       );
 
       // Guardar en Firestore
-      await userDocRef.set(
-        {
-          phoneNumbers: updatedPhoneNumbers,
-        },
-        { merge: true },
-      );
+      const updateData: any = {
+        phoneNumbers: updatedPhoneNumbers,
+      };
+      
+      if (accountsUpdated) {
+        updateData.twilio = twilioArray;
+      }
+
+      await userDocRef.set(updateData, { merge: true });
 
       // Registrar webhook en este número automáticamente (fire-and-forget)
       this.registerWebhookOnPhoneNumber(
