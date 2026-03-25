@@ -513,8 +513,9 @@ export class TwilioService {
 
         if (agentPhoneId === phoneId) {
           affectedAgents.push(agent.agentId as number);
-          // Eliminar phoneNumbers del agente y poner estado a "Inactivo"
-          const { phoneNumbers, ...agentWithoutPhone } = agent;
+          // Eliminar phoneNumbers y twilioAccountId del agente; estado Inactivo
+          const { phoneNumbers, twilioAccountId: _tid, ...agentWithoutPhone } =
+            agent;
           return {
             ...agentWithoutPhone,
             state: 'Inactivo',
@@ -1039,7 +1040,8 @@ export class TwilioService {
             agentPhoneId !== undefined &&
             phoneIdsToRemove.has(agentPhoneId)
           ) {
-            const { phoneNumbers, ...agentWithoutPhone } = agent;
+            const { phoneNumbers, twilioAccountId: _tid, ...agentWithoutPhone } =
+              agent;
             return {
               ...agentWithoutPhone,
               state: 'Inactivo',

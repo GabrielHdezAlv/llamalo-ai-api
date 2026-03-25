@@ -243,31 +243,98 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     }));
   }
 
+  /** Misma lógica que en TwilioService: perfil antiguo (objeto) → array. */
+  private normalizeTwilioArray(
+    twilioData: unknown,
+  ): Array<{ twilioAccountId: number; twilioSid: string; twilioToken: string }> {
+    if (!twilioData) {
+      return [];
+    }
+    if (Array.isArray(twilioData)) {
+      return twilioData as Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }>;
+    }
+    if (typeof twilioData === 'object' && twilioData !== null) {
+      const oldTwilio = twilioData as Record<string, unknown>;
+      if (oldTwilio.twilioSid && oldTwilio.twilioToken) {
+        return [
+          {
+            twilioAccountId: Date.now(),
+            twilioSid: oldTwilio.twilioSid as string,
+            twilioToken: oldTwilio.twilioToken as string,
+          },
+        ];
+      }
+    }
+    return [];
+  }
+
+  private twilioAccountIdIsValidForUser(
+    twilioArray: Array<{ twilioAccountId: number }>,
+    id: number | undefined,
+  ): boolean {
+    if (id === undefined || Number.isNaN(id)) {
+      return false;
+    }
+    return twilioArray.some((acc) => acc.twilioAccountId === id);
+  }
+
+  /**
+   * Resuelve qué twilioAccountId debe usar el agente.
+   * Si el ID guardado quedó obsoleto (p. ej. se desvinculó y volvió a vincular Twilio),
+   * intenta el asociado al número en phoneNumbers[] y, solo si hay una única cuenta en el perfil, esa.
+   */
   private resolveTwilioAccountId(
     userData: Record<string, unknown>,
     agentTwilioAccountId: number | undefined,
     phoneNumbersArray: Array<Record<string, unknown>>,
     phoneId: number,
   ): number | undefined {
-    if (agentTwilioAccountId !== undefined) {
-      const twilioArray =
-        (userData?.twilio as Array<Record<string, unknown>>) || [];
-      const exists = twilioArray.some(
-        (acc) => (acc.twilioAccountId as number) === agentTwilioAccountId,
-      );
-      if (!exists) {
-        throw new BadRequestException(
-          `Cuenta de Twilio con ID ${agentTwilioAccountId} no encontrada para el usuario.`,
-        );
-      }
-      return agentTwilioAccountId;
-    }
+    const twilioArray = this.normalizeTwilioArray(userData?.twilio);
 
     const phoneEntry = phoneNumbersArray.find(
       (p) => (p.phoneId as number) === phoneId,
     );
-    const inferred = phoneEntry?.twilioAccountId as number | undefined;
-    return inferred;
+    const inferredFromPhone = phoneEntry?.twilioAccountId as
+      | number
+      | undefined;
+
+    if (twilioArray.length === 0) {
+      if (agentTwilioAccountId !== undefined) {
+        throw new BadRequestException(
+          'No hay cuentas de Twilio configuradas en el perfil. Vincula Twilio antes de asociar el agente.',
+        );
+      }
+      return undefined;
+    }
+
+    if (agentTwilioAccountId !== undefined) {
+      if (this.twilioAccountIdIsValidForUser(twilioArray, agentTwilioAccountId)) {
+        return agentTwilioAccountId;
+      }
+      if (
+        this.twilioAccountIdIsValidForUser(twilioArray, inferredFromPhone)
+      ) {
+        return inferredFromPhone;
+      }
+      if (twilioArray.length === 1) {
+        return twilioArray[0].twilioAccountId;
+      }
+      throw new BadRequestException(
+        'La cuenta de Twilio guardada en este agente ya no existe o hay varias cuentas y no se pudo determinar cuál usar. Elige la cuenta de Twilio correcta en el formulario del agente.',
+      );
+    }
+
+    if (this.twilioAccountIdIsValidForUser(twilioArray, inferredFromPhone)) {
+      return inferredFromPhone;
+    }
+    if (twilioArray.length === 1) {
+      return twilioArray[0].twilioAccountId;
+    }
+    return undefined;
   }
 
   // ✅ Obtener todas las voces disponibles
