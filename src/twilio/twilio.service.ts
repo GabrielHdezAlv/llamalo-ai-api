@@ -974,7 +974,11 @@ export class TwilioService {
         };
       }
 
-      let accountsToRemove: Array<{ twilioSid: string }> = [];
+      let accountsToRemove: Array<{
+        twilioAccountId: number;
+        twilioSid: string;
+        twilioToken: string;
+      }> = [];
       let updatedTwilioArray: any[] = [];
 
       if (twilioAccountId !== undefined) {
@@ -999,6 +1003,61 @@ export class TwilioService {
         updatedTwilioArray = [];
       }
 
+      const removedTwilioAccountIds = new Set(
+        accountsToRemove.map((a) => a.twilioAccountId),
+      );
+
+      const phoneNumbersArray =
+        (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
+
+      const phoneIdsToRemove = new Set<number>();
+      for (const phone of phoneNumbersArray) {
+        const tid = phone.twilioAccountId as number | undefined;
+        const pid = phone.phoneId as number | undefined;
+        if (
+          tid !== undefined &&
+          pid !== undefined &&
+          removedTwilioAccountIds.has(tid)
+        ) {
+          phoneIdsToRemove.add(pid);
+        }
+      }
+
+      let updatedAgents = agentsArray;
+      let updatedPhoneNumbers = phoneNumbersArray;
+
+      if (phoneIdsToRemove.size > 0) {
+        updatedAgents = agentsArray.map((agent) => {
+          const agentPhone = agent.phoneNumbers as
+            | Record<string, unknown>
+            | undefined;
+          const agentPhoneId = agentPhone?.phoneId as number | undefined;
+
+          if (
+            agentPhoneId !== undefined &&
+            phoneIdsToRemove.has(agentPhoneId)
+          ) {
+            const { phoneNumbers, ...agentWithoutPhone } = agent;
+            return {
+              ...agentWithoutPhone,
+              state: 'Inactivo',
+            };
+          }
+          return agent;
+        });
+
+        updatedPhoneNumbers = phoneNumbersArray.filter(
+          (phone) => !phoneIdsToRemove.has(phone.phoneId as number),
+        );
+
+        updatedPhoneNumbers = this.updatePhoneNumbersState(
+          updatedPhoneNumbers,
+          updatedAgents,
+        );
+      }
+
       // Eliminar el index inverso para las cuentas seleccionadas
       const deletePromises = accountsToRemove.map((account) =>
         this.firestore
@@ -1014,16 +1073,18 @@ export class TwilioService {
       );
       await Promise.allSettled(deletePromises);
 
-      // Actualizar la configuración de twilio del usuario
+      // Actualizar twilio y, si aplica, números/agentes afectados por la cuenta eliminada
+      const updatePayload: Record<string, unknown> = {};
       if (updatedTwilioArray.length > 0) {
-        await userDocRef.update({
-          twilio: updatedTwilioArray,
-        });
+        updatePayload.twilio = updatedTwilioArray;
       } else {
-        await userDocRef.update({
-          twilio: FieldValue.delete(),
-        });
+        updatePayload.twilio = FieldValue.delete();
       }
+      if (phoneIdsToRemove.size > 0) {
+        updatePayload.phoneNumbers = updatedPhoneNumbers;
+        updatePayload.agents = updatedAgents;
+      }
+      await userDocRef.update(updatePayload);
 
       return {
         message:

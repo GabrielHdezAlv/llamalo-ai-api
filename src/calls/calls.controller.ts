@@ -186,6 +186,43 @@ export class CallsController {
         );
       }
 
+      const agentsArray =
+        (agent?.agents as Array<Record<string, unknown>>) || [];
+      const legacyAgent = (agent?.agent as Record<string, unknown>) || {};
+      const directAgent = agent as Record<string, unknown>;
+
+      const matchingPhoneId =
+        matchingPhone?.phoneId !== undefined
+          ? Number(matchingPhone.phoneId)
+          : undefined;
+
+      let agentData: Record<string, unknown>;
+      if (agentsArray.length > 0) {
+        if (matchingPhoneId !== undefined && !Number.isNaN(matchingPhoneId)) {
+          const byPhone = agentsArray.find((ag) => {
+            const pn = ag.phoneNumbers as Record<string, unknown> | undefined;
+            return (
+              pn !== undefined &&
+              Number(pn.phoneId) === matchingPhoneId
+            );
+          });
+          agentData = byPhone ?? agentsArray[0];
+        } else {
+          agentData = agentsArray[0];
+        }
+      } else if (legacyAgent && Object.keys(legacyAgent).length > 0) {
+        agentData = legacyAgent;
+      } else {
+        agentData = directAgent;
+      }
+
+      if (agentData.state === 'Inactivo') {
+        console.log(
+          `⚠️ [Calls] Agente inactivo — cuelgue inmediato (userId=${userId}, agentId=${String(agentData.agentId)})`,
+        );
+        return res.type('text/xml').send('<Response><Reject /></Response>');
+      }
+
       // // 🔹 Verificar antigüedad de la cuenta (deshabilitado temporalmente)
       // if (agent.createdAt) {
       //   const createdAt = (
@@ -228,24 +265,6 @@ export class CallsController {
           value: normalized.slice(0, limit),
         });
       };
-
-      // Obtener datos del agente: primero intentar nueva estructura (agents[]), luego antigua (agent), luego directa
-      const agentsArray =
-        (agent?.agents as Array<Record<string, unknown>>) || [];
-      const legacyAgent = (agent?.agent as Record<string, unknown>) || {};
-
-      // NUEVO: Intentar obtener directamente del documento principal
-      const directAgent = agent as Record<string, unknown>;
-
-      // Usar primer agente del array si existe, sino estructura antigua, sino directa
-      let agentData: Record<string, unknown>;
-      if (agentsArray.length > 0) {
-        agentData = agentsArray[0];
-      } else if (legacyAgent && Object.keys(legacyAgent).length > 0) {
-        agentData = legacyAgent;
-      } else {
-        agentData = directAgent;
-      }
 
       // console.log(`🔍 [Calls] Estructura usada para usuario ${userId}:`, {
       //   tieneAgentsArray: agentsArray.length > 0,
