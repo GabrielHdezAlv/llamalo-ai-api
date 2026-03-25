@@ -53,6 +53,16 @@ TWILIO_ACCOUNT_SID=tu_account_sid
 TWILIO_AUTH_TOKEN=tu_auth_token
 ```
 
+#### ⚠️ Configuración Crítica del Webhook de Voz en Twilio
+Para que las llamadas entren a la plataforma y puedan ser gestionadas correctamente por los agentes, debes configurar manualmente la URL de voz en Twilio:
+1. Ve a **Phone Numbers > Manage > Active Numbers** en tu consola de Twilio.
+2. Selecciona el número que quieres configurar.
+3. Baja hasta la sección **"Voice & Fax"**.
+4. En **"A call comes in"**, selecciona **Webhook**.
+5. Pega la URL de tu API: `https://tu-dominio.com/voice/incoming` (Asegúrate de cambiar "tu-dominio.com" por tu dominio real de producción o de ngrok).
+6. A la derecha, asegúrate de que el método sea **HTTP POST**.
+7. Guarda los cambios.
+
 ### Shopify
 ```bash
 SHOPIFY_API_KEY=tu_api_key
