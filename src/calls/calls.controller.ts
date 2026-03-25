@@ -92,15 +92,10 @@ export class CallsController {
       }
 
       if (agentSnapshot.empty) {
-        console.log('⚠️ No se encontró ningún agente con ese número.');
-        (r.say as any)(
-          'El número de agente no está configurado. Inténtelo más tarde.',
-          {
-            voice: 'alice',
-            language: 'es-ES',
-          },
+        console.log(
+          '⚠️ No se encontró ningún agente con ese número — cuelgue inmediato (Reject)',
         );
-        return res.type('text/xml').send(r.toString());
+        return res.type('text/xml').send('<Response><Reject /></Response>');
       }
 
       const agentDoc = agentSnapshot.docs[0];
@@ -500,14 +495,7 @@ export class CallsController {
       const errorMessage =
         error instanceof Error ? error.message : 'Error desconocido';
       console.error('❌ Error al procesar la llamada entrante:', errorMessage);
-      (r.say as any)(
-        'Ha ocurrido un error interno. Por favor, inténtelo más tarde.',
-        {
-          voice: 'alice',
-          language: 'es-ES',
-        },
-      );
-      res.type('text/xml').send(r.toString());
+      return res.type('text/xml').send('<Response><Reject /></Response>');
     }
   }
 
