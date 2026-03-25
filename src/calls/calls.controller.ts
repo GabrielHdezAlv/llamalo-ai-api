@@ -189,31 +189,65 @@ export class CallsController {
       const agentsArray =
         (agent?.agents as Array<Record<string, unknown>>) || [];
       const legacyAgent = (agent?.agent as Record<string, unknown>) || {};
-      const directAgent = agent as Record<string, unknown>;
 
-      const matchingPhoneId =
-        matchingPhone?.phoneId !== undefined
-          ? Number(matchingPhone.phoneId)
-          : undefined;
+      const legacyDigitsMatch = (la: Record<string, unknown>): boolean => {
+        const lpn = la.phoneNumber;
+        const legacyDigits = parseInt(
+          String(lpn ?? '')
+            .replace(/\D/g, '') || '0',
+          10,
+        );
+        return legacyDigits === agentNumber && legacyDigits !== 0;
+      };
 
       let agentData: Record<string, unknown>;
-      if (agentsArray.length > 0) {
-        if (matchingPhoneId !== undefined && !Number.isNaN(matchingPhoneId)) {
-          const byPhone = agentsArray.find((ag) => {
-            const pn = ag.phoneNumbers as Record<string, unknown> | undefined;
-            return (
-              pn !== undefined &&
-              Number(pn.phoneId) === matchingPhoneId
-            );
-          });
-          agentData = byPhone ?? agentsArray[0];
-        } else {
-          agentData = agentsArray[0];
+
+      if (matchingPhone !== undefined) {
+        const mpid = Number(matchingPhone.phoneId);
+        if (Number.isNaN(mpid)) {
+          console.log('⚠️ [Calls] matchingPhone sin phoneId válido');
+          return res.type('text/xml').send('<Response><Reject /></Response>');
         }
-      } else if (legacyAgent && Object.keys(legacyAgent).length > 0) {
-        agentData = legacyAgent;
+        const byPhone = agentsArray.find((ag) => {
+          const pn = ag.phoneNumbers as Record<string, unknown> | undefined;
+          return pn !== undefined && Number(pn.phoneId) === mpid;
+        });
+        if (byPhone) {
+          agentData = byPhone;
+        } else if (agentsArray.length > 0) {
+          console.log(
+            `⚠️ [Calls] Número en phoneNumbers sin agente vinculado (phoneId=${mpid})`,
+          );
+          return res.type('text/xml').send('<Response><Reject /></Response>');
+        } else if (
+          legacyAgent &&
+          Object.keys(legacyAgent).length > 0 &&
+          legacyDigitsMatch(legacyAgent)
+        ) {
+          agentData = legacyAgent;
+        } else {
+          return res.type('text/xml').send('<Response><Reject /></Response>');
+        }
       } else {
-        agentData = directAgent;
+        // Sin entrada en phoneNumbers[] para este To (p. ej. query legacy twilio.phoneNumber)
+        if (agentsArray.length > 0) {
+          console.log(
+            '⚠️ [Calls] To no está en phoneNumbers[] — no enrutar a agents[0]',
+          );
+          return res.type('text/xml').send('<Response><Reject /></Response>');
+        }
+        if (
+          legacyAgent &&
+          Object.keys(legacyAgent).length > 0 &&
+          legacyDigitsMatch(legacyAgent)
+        ) {
+          agentData = legacyAgent;
+        } else {
+          console.log(
+            '⚠️ [Calls] Sin agente mapeable para este número (sin legacy válido)',
+          );
+          return res.type('text/xml').send('<Response><Reject /></Response>');
+        }
       }
 
       if (agentData.state === 'Inactivo') {

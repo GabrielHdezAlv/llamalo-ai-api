@@ -503,6 +503,31 @@ export class TwilioService {
         );
       }
 
+      const removedPhoneRow = phoneNumbersArray[phoneIndex] as Record<
+        string,
+        unknown
+      >;
+      const removedDigits = parseInt(
+        String(removedPhoneRow.number ?? '')
+          .replace(/\D/g, '') || '0',
+        10,
+      );
+      const twilioRaw = userData.twilio;
+      const shouldStripLegacyTwilioPhoneNumber =
+        twilioRaw &&
+        typeof twilioRaw === 'object' &&
+        !Array.isArray(twilioRaw) &&
+        removedDigits !== 0;
+      let legacyTwilioPhoneDigits: number | undefined;
+      if (shouldStripLegacyTwilioPhoneNumber) {
+        const legacyPn = (twilioRaw as Record<string, unknown>).phoneNumber;
+        legacyTwilioPhoneDigits = parseInt(
+          String(legacyPn ?? '')
+            .replace(/\D/g, '') || '0',
+          10,
+        );
+      }
+
       // Buscar agentes que usen este phoneId
       const affectedAgents: number[] = [];
       const updatedAgents = agentsArray.map((agent) => {
@@ -533,14 +558,20 @@ export class TwilioService {
         updatedAgents,
       );
 
+      const payload: Record<string, unknown> = {
+        agents: updatedAgents,
+        phoneNumbers: updatedPhoneNumbers,
+      };
+      if (
+        shouldStripLegacyTwilioPhoneNumber &&
+        legacyTwilioPhoneDigits !== undefined &&
+        legacyTwilioPhoneDigits === removedDigits
+      ) {
+        payload['twilio.phoneNumber'] = FieldValue.delete();
+      }
+
       // Guardar en Firestore
-      await userDocRef.set(
-        {
-          agents: updatedAgents,
-          phoneNumbers: updatedPhoneNumbers,
-        },
-        { merge: true },
-      );
+      await userDocRef.set(payload, { merge: true });
 
       return {
         message: 'Número de teléfono eliminado correctamente.',
