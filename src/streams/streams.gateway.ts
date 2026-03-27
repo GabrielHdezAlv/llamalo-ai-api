@@ -1228,6 +1228,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     }
 
     if (role === 'user') {
+      console.log(`💬 [${session.callSid}] Usuario dijo: "${text}"`);
       session.history.push({ role: 'user', content: correctedText });
     } else {
       // Si es sistema (silencio), inyectamos una instrucción clara
@@ -1251,6 +1252,12 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         if (!this.isCallSessionLive(session)) {
           return;
         }
+        
+        // Si el intent es de ignorar ruido, no hacemos nada ni consultamos al LLM
+        if (fastIntentResponse === 'IGNORE_NOISE') {
+          return;
+        }
+
         console.log(
           `⚡ [${session.callSid}] Intent detectado, respuesta rápida: "${fastIntentResponse}"`,
         );
@@ -3553,6 +3560,18 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     const hasAssistantInHistory =
       session?.history.some((m) => m.role === 'assistant') ?? false;
 
+    const isFirstTurn = userTurnCount === 0 || (userTurnCount === 1 && !hasAssistantInHistory);
+
+    // Ignorar ruidos o monosílabos comunes en el primer turno para evitar respuestas sin sentido del LLM
+    if (isFirstTurn) {
+      const isNoise = /^(ah|eh|uh|mm|hm|hmm|mhmm|mhm|ajá|aja|ok|okay|vale)[.,?!]*$/i.test(cleanText);
+      if (isNoise) {
+        // Retornamos un intent silencioso que no hace nada
+        console.log(`🔇 [${session?.callSid}] Ignorando ruido inicial/filler: "${text}"`);
+        return 'IGNORE_NOISE'; // Señal especial para ignorar
+      }
+    }
+
     const holaExact =
       cleanText === 'hola' ||
       cleanText === 'buenas' ||
@@ -3560,12 +3579,19 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       cleanText === 'buenas tardes' ||
       cleanText === 'buenas noches' ||
       cleanText === 'hola buenas' ||
-      cleanText === 'hola hola';
+      cleanText === 'hola hola' ||
+      cleanText === 'alo' ||
+      cleanText === 'bueno' ||
+      cleanText === 'diga' ||
+      cleanText === 'digame' ||
+      cleanText === 'si' ||
+      cleanText === 'si diga' ||
+      cleanText === 'si digame';
 
     // STT suele devolver "hola que tal", "hola buenos dias", etc. — capturar saludos cortos
     const words = cleanText.split(/\s+/).filter(Boolean);
     const holaLoose =
-      /^hola\b/.test(cleanText) &&
+      /^(hola|alo|bueno|diga|digame|si)\b/.test(cleanText) &&
       words.length <= 5 &&
       cleanText.length <= 56;
 
