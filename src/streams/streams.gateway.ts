@@ -1589,7 +1589,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
               const currentSentence = sentenceToSend;
               ttsQueue = ttsQueue.then(async () => {
                 if (!session.interrupted) {
-                  // console.log(`🔊 [${session.callSid}] Enviando chunk a TTS: "${currentSentence}"`);
+                  console.log(`🔊 [${session.callSid}] Enviando chunk a TTS: "${currentSentence}"`);
                   await this.streamElevenLabsTTS(session, currentSentence);
                 }
               });
@@ -1618,7 +1618,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         if (remainingText) {
           ttsQueue = ttsQueue.then(async () => {
             if (!session.interrupted) {
-              // console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
+              console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
               await this.streamElevenLabsTTS(session, remainingText);
             }
           });
@@ -3229,9 +3229,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Esperar a que el audio pendiente se termine de reproducir
       const now = Date.now();
       if (session.expectedAudioEndTime && session.expectedAudioEndTime > now) {
-        const timeToWait = session.expectedAudioEndTime - now + 1000; // 1000ms de margen adicional para la red
+        const timeToWait = session.expectedAudioEndTime - now + 4000; // 4000ms de margen adicional para asegurar reproducción
         console.log(
-          `⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar...`,
+          `⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar (now: ${now}, expectedEndTime: ${session.expectedAudioEndTime})...`,
         );
         await new Promise((resolve) => setTimeout(resolve, timeToWait));
       }
