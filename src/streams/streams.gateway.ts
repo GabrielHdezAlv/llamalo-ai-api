@@ -1543,9 +1543,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           fullResponse += token;
           sentenceBuffer += token;
 
-          // Normalizar cualquier variante de "End Call" al token [END_CALL] en cualquier parte del buffer
+          // Normalizar cualquier variante de "End Call" o "END_CALL" al token [END_CALL] en cualquier parte del buffer
           sentenceBuffer = sentenceBuffer.replace(
-            /\b[Ee]nd\s+[Cc]all\b/gi,
+            /\[?END[\s_]*CALL\]?/gi,
             '[END_CALL]',
           );
 
@@ -1556,7 +1556,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             );
             shouldHangup = true;
             // Limpiar el buffer de CUALQUIER rastro de la señal inmediatamente para que no llegue a TTS
-            sentenceBuffer = sentenceBuffer.replace(/\[END_CALL\]/gi, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '');
+            sentenceBuffer = sentenceBuffer.replace(/\[?END[\s_]*CALL\]?/gi, '');
           }
 
           // Si el token contiene un fin de frase o la frase es suficientemente larga y encontramos una pausa
@@ -1582,8 +1582,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             let sentenceToSend = sentenceBuffer.trim();
             // Limpieza total: eliminar [END_CALL] y cualquier variante de "End Call" vocalizado (sin anclaje $)
             sentenceToSend = sentenceToSend
-              .replace(/\[END_CALL\]/gi, '')
-              .replace(/\b[Ee]nd\s+[Cc]all\b/gi, '') // Regex más simple aquí
+              .replace(/\[?END[\s_]*CALL\]?/gi, '')
               .trim();
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
@@ -1609,12 +1608,12 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         let remainingText = sentenceBuffer.trim();
         // Normalizar "End Call" al token [END_CALL] (sin anclaje $)
         remainingText = remainingText.replace(
-          /\b[Ee]nd\s+[Cc]all\b/gi,
+          /\[?END[\s_]*CALL\]?/gi,
           '[END_CALL]',
         );
         if (remainingText.includes('[END_CALL]')) {
           shouldHangup = true;
-          remainingText = remainingText.replace(/\[END_CALL\]/gi, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '').trim();
+          remainingText = remainingText.replace(/\[?END[\s_]*CALL\]?/gi, '').trim();
         }
         if (remainingText) {
           ttsQueue = ttsQueue.then(async () => {
@@ -1773,8 +1772,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
         const cleanedResponse = fullResponse
-          .replace(/\[END_CALL\]/gi, '')
-          .replace(/\b[Ee]nd\s+[Cc]all\b/gi, '') // Limpieza más robusta
+          .replace(/\[?END[\s_]*CALL\]?/gi, '') // Limpieza más robusta
           .trim();
         const finalContent = session.interrupted
           ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
@@ -1798,22 +1796,12 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         !session.interrupted
       ) {
         console.log(
-          `🔚 [${session.callSid}] Señal [END_CALL] detectada. Notificando al frontend y limpiando la sesión.`,
+          `🔚 [${session.callSid}] Señal [END_CALL] detectada. Terminando llamada de Twilio.`,
         );
-        // NO colgar la llamada de Twilio, en su lugar, notificar al cliente de frontend
-        if (session.client) { // Asegurarse de que el WebSocket del cliente existe
-            session.client.send(JSON.stringify({
-                type: 'session.ended',
-                reason: 'agent_hangup',
-            }));
-            console.log(`📡 [${session.callSid}] Evento 'session.ended' con razón 'agent_hangup' emitido al cliente.`);
-        } else {
-            console.warn(`⚠️ [${session.callSid}] No se pudo emitir evento 'session.ended' al cliente: client no definido.`);
-        }
-
-        // Limpiar la sesión en el backend sin colgar la llamada real de Twilio
+        
+        // Colgar la llamada real de Twilio y luego limpiar la sesión en el backend
+        await this.hangupCall(session);
         this.cleanupSession(session.callSid);
-        // Eliminado: await this.hangupCall(session);
       }
     } catch (err) {
       console.error(
@@ -2719,7 +2707,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
     // Normalizar cualquier variante de "End Call" al token [END_CALL] (sin anclaje $)
     processedText = processedText.replace(
-      /\b[Ee]nd\s+[Cc]all\b/gi,
+      /\[?END[\s_]*CALL\]?/gi,
       '[END_CALL]',
     );
 
@@ -2728,7 +2716,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         `🔚 [${session.callSid}] Señal [END_CALL] (o fallback "End Call") detectada en TTS manual.`,
       );
       shouldHangup = true;
-      processedText = processedText.replace(/\[END_CALL\]/gi, '').replace(/\b[Ee]nd\s+[Cc]all\b/gi, '').trim();
+      processedText = processedText.replace(/\[?END[\s_]*CALL\]?/gi, '').trim();
     }
 
     if (session.interrupted || !processedText.trim()) {
