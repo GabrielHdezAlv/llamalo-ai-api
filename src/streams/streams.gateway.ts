@@ -1627,6 +1627,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
       // Esperar a que todos los audios terminen de generarse/enviarse
       await ttsQueue;
+      
+      // Asegurarnos de vaciar cualquier audio pendiente en el buffer antes de continuar
+      this.flushOutboundAudioRemainder(session);
 
       // --- MANEJO DE TOOLS (LLAMADA A FUNCIONES) ---
       if (
@@ -3229,7 +3232,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Esperar a que el audio pendiente se termine de reproducir
       const now = Date.now();
       if (session.expectedAudioEndTime && session.expectedAudioEndTime > now) {
-        const timeToWait = session.expectedAudioEndTime - now + 4000; // 4000ms de margen adicional para asegurar reproducción
+        const timeToWait = session.expectedAudioEndTime - now + 6000; // 6000ms de margen adicional para asegurar reproducción completa y no cortar
         console.log(
           `⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar (now: ${now}, expectedEndTime: ${session.expectedAudioEndTime})...`,
         );
