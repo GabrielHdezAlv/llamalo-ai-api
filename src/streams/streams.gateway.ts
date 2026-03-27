@@ -1227,6 +1227,23 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       return;
     }
 
+    // 🛡️ FILTRO ANTI-ECO (SALUDO INICIAL):
+    // Si el texto que escuchamos es casi idéntico al saludo inicial que dijo el bot, lo ignoramos.
+    // Esto evita que el bot se responda a sí mismo si se escucha por el altavoz.
+    if (role === 'user' && session.pendingGreeting) {
+      const cleanTranscript = correctedText.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
+      const cleanGreeting = session.pendingGreeting.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
+      
+      // Si el transcript contiene gran parte del saludo o viceversa, es eco.
+      if (
+        cleanTranscript.length > 10 && 
+        (cleanGreeting.includes(cleanTranscript) || cleanTranscript.includes(cleanGreeting))
+      ) {
+        console.log(`🛡️ [${session.callSid}] Eco detectado y bloqueado: "${text}" coincide con el saludo.`);
+        return;
+      }
+    }
+
     if (role === 'user') {
       console.log(`💬 [${session.callSid}] Usuario dijo: "${text}"`);
       session.history.push({ role: 'user', content: correctedText });
@@ -1253,8 +1270,12 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           return;
         }
         
-        // Si el intent es de ignorar ruido, no hacemos nada ni consultamos al LLM
+        // Si el intent es de ignorar ruido, quitar el turno de usuario del historial y salir
         if (fastIntentResponse === 'IGNORE_NOISE') {
+          const last = session.history[session.history.length - 1];
+          if (last?.role === 'user') {
+            session.history.pop();
+          }
           return;
         }
 
@@ -1622,7 +1643,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           shouldHangup = true;
           remainingText = remainingText.replace(/\[?END[\s_]*CALL\]?/gi, '').trim();
         }
-        if (remainingText) {
+        // Restos de token partido (p. ej. solo "]" tras quitar [END_CALL] en streaming)
+        remainingText = remainingText.replace(/^[\[\]]+|[\[\]]+$/g, '').trim();
+        if (remainingText && !/^[\s\[\]]+$/.test(remainingText)) {
           ttsQueue = ttsQueue.then(async () => {
             if (!session.interrupted) {
               console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
@@ -1808,6 +1831,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         console.log(
           `🔚 [${session.callSid}] Señal [END_CALL] detectada. Terminando llamada de Twilio.`,
         );
+        
+        // Asegurarnos de que el audio se envíe a Twilio
+        this.flushOutboundAudioRemainder(session);
         
         // Colgar la llamada real de Twilio y luego limpiar la sesión en el backend
         await this.hangupCall(session);
@@ -3239,7 +3265,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Esperar a que el audio pendiente se termine de reproducir
       const now = Date.now();
       if (session.expectedAudioEndTime && session.expectedAudioEndTime > now) {
-        const timeToWait = session.expectedAudioEndTime - now + 6000; // 6000ms de margen adicional para asegurar reproducción completa y no cortar
+        const timeToWait = session.expectedAudioEndTime - now + 2000; // 2000ms de margen adicional para asegurar reproducción completa
         console.log(
           `⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar (now: ${now}, expectedEndTime: ${session.expectedAudioEndTime})...`,
         );
@@ -3590,10 +3616,16 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
     // STT suele devolver "hola que tal", "hola buenos dias", etc. — capturar saludos cortos
     const words = cleanText.split(/\s+/).filter(Boolean);
+    // No tratar como saludo genérico si ya es una pregunta concreta (p. ej. "hola qué servicios tienen")
+    const looksLikeRealQuestion =
+      /\b(qu[eé]|cu[aá]l|cu[aá]les|c[oó]mo|d[oó]nde|cu[aá]ndo|cu[aá]nto|tienen|ofrecen|servicio|servicios|precio|producto|pedido|horario|cita|disponibilidad|turno)\b/i.test(
+        cleanText,
+      );
     const holaLoose =
       /^(hola|alo|bueno|diga|digame|si)\b/.test(cleanText) &&
       words.length <= 5 &&
-      cleanText.length <= 56;
+      cleanText.length <= 56 &&
+      !looksLikeRealQuestion;
 
     if (holaExact || holaLoose) {
       // Ya hubo saludo por voz (y opcionalmente ya está en history): no forzar al LLM a re-presentarse
