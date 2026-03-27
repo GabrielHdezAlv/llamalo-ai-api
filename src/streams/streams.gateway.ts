@@ -124,6 +124,8 @@ interface CallSession {
   shopifyContext?: ShopifyContext;
   knowledgeSourceIds: string[];
   expectedAudioEndTime?: number;
+  /** Se incrementa al hablar el usuario o al iniciar un colgado; invalida colgados en curso. */
+  hangupNonce?: number;
   // Razón de finalización: 'agente' | 'cliente' | 'silencio' | 'error'
   terminadoPor?: 'agente' | 'cliente' | 'silencio' | 'error';
   callStartTime?: number; // timestamp en ms cuando comenzó la sesión
@@ -1209,9 +1211,16 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       return;
     }
 
-    // Capturar ahora el inicio de habla para latencia; evita que un UserStartedSpeaking posterior
-    // (ej. usuario repite "Hola") sobrescriba session.userSpeakingStartTime y genere latencias negativas.
-    const userStartedAt = session.userSpeakingStartTime ?? undefined;
+    // Invalidar cualquier colgado en curso (espera larga antes de Twilio) si el usuario vuelve a hablar
+    if (role === 'user') {
+      session.hangupNonce = (session.hangupNonce ?? 0) + 1;
+    }
+
+    // Latencia solo tiene sentido para turnos reales del usuario (no intervención por silencio de sistema)
+    const userStartedAt =
+      role === 'user'
+        ? (session.userSpeakingStartTime ?? undefined)
+        : undefined;
 
     // Resetear estado de interrupción para permitir nueva respuesta
     session.interrupted = false;
@@ -3230,6 +3239,18 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         return;
       }
 
+      const now = Date.now();
+      // No intervenir si el agente aún está generando/reproduciendo audio (el usuario puede estar escuchando)
+      if (
+        session.currentTTSRequest ||
+        session.agentSpeaking ||
+        (session.expectedAudioEndTime &&
+          session.expectedAudioEndTime > now + 400)
+      ) {
+        this.resetSilenceTimer(session);
+        return;
+      }
+
       console.warn(
         `⏳ [${session.callSid}] Silencio detectado por ${SILENCE_TIMEOUT_MS / 1000} segundos. Interviniendo...`,
       );
@@ -3260,7 +3281,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
   private async hangupCall(session: CallSession) {
     try {
-      console.log(`📞 [${session.callSid}] Iniciando colgado de llamada`);
+      session.hangupNonce = (session.hangupNonce ?? 0) + 1;
+      const hangupGeneration = session.hangupNonce;
+      console.log(`📞 [${session.callSid}] Iniciando colgado de llamada (gen ${hangupGeneration})`);
 
       // Esperar a que el audio pendiente se termine de reproducir
       const now = Date.now();
@@ -3270,6 +3293,16 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           `⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar (now: ${now}, expectedEndTime: ${session.expectedAudioEndTime})...`,
         );
         await new Promise((resolve) => setTimeout(resolve, timeToWait));
+      }
+
+      if (!this.isCallSessionLive(session)) {
+        return;
+      }
+      if (session.hangupNonce !== hangupGeneration) {
+        console.log(
+          `🔕 [${session.callSid}] Colgado cancelado: hubo actividad (usuario o nuevo colgado) durante la espera.`,
+        );
+        return;
       }
 
       // Marcar que la llamada fue terminada por el agente (END_CALL o silencio gestionado)
