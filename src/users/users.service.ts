@@ -73,6 +73,7 @@ interface UserData {
   minutesLimit?: number;
   extraMinutes?: number;
   minutesByMonth?: Record<string, number>;
+  redeemedRewards?: string[];
 }
 
 export type UserProfileResponse = {
@@ -138,6 +139,7 @@ export type UserProfileResponse = {
   minutesLimit?: number;
   extraMinutes?: number;
   minutesByMonth?: Record<string, number>;
+  redeemedRewards?: string[];
 };
 
 export interface UploadFile {
@@ -254,6 +256,7 @@ export class UsersService {
         minutesLimit: userData?.minutesLimit ?? 100, // Límite por defecto si no existe
         extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
         minutesByMonth: userData?.minutesByMonth ?? {}, // Historial de minutos por mes
+        redeemedRewards: userData?.redeemedRewards ?? [],
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -392,6 +395,7 @@ export class UsersService {
         minutesLimit: updatedData?.minutesLimit ?? 100,
         extraMinutes: updatedData?.extraMinutes ?? 0,
         minutesByMonth: updatedData?.minutesByMonth ?? {},
+        redeemedRewards: updatedData?.redeemedRewards ?? [],
         createdAt: updatedData?.createdAt,
       };
     } catch (error) {
@@ -569,6 +573,70 @@ export class UsersService {
       );
       throw new BadRequestException(
         `Error al procesar eliminaciones programadas: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Canjear recompensa
+  async redeemReward(userId: string, rewardType: string) {
+    try {
+      const docRef = this.firestore.collection('users').doc(userId);
+      const snapshot = await docRef.get();
+
+      if (!snapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado en Firestore');
+      }
+
+      const userData = snapshot.data() as UserData;
+      const redeemedRewards = userData.redeemedRewards || [];
+
+      // Validar si la recompensa ya fue canjeada
+      if (redeemedRewards.includes(rewardType)) {
+        throw new BadRequestException('Esta recompensa ya ha sido canjeada.');
+      }
+
+      // Definir los minutos a añadir según el tipo de recompensa
+      // Usamos un mapa estándar basado en la descripción de la UI
+      let minutesToAdd = 1;
+      switch (rewardType) {
+        case 'Trustpilot':
+          minutesToAdd = 10;
+          break;
+        case 'instagram':
+        case 'linkedin':
+        case 'x':
+          minutesToAdd = 1;
+          break;
+        case 'Gift3': // Mención en tienda o red social
+          minutesToAdd = 20;
+          break;
+        default:
+          minutesToAdd = 1; // Por defecto 1 minuto según las instrucciones
+          break;
+      }
+
+      const currentExtraMinutes = userData.extraMinutes || 0;
+      const newExtraMinutes = currentExtraMinutes + minutesToAdd;
+      
+      const newRedeemedRewards = [...redeemedRewards, rewardType];
+
+      // Actualizar Firestore
+      await docRef.update({
+        extraMinutes: newExtraMinutes,
+        redeemedRewards: newRedeemedRewards,
+      });
+
+      return {
+        message: `Recompensa canjeada con éxito. Se han añadido ${minutesToAdd} minutos extra.`,
+        extraMinutes: newExtraMinutes,
+        redeemedRewards: newRedeemedRewards,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al canjear recompensa: ${(error as Error).message}`,
       );
     }
   }

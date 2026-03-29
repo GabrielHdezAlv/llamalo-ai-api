@@ -9,6 +9,7 @@ import {
   UseInterceptors,
   UploadedFile,
   Query,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -183,5 +184,41 @@ export class UsersController {
   })
   async deleteAccount(@GetUser('uid') userId: string) {
     return this.usersService.scheduleAccountDeletion(userId);
+  }
+
+  @Post('rewards/redeem')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary: 'Canjear recompensa y añadir minutos extra',
+    description: 'Permite al usuario canjear una recompensa para obtener minutos adicionales.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        rewardType: { type: 'string', description: 'El tipo de recompensa a canjear (ej. Trustpilot, instagram)' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Recompensa canjeada correctamente',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        extraMinutes: { type: 'number' },
+        redeemedRewards: { type: 'array', items: { type: 'string' } },
+      },
+    },
+  })
+  async redeemReward(
+    @GetUser('uid') userId: string,
+    @Body('rewardType') rewardType: string,
+  ) {
+    if (!rewardType) {
+      throw new BadRequestException('El tipo de recompensa es requerido');
+    }
+    return this.usersService.redeemReward(userId, rewardType);
   }
 }
