@@ -88,9 +88,8 @@ export class EmailService {
   async sendVerificationEmail(email: string, verificationToken: string) {
     this.logger.log(`📧 Intentando enviar email de verificación a: ${email}`);
 
-    const verificationUrl = `${process.env.FRONTEND_URL || 'https://app.llamalo.ai'}/verify-email?token=${verificationToken}`;
-    const subject = 'Verifica tu cuenta de correo electrónico';
-    const text = `Verifica tu cuenta de correo electrónico en Llamalo AI visitando este enlace: ${verificationUrl}`;
+    const subject = 'Tu código de verificación de Llamalo AI';
+    const text = `Tu código de verificación es: ${verificationToken}`;
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="text-align: center; margin-bottom: 30px;">
@@ -100,23 +99,22 @@ export class EmailService {
         <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
           <h2 style="color: #333; margin-top: 0;">Verifica tu correo electrónico</h2>
           <p style="color: #666; line-height: 1.6;">
-            Gracias por registrarte en Llamalo AI. Para activar tu cuenta, por favor haz clic en el siguiente botón:
+            Gracias por registrarte en Llamalo AI. Para activar tu cuenta, por favor introduce el siguiente código de verificación:
           </p>
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${verificationUrl}" 
-             style="background-color: #007bff; color: white; padding: 12px 30px; 
-                    text-decoration: none; border-radius: 6px; display: inline-block; 
-                    font-weight: bold; font-size: 16px;">
-            Verificar mi correo electrónico
-          </a>
+          <div style="background-color: #f3f4f6; color: #1f2937; padding: 15px 30px; 
+                      border-radius: 8px; display: inline-block; 
+                      font-weight: bold; font-size: 32px; letter-spacing: 4px;">
+            ${verificationToken}
+          </div>
         </div>
         
         <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
           <p style="margin: 0; color: #856404;">
-            <strong>Importante:</strong> Este enlace expirará en 24 horas. Si no verificas tu correo en este tiempo, 
-            deberás solicitar un nuevo email de verificación.
+            <strong>Importante:</strong> Este código expirará en 24 horas. Si no verificas tu correo en este tiempo, 
+            deberás solicitar un nuevo código de verificación.
           </p>
         </div>
         
