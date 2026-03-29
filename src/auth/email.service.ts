@@ -56,7 +56,6 @@ export class EmailService {
           .setText(text);
 
         const response = await this.mailerSend.email.send(emailParams);
-        // MailerSend usa un header x-message-id, pero el SDK actual lo extrae o no dependiendo de la versión
         return { success: true, messageId: 'enviado-por-mailersend' };
       } catch (error) {
         this.logger.error(`❌ Error enviando email vía MailerSend a ${toEmail}:`, error);
@@ -144,7 +143,6 @@ export class EmailService {
    */
   async verifyConnection(): Promise<boolean> {
     if (this.useMailerSend && this.mailerSend) {
-      // MailerSend no tiene un "verify" como SMTP, si hay token asumimos conexión
       return true;
     }
     
@@ -176,20 +174,20 @@ export class EmailService {
     this.logger.log(`📧 Xenon enviando ticket de soporte a: ${emailTo}`);
 
     const subject = `🚨 [ESCALADO] Soporte requerido por usuario ${userId}`;
-    const text = \`
+    const text = `
 Un usuario ha solicitado asistencia humana a través del agente Xenon.
 
 DETALLES DEL CLIENTE:
-- ID de Usuario: \${userId}
-- Teléfono de contacto: \${userPhone}
+- ID de Usuario: ${userId}
+- Teléfono de contacto: ${userPhone}
 
 RESUMEN DEL PROBLEMA SEGÚN LA IA:
-\${summary}
+${summary}
 
 ---
 Este es un correo automático generado por Xenon.
-    \`;
-    const html = \`
+    `;
+    const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #4F46E5;">🚨 Nuevo ticket de soporte escalado por Xenon</h2>
         <p>Un usuario ha solicitado asistencia humana durante su llamada/chat con el agente IA.</p>
@@ -197,22 +195,22 @@ Este es un correo automático generado por Xenon.
         <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
           <h3 style="margin-top: 0; color: #1f2937;">Detalles del Cliente:</h3>
           <ul style="color: #4b5563;">
-            <li><strong>ID de Usuario:</strong> \${userId}</li>
-            <li><strong>Email (si aplica):</strong> \${userEmail || 'No proporcionado'}</li>
-            <li><strong>Teléfono (si aplica):</strong> \${userPhone}</li>
+            <li><strong>ID de Usuario:</strong> ${userId}</li>
+            <li><strong>Email (si aplica):</strong> ${userEmail || 'No proporcionado'}</li>
+            <li><strong>Teléfono (si aplica):</strong> ${userPhone}</li>
           </ul>
         </div>
 
         <div style="background-color: #fee2e2; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
           <h3 style="margin-top: 0; color: #991b1b;">Resumen del problema:</h3>
-          <p style="color: #7f1d1d; white-space: pre-wrap;">\${summary}</p>
+          <p style="color: #7f1d1d; white-space: pre-wrap;">${summary}</p>
         </div>
 
         <p style="color: #6b7280; font-size: 12px; margin-top: 30px;">
           Este es un correo automático generado por el asistente virtual de Llamalo AI.
         </p>
       </div>
-    \`;
+    `;
 
     return this.sendEmail(emailTo, subject, html, text);
   }
