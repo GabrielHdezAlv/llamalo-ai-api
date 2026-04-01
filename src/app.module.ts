@@ -17,6 +17,7 @@ import { CryptoModule } from './crypto/crypto.module';
 import { NewsModule } from './news/news.module';
 import { MailerLiteModule } from './mailerlite/mailerlite.module';
 import { LearningModule } from './learning/learning.module';
+import { SystemLogsModule } from './system-logs/system-logs.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { LearningModule } from './learning/learning.module';
     NewsModule,
     MailerLiteModule,
     LearningModule,
+    SystemLogsModule,
   ],
   controllers: [],
   providers: [],

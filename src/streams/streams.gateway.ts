@@ -22,6 +22,7 @@ import {
 import { MetricsService } from '../metrics/metrics.service';
 import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
 import { EmailService } from '../auth/email.service'; // Importar EmailService
+import { SystemLogsService, LogType } from '../system-logs/system-logs.service';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -231,6 +232,7 @@ export class StreamsGateway {
     private readonly metricsService: MetricsService,
     private readonly agentKnowledgeService: AgentKnowledgeService,
     private readonly emailService: EmailService,
+    private readonly systemLogsService: SystemLogsService,
   ) {
     if (!this.elevenLabsApiKey) {
       console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
@@ -1076,6 +1078,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         `❌ [${session.callSid}] Error en ElevenLabs STT WS:`,
         error,
       );
+      this.systemLogsService.logError({
+        type: LogType.CALL_FAILED,
+        message: 'Error en ElevenLabs STT WS (Failover iniciado)',
+        reason: error.message,
+        metadata: { callSid: session.callSid, userId: session.userId }
+      });
+      session.terminadoPor = 'error';
       this.failoverToDeepgram(session, `error: ${error.message || 'ws error'}`);
     });
   }
@@ -1479,6 +1488,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         });
       } catch (err) {
         console.error(`❌ [${session.callSid}] Error al llamar a OpenAI:`, err);
+        session.terminadoPor = 'error';
+        this.systemLogsService.logError({
+          type: LogType.CALL_FAILED,
+          message: 'Error en la llamada a OpenAI',
+          reason: err.message,
+          metadata: { callSid: session.callSid, userId: session.userId }
+        });
         session.interrupted = false;
         session.agentSpeaking = false;
         return;
@@ -1882,6 +1898,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
     ws.on('error', (error) => {
       console.error(`❌ [${session.callSid}] Error en Deepgram WS:`, error);
+      session.terminadoPor = 'error';
+      this.systemLogsService.logError({
+        type: LogType.CALL_FAILED,
+        message: 'Error en Deepgram WS',
+        reason: error.message,
+        metadata: { callSid: session.callSid, userId: session.userId }
+      });
     });
   }
 

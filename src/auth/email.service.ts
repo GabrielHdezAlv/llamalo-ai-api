@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
+import { SystemLogsService, LogType } from '../system-logs/system-logs.service';
 
 @Injectable()
 export class EmailService {
@@ -9,7 +10,7 @@ export class EmailService {
   private mailerSend?: MailerSend;
   private useMailerSend = false;
 
-  constructor() {
+  constructor(private readonly systemLogsService: SystemLogsService) {
     // 1️⃣ Configurar MailerSend si hay API Key
     if (process.env.MAILERSEND_API_KEY) {
       this.logger.log('🚀 Inicializando servicio de email con MailerSend API...');
@@ -59,6 +60,15 @@ export class EmailService {
         return { success: true, messageId: 'enviado-por-mailersend' };
       } catch (error) {
         this.logger.error(`❌ Error enviando email vía MailerSend a ${toEmail}:`, error);
+        
+        // Log en system_logs
+        await this.systemLogsService.logError({
+          type: LogType.MAILERSEND_ERROR,
+          message: `Error enviando email a ${toEmail}`,
+          reason: (error as Error).message,
+          metadata: { toEmail, subject },
+        });
+
         throw new Error(`Error con MailerSend: ${(error as Error).message}`);
       }
     } else if (this.transporter) {
