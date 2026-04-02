@@ -2582,6 +2582,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             session.agentSpeaking = false;
             session.expectedAudioEndTime = 0; // Resetear tiempo estimado
             session.silenceInterventions = 0;
+            // Al detectar una interrupción, también consideramos que el usuario "ha hablado", 
+            // así que limpiamos la bandera de silencio si existiera para que no se despida después.
+            if (session.terminadoPor === 'silencio') {
+              session.terminadoPor = undefined;
+            }
 
             // Cancelar cualquier TTS en progreso
             if (session.ttsCancelStream) {
