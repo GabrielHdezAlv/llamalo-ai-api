@@ -134,6 +134,7 @@ interface CallSession {
   callDirection?: 'inbound' | 'outbound';
   // Conversation Manager
   conversationState?: 'GREETING' | 'DISCOVERY' | 'SUPPORT' | 'CLOSING';
+  silenceInterventions?: number;
 }
 
 @Injectable()
@@ -1186,6 +1187,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           );
           session.interrupted = true;
           session.agentSpeaking = false;
+          session.silenceInterventions = 0;
 
           if (session.ttsCancelStream) {
             session.ttsCancelStream();
@@ -1265,6 +1267,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     if (role === 'user') {
       console.log(`💬 [${session.callSid}] Usuario dijo: "${text}"`);
       session.history.push({ role: 'user', content: correctedText });
+      session.silenceInterventions = 0; // Resetear contador de intervenciones por silencio
+      if (session.terminadoPor === 'silencio') {
+        session.terminadoPor = undefined; // Limpiar flag de silencio si el usuario responde
+      }
     } else {
       // Si es sistema (silencio), inyectamos una instrucción clara
       session.history.push({
@@ -2575,6 +2581,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             session.interrupted = true;
             session.agentSpeaking = false;
             session.expectedAudioEndTime = 0; // Resetear tiempo estimado
+            session.silenceInterventions = 0;
 
             // Cancelar cualquier TTS en progreso
             if (session.ttsCancelStream) {
@@ -3252,7 +3259,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       clearTimeout(session.silenceTimeout);
     }
 
-    const SILENCE_TIMEOUT_MS = 15 * 1000; // 15 segundos de silencio antes de intervenir
+    const SILENCE_TIMEOUT_MS = Number(process.env.SILENCE_TIMEOUT_MS) || 25 * 1000; // 25 segundos de silencio antes de intervenir
 
     session.silenceTimeout = setTimeout(async () => {
       session.silenceTimeout = undefined;
@@ -3270,21 +3277,34 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         (session.expectedAudioEndTime &&
           session.expectedAudioEndTime > now + 400)
       ) {
+        // En lugar de reiniciar para otros 25s, el temporizador vuelve a esperar el ciclo completo 
+        // ya que el audio acaba de terminar o sigue reproduciéndose
         this.resetSilenceTimer(session);
         return;
       }
 
+      session.silenceInterventions = (session.silenceInterventions || 0) + 1;
+
       console.warn(
-        `⏳ [${session.callSid}] Silencio detectado por ${SILENCE_TIMEOUT_MS / 1000} segundos. Interviniendo...`,
+        `⏳ [${session.callSid}] Silencio detectado por ${SILENCE_TIMEOUT_MS / 1000} segundos. Intervención #${session.silenceInterventions}.`,
       );
 
-      // Marcar que la causa probable de finalización es silencio del cliente
-      session.terminadoPor = 'silencio';
+      if (session.silenceInterventions === 1) {
+        // Marcar que la causa probable de finalización es silencio del cliente
+        session.terminadoPor = 'silencio';
 
-      // Simular una instrucción de sistema para activar la respuesta del LLM
-      const silenceInstruction =
-        'Parece que no hay nadie. Dile algo amable al usuario para intentar retomar la conversación o despidete amablemente si parece que ya no va a responder.';
-      await this.handleFinalTranscript(session, silenceInstruction, 'system');
+        // Simular una instrucción de sistema para activar la respuesta del LLM
+        const silenceInstruction =
+          '(SISTEMA: El usuario lleva un tiempo en silencio. Pregúntale de forma muy breve y natural si sigue ahí o si necesita algo más, sin alarmarte ni decir que se perdió la conexión. Solo di algo muy breve.)';
+        await this.handleFinalTranscript(session, silenceInstruction, 'system');
+      } else {
+        // Segunda vez, colgar directamente
+        console.warn(`⏳ [${session.callSid}] Silencio prolongado repetido. Finalizando llamada.`);
+        session.terminadoPor = 'silencio';
+        const finalSilenceInstruction =
+          '(SISTEMA: El usuario sigue en silencio. Despídete muy brevemente indicando que vas a finalizar la llamada y añade [END_CALL] para terminar.)';
+        await this.handleFinalTranscript(session, finalSilenceInstruction, 'system');
+      }
     }, SILENCE_TIMEOUT_MS);
   }
 
