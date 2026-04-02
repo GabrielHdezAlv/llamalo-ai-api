@@ -111,13 +111,13 @@ export class TwilioService {
       );
 
       // Validar credenciales antes de guardar
-      const isValid = await this.validateTwilioCredentials(
+      const validation = await this.validateTwilioCredentials(
         config.twilioSid,
         config.twilioToken,
       );
-      if (!isValid) {
+      if (!validation.valid) {
         throw new BadRequestException(
-          'Las credenciales de Twilio son inválidas.',
+          validation.message || 'Las credenciales de Twilio son inválidas.',
         );
       }
 
@@ -264,10 +264,17 @@ export class TwilioService {
                 message: 'No hay consumo de llamadas entrantes registrado.',
               };
             }
-          } catch {
+          } catch (error) {
+            let message = 'No se pudieron obtener los minutos consumidos.';
+            if (axios.isAxiosError(error) && error.response && error.response.status === 403) {
+              if (error.response.data?.code === 20403) {
+                message = 'La cuenta de Twilio ha sido suspendida o no tiene permisos.';
+              }
+            }
+            
             inboundMinutes = {
               minutes: '0',
-              message: 'No se pudieron obtener los minutos consumidos.',
+              message,
             };
           }
 
@@ -426,7 +433,7 @@ export class TwilioService {
   private async validateTwilioCredentials(
     sid: string,
     token: string,
-  ): Promise<boolean> {
+  ): Promise<{ valid: boolean; message?: string }> {
     try {
       const auth = Buffer.from(`${sid}:${token}`).toString('base64');
       const response = await axios.get(
@@ -438,9 +445,26 @@ export class TwilioService {
         },
       );
 
-      return response.status === 200;
-    } catch {
-      return false;
+      if (response.data?.status === 'suspended') {
+        return { valid: false, message: 'La cuenta de Twilio ha sido suspendida.' };
+      }
+      
+      if (response.data?.status === 'closed') {
+        return { valid: false, message: 'La cuenta de Twilio ha sido cerrada.' };
+      }
+
+      return { valid: response.status === 200 };
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        if (error.response.status === 403) {
+          const code = error.response.data?.code;
+          // 20403: Forbidden - account suspended or closed
+          if (code === 20403) {
+             return { valid: false, message: 'La cuenta de Twilio ha sido suspendida o no tiene permisos.' };
+          }
+        }
+      }
+      return { valid: false };
     }
   }
 
@@ -666,22 +690,29 @@ export class TwilioService {
           ? `https://api.twilio.com${nextPageUri}`
           : `https://api.twilio.com/2010-04-01/Accounts/${sid}/IncomingPhoneNumbers.json`;
 
-        const response = await axios.get<{
-          incoming_phone_numbers: Array<{
-            phone_number: string;
-          }>;
-          next_page_uri: string | null;
-        }>(url, {
-          headers: {
-            Authorization: `Basic ${auth}`,
-          },
-        });
+        try {
+          const response = await axios.get<{
+            incoming_phone_numbers: Array<{
+              phone_number: string;
+            }>;
+            next_page_uri: string | null;
+          }>(url, {
+            headers: {
+              Authorization: `Basic ${auth}`,
+            },
+          });
 
-        const phoneNumbers = response.data.incoming_phone_numbers.map((phone) =>
-          phone.phone_number.replace(/\s|-|\(|\)/g, ''),
-        );
-        allPhoneNumbers = [...allPhoneNumbers, ...phoneNumbers];
-        nextPageUri = response.data.next_page_uri;
+          const phoneNumbers = response.data.incoming_phone_numbers.map((phone) =>
+            phone.phone_number.replace(/\s|-|\(|\)/g, ''),
+          );
+          allPhoneNumbers = [...allPhoneNumbers, ...phoneNumbers];
+          nextPageUri = response.data.next_page_uri;
+        } catch (error) {
+          if (axios.isAxiosError(error) && error.response && error.response.status === 403 && error.response.data?.code === 20403) {
+            throw new BadRequestException('La cuenta de Twilio ha sido suspendida o no tiene permisos.');
+          }
+          throw error;
+        }
       } while (nextPageUri);
 
       // Verificar si el número está en la lista
@@ -803,13 +834,13 @@ export class TwilioService {
       }
 
       // 1. Validar que el SID y Token son correctos
-      const isValidCredentials = await this.validateTwilioCredentials(
+      const validation = await this.validateTwilioCredentials(
         twilioSid,
         twilioToken,
       );
-      if (!isValidCredentials) {
+      if (!validation.valid) {
         throw new BadRequestException(
-          'Las credenciales de Twilio (SID y Token) son inválidas.',
+          validation.message || 'Las credenciales de Twilio (SID y Token) son inválidas.',
         );
       }
 
@@ -883,22 +914,29 @@ export class TwilioService {
           ? `https://api.twilio.com${nextPageUri}`
           : `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/IncomingPhoneNumbers.json`;
 
-        const response = await axios.get<{
-          incoming_phone_numbers: Array<{
-            phone_number: string;
-          }>;
-          next_page_uri: string | null;
-        }>(url, {
-          headers: {
-            Authorization: `Basic ${auth}`,
-          },
-        });
+        try {
+          const response = await axios.get<{
+            incoming_phone_numbers: Array<{
+              phone_number: string;
+            }>;
+            next_page_uri: string | null;
+          }>(url, {
+            headers: {
+              Authorization: `Basic ${auth}`,
+            },
+          });
 
-        const phoneNumbers = response.data.incoming_phone_numbers.map((phone) =>
-          phone.phone_number.replace(/\s|-|\(|\)/g, ''),
-        );
-        allPhoneNumbers = [...allPhoneNumbers, ...phoneNumbers];
-        nextPageUri = response.data.next_page_uri;
+          const phoneNumbers = response.data.incoming_phone_numbers.map((phone) =>
+            phone.phone_number.replace(/\s|-|\(|\)/g, ''),
+          );
+          allPhoneNumbers = [...allPhoneNumbers, ...phoneNumbers];
+          nextPageUri = response.data.next_page_uri;
+        } catch (error) {
+          if (axios.isAxiosError(error) && error.response && error.response.status === 403 && error.response.data?.code === 20403) {
+            throw new BadRequestException('La cuenta de Twilio ha sido suspendida o no tiene permisos.');
+          }
+          throw error;
+        }
       } while (nextPageUri);
 
       const isNumberFound = allPhoneNumbers.some(

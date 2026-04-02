@@ -3355,19 +3355,25 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       } else {
         const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${session.callSid}.json`;
 
-        await axios.post(url, 'Status=completed', {
-          auth: {
-            username: accountSid,
-            password: authToken,
-          },
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-        });
+        try {
+          await axios.post(url, 'Status=completed', {
+            auth: {
+              username: accountSid,
+              password: authToken,
+            },
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          });
 
-        console.log(
-          `✅ [${session.callSid}] Llamada colgada exitosamente vía API Twilio del usuario`,
-        );
+          console.log(
+            `✅ [${session.callSid}] Llamada colgada exitosamente vía API Twilio del usuario`,
+          );
+        } catch (apiError) {
+          console.error(
+            `❌ [${session.callSid}] Error al colgar vía API Twilio: ${apiError instanceof Error ? apiError.message : 'Error desconocido'}`
+          );
+        }
       }
 
       // 3. Cerrar conexiones WebSocket
