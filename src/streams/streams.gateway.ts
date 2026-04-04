@@ -3345,7 +3345,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Esperar a que el audio pendiente se termine de reproducir
       const now = Date.now();
       if (session.expectedAudioEndTime && session.expectedAudioEndTime > now) {
-        const timeToWait = session.expectedAudioEndTime - now + 2000; // 2000ms de margen adicional para asegurar reproducción completa
+        const timeToWait = session.expectedAudioEndTime - now + 300; // 300ms de margen adicional para asegurar reproducción completa sin retrasos artificiales
         console.log(
           `⏳ [${session.callSid}] Esperando ${timeToWait}ms para que termine de hablar el agente antes de colgar (now: ${now}, expectedEndTime: ${session.expectedAudioEndTime})...`,
         );
