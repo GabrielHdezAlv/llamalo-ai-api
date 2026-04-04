@@ -3306,12 +3306,18 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           '(INSTRUCCIÓN DE SISTEMA: El usuario lleva un rato en silencio. Haz una pregunta muy breve y natural para saber si sigue ahí o necesita algo más. NUNCA menciones la palabra "silencio" ni digas que se cortó la conexión.)';
         await this.handleFinalTranscript(session, silenceInstruction, 'system');
       } else {
-        // Segunda vez, colgar directamente
-        console.warn(`⏳ [${session.callSid}] Silencio prolongado repetido. Finalizando llamada.`);
+        // Segunda vez, colgar directamente sin pasar por el LLM para asegurar que se corte.
+        console.warn(`⏳ [${session.callSid}] Silencio prolongado repetido. Finalizando llamada de forma nativa.`);
         session.terminadoPor = 'silencio';
-        const finalSilenceInstruction =
-          '(INSTRUCCIÓN DE SISTEMA: El usuario sigue en silencio prologando. Despídete muy brevemente indicando que vas a finalizar la llamada, sin alarmarte, y añade [END_CALL] al final de tu frase para terminar.)';
-        await this.handleFinalTranscript(session, finalSilenceInstruction, 'system');
+        
+        // Detener temporizador para que no se re-inicie
+        this.stopSilenceTimer(session);
+
+        // Enviamos una última despedida por TTS directamente
+        await this.streamTTSFromText(
+          session,
+          "No detecto actividad. Voy a finalizar la llamada. ¡Que tengas un buen día! [END_CALL]"
+        );
       }
     }, nextTimeoutMs);
   }
