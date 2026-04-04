@@ -1275,7 +1275,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Si es sistema (silencio), inyectamos una instrucción clara
       session.history.push({
         role: 'system',
-        content: `(INSTRUCCIÓN DE SISTEMA: El usuario ha estado en silencio por 15 segundos. ${text})`,
+        content: text,
       });
     }
 
@@ -3264,7 +3264,10 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       clearTimeout(session.silenceTimeout);
     }
 
-    const SILENCE_TIMEOUT_MS = Number(process.env.SILENCE_TIMEOUT_MS) || 25 * 1000; // 25 segundos de silencio antes de intervenir
+    const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 15 * 1000; // 15s para primera intervención
+    const HANGUP_TIMEOUT_MS = Number(process.env.SILENCE_HANGUP_TIMEOUT_MS) || 30 * 1000; // 30s adicionales antes de colgar
+
+    const nextTimeoutMs = session.silenceInterventions >= 1 ? HANGUP_TIMEOUT_MS : PROMPT_TIMEOUT_MS;
 
     session.silenceTimeout = setTimeout(async () => {
       session.silenceTimeout = undefined;
@@ -3282,7 +3285,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         (session.expectedAudioEndTime &&
           session.expectedAudioEndTime > now + 400)
       ) {
-        // En lugar de reiniciar para otros 25s, el temporizador vuelve a esperar el ciclo completo 
+        // En lugar de reiniciar para otros Xs, el temporizador vuelve a esperar el ciclo completo 
         // ya que el audio acaba de terminar o sigue reproduciéndose
         this.resetSilenceTimer(session);
         return;
@@ -3291,7 +3294,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       session.silenceInterventions = (session.silenceInterventions || 0) + 1;
 
       console.warn(
-        `⏳ [${session.callSid}] Silencio detectado por ${SILENCE_TIMEOUT_MS / 1000} segundos. Intervención #${session.silenceInterventions}.`,
+        `⏳ [${session.callSid}] Silencio detectado por ${nextTimeoutMs / 1000} segundos. Intervención #${session.silenceInterventions}.`,
       );
 
       if (session.silenceInterventions === 1) {
@@ -3300,17 +3303,17 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
         // Simular una instrucción de sistema para activar la respuesta del LLM
         const silenceInstruction =
-          '(SISTEMA: El usuario lleva un tiempo en silencio. Pregúntale de forma muy breve y natural si sigue ahí o si necesita algo más, sin alarmarte ni decir que se perdió la conexión. Solo di algo muy breve.)';
+          '(INSTRUCCIÓN DE SISTEMA: El usuario lleva un rato en silencio. Haz una pregunta muy breve y natural para saber si sigue ahí o necesita algo más. NUNCA menciones la palabra "silencio" ni digas que se cortó la conexión.)';
         await this.handleFinalTranscript(session, silenceInstruction, 'system');
       } else {
         // Segunda vez, colgar directamente
         console.warn(`⏳ [${session.callSid}] Silencio prolongado repetido. Finalizando llamada.`);
         session.terminadoPor = 'silencio';
         const finalSilenceInstruction =
-          '(SISTEMA: El usuario sigue en silencio. Despídete muy brevemente indicando que vas a finalizar la llamada y añade [END_CALL] para terminar.)';
+          '(INSTRUCCIÓN DE SISTEMA: El usuario sigue en silencio prologando. Despídete muy brevemente indicando que vas a finalizar la llamada, sin alarmarte, y añade [END_CALL] al final de tu frase para terminar.)';
         await this.handleFinalTranscript(session, finalSilenceInstruction, 'system');
       }
-    }, SILENCE_TIMEOUT_MS);
+    }, nextTimeoutMs);
   }
 
   private stopSilenceTimer(session: CallSession) {
