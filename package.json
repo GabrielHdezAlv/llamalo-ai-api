@@ -46,7 +46,7 @@
     "form-data": "^4.0.4",
     "jsdom": "^29.0.1",
     "langchain": "^1.2.18",
-    "mailersend": "^2.6.0",
+    "mailersend": "^2.7.0",
     "multer": "^2.0.2",
     "nodemailer": "^8.0.1",
     "openai": "^6.3.0",
