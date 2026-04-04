@@ -3267,7 +3267,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 15 * 1000; // 15s para primera intervención
     const HANGUP_TIMEOUT_MS = Number(process.env.SILENCE_HANGUP_TIMEOUT_MS) || 30 * 1000; // 30s adicionales antes de colgar
 
-    const nextTimeoutMs = session.silenceInterventions >= 1 ? HANGUP_TIMEOUT_MS : PROMPT_TIMEOUT_MS;
+    const nextTimeoutMs = (session.silenceInterventions ?? 0) >= 1 ? HANGUP_TIMEOUT_MS : PROMPT_TIMEOUT_MS;
 
     session.silenceTimeout = setTimeout(async () => {
       session.silenceTimeout = undefined;
