@@ -1075,25 +1075,18 @@ export class MetricsService {
   }
 
   /**
-   * Calcula la latencia media de respuesta del agente en milisegundos
+   * Calcula la latencia media de respuesta del agente en milisegundos.
+   * Usa las últimas N mediciones (por turno/interacción en llamada), sin filtrar por día:
+   * se consultan todos los documentos diarios del usuario, se ordenan por fecha y se toma la cola del array global.
    */
   private async calculateLatenciaMedia(
     userId: string,
     twilioAccountId?: number,
   ): Promise<number> {
     try {
-      // Usar los últimos 3 días para reflejar el rendimiento reciente
-      // (la media mensual arrastraría llamadas malas de hace semanas)
-      const threeDaysAgo = new Date();
-      threeDaysAgo.setUTCDate(threeDaysAgo.getUTCDate() - 2);
-      threeDaysAgo.setUTCHours(0, 0, 0, 0);
-      const startDateStr = threeDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD
-
-      // Consultar colección de latencias agregadas
       let query = this.firestore
         .collection('latencias_agregadas')
-        .where('userId', '==', userId)
-        .where('periodo', '>=', startDateStr);
+        .where('userId', '==', userId);
 
       if (twilioAccountId) {
         query = query.where('twilioAccountId', '==', twilioAccountId);
@@ -1108,31 +1101,36 @@ export class MetricsService {
         return 0;
       }
 
-      // Recolectar todas las latencias del período
+      const docsOrdenados = snapshot.docs
+        .map((doc) => ({
+          periodo: String((doc.data() as { periodo?: string }).periodo ?? ''),
+          latencias: ((doc.data() as { latencias?: number[] }).latencias ||
+            []) as number[],
+        }))
+        .filter((d) => d.periodo.length > 0)
+        .sort((a, b) => a.periodo.localeCompare(b.periodo));
+
       const todasLasLatencias: number[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const latencias = data.latencias || [];
-        todasLasLatencias.push(...latencias);
-      });
+      for (const d of docsOrdenados) {
+        todasLasLatencias.push(...d.latencias);
+      }
 
       if (todasLasLatencias.length === 0) {
-        console.log(`[Metrics] No hay latencias registradas para el período`);
+        console.log(`[Metrics] No hay latencias registradas`);
         return 0;
       }
 
-      // Tomar solo las últimas 20 interacciones para una media más reactiva y realista
-      // (evitando que latencias antiguas o anomalías corrompan la media mostrada al cliente)
-      const RECENT_INTERACTIONS_LIMIT = 20;
-      const ultimasLatencias = todasLasLatencias.slice(-RECENT_INTERACTIONS_LIMIT);
+      const RECENT_MEASUREMENTS_LIMIT = 5;
+      const ultimasLatencias = todasLasLatencias.slice(
+        -RECENT_MEASUREMENTS_LIMIT,
+      );
 
-      // Calcular media
       const latenciaMedia = Math.round(
         ultimasLatencias.reduce((a, b) => a + b, 0) / ultimasLatencias.length,
       );
 
       console.log(
-        `[Metrics] Latencia media calculada - Total mediciones (histórico): ${todasLasLatencias.length}, Usadas (últimas): ${ultimasLatencias.length}, Media: ${latenciaMedia}ms`,
+        `[Metrics] Latencia media calculada - Total mediciones (histórico): ${todasLasLatencias.length}, Usadas: ${ultimasLatencias.length}, Media: ${latenciaMedia}ms`,
       );
 
       return latenciaMedia;
