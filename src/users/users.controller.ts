@@ -23,6 +23,7 @@ import {
 import { UsersService } from './users.service';
 import type { UploadFile, UserProfileResponse } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePlanDto } from './dto/change-plan.dto';
 import { UserProfileResponseDto } from './dto/user-profile-response.dto';
 import { UpdateProfileResponseDto } from './dto/update-profile-response.dto';
 import { UploadImageResponseDto } from './dto/upload-image-response.dto';
@@ -220,5 +221,21 @@ export class UsersController {
       throw new BadRequestException('El tipo de recompensa es requerido');
     }
     return this.usersService.redeemReward(userId, rewardType);
+  }
+
+  @Post('plan')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary: 'Cambiar el plan del usuario (Upgrade/Downgrade)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Plan actualizado correctamente',
+  })
+  async changePlan(
+    @GetUser('uid') userId: string,
+    @Body() changePlanDto: ChangePlanDto,
+  ) {
+    return this.usersService.changePlan(userId, changePlanDto.plan);
   }
 }

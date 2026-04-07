@@ -414,7 +414,33 @@ export class StreamsGateway {
       }
     }
 
-    const instructions = this.resolveInstructions(customParameters);
+    
+    
+    let hasAvailableMinutes = true;
+
+    if (userDocumentData) {
+      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const usedMinutes = userDocumentData.minutesByMonth?.[currentMonth] || 0;
+      const planLimit = userDocumentData.minutesLimit || 100;
+      const extraMinutes = userDocumentData.extraMinutes || 0;
+      const totalLimit = planLimit + extraMinutes;
+      
+      if (usedMinutes >= totalLimit) {
+        hasAvailableMinutes = false;
+        console.warn(`⚠️ [${callSid}] Usuario ${userId} no tiene minutos disponibles (${usedMinutes} >= ${totalLimit}).`);
+      }
+    }
+
+
+    let instructions = this.resolveInstructions(customParameters);
+    let pendingGreeting = this.resolveGreeting(customParameters);
+
+    if (!hasAvailableMinutes) {
+      // Modificar comportamiento si no tiene minutos
+      instructions = 'DI EXACTAMENTE: "Lo siento, el saldo de esta cuenta se ha agotado. Por favor, contacta con el administrador." Y NO DIGAS NADA MÁS.';
+      pendingGreeting = 'Lo siento, el saldo de esta cuenta se ha agotado.';
+    }
+
     const voiceId = this.resolveVoiceId(customParameters);
 
     // console.log(
@@ -443,7 +469,7 @@ export class StreamsGateway {
       queuedAudio: [],
       outboundBuffer: Buffer.alloc(0),
       readyForAudio: false,
-      pendingGreeting: this.resolveGreeting(customParameters),
+      pendingGreeting: pendingGreeting,
       greetingSent: false,
       responseLatencies: [],
       history: [],

@@ -6,6 +6,7 @@ import {
 import * as admin from 'firebase-admin';
 import { v4 as uuidv4 } from 'uuid';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { PLAN_LIMITS, PlanType } from '../common/constants/plans.constants';
 import { getFirestore } from '../firebase/firebase.config';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
 
@@ -57,6 +58,7 @@ interface UserData {
   hasCompletedSetup?: boolean;
   createdAt?: admin.firestore.Timestamp | string;
   scheduledDeletionDate?: admin.firestore.Timestamp;
+  plan?: string;
   integrations?: {
     shopify?: Array<{
       connected: boolean;
@@ -136,6 +138,7 @@ export type UserProfileResponse = {
     };
     totalMinutes: number;
   }>;
+  plan?: string;
   minutesLimit?: number;
   extraMinutes?: number;
   minutesByMonth?: Record<string, number>;
@@ -253,6 +256,7 @@ export class UsersService {
           importedBy: phone.importedBy || 'Twilio',
         })),
         agents: userData?.agents || [],
+        plan: userData?.plan ?? 'basic',
         minutesLimit: userData?.minutesLimit ?? 100, // Límite por defecto si no existe
         extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
         minutesByMonth: userData?.minutesByMonth ?? {}, // Historial de minutos por mes
@@ -637,6 +641,85 @@ export class UsersService {
       }
       throw new BadRequestException(
         `Error al canjear recompensa: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Cambiar plan del usuario (Upgrade/Downgrade)
+  async changePlan(userId: string, newPlan: PlanType) {
+    try {
+      const docRef = this.firestore.collection('users').doc(userId);
+      const snapshot = await docRef.get();
+
+      if (!snapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado en Firestore');
+      }
+
+      const planLimit = PLAN_LIMITS[newPlan];
+      if (!planLimit) {
+        throw new BadRequestException('Plan inválido');
+      }
+
+      // Actualizar el plan y el límite de minutos base
+      await docRef.update({
+        plan: newPlan,
+        minutesLimit: planLimit.minutesLimit,
+      });
+
+      return {
+        message: 'Plan actualizado correctamente',
+        plan: newPlan,
+        minutesLimit: planLimit.minutesLimit,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Error al actualizar el plan: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ✅ Comprobar si el usuario tiene minutos disponibles
+  async hasAvailableMinutes(userId: string): Promise<{
+    hasMinutes: boolean;
+    availableMinutes: number;
+    usedMinutes: number;
+    totalLimit: number;
+  }> {
+    try {
+      const docRef = this.firestore.collection('users').doc(userId);
+      const snapshot = await docRef.get();
+
+      if (!snapshot.exists) {
+        throw new NotFoundException('Usuario no encontrado en Firestore');
+      }
+
+      const userData = snapshot.data() as UserData;
+      
+      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const usedMinutes = userData.minutesByMonth?.[currentMonth] || 0;
+      
+      const planLimit = userData.minutesLimit || 100; // default
+      const extraMinutes = userData.extraMinutes || 0;
+      const totalLimit = planLimit + extraMinutes;
+      
+      const availableMinutes = Math.max(0, totalLimit - usedMinutes);
+      
+      return {
+        hasMinutes: availableMinutes > 0,
+        availableMinutes,
+        usedMinutes,
+        totalLimit,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new BadRequestException(
+        `Error al comprobar minutos: ${(error as Error).message}`
       );
     }
   }

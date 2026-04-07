@@ -14,6 +14,7 @@ import axios from 'axios';
 import * as bcrypt from 'bcryptjs';
 import * as admin from 'firebase-admin';
 import { getFirestore } from '../firebase/firebase.config'; // 👈 Usamos el inicializador global
+import { DEFAULT_PLAN, PLAN_LIMITS } from '../common/constants/plans.constants';
 
 @Injectable()
 export class AuthService {
@@ -117,6 +118,9 @@ export class AuthService {
         verificationToken,
         verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
         createdAt: admin.firestore.Timestamp.now(),
+        plan: DEFAULT_PLAN,
+        minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
+        extraMinutes: 0,
         integrations: {
           shopify: [],
         },
@@ -317,6 +321,9 @@ export class AuthService {
           verificationToken: null,
           verificationTokenExpiresAt: null,
           createdAt: admin.firestore.Timestamp.now(),
+          plan: DEFAULT_PLAN,
+          minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
+          extraMinutes: 0,
           integrations: {
             shopify: [],
           },
