@@ -129,15 +129,24 @@ export class AuthService {
       this.mailerLiteService.syncUser(firebaseResponse.localId).catch(() => {});
 
       // 5️⃣ Enviar email de verificación
+      let verificationEmailSent = false;
       try {
         await this.emailService.sendVerificationEmail(email, verificationToken);
+        verificationEmailSent = true;
         console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
       } catch (emailError) {
         console.error(
-          `❌ [Auth] Error al enviar email de verificación: ${emailError}`,
+          `❌ [Auth] Error al enviar email de verificación:`,
+          emailError,
         );
         // No fallamos el registro si el email no se envía, pero lo registramos
       }
+
+      return {
+        token: firebaseResponse.idToken,
+        userId: firebaseResponse.localId,
+        verificationEmailSent,
+      };
     } catch (error: any) {
       console.error(
         `❌ [Auth] Error al guardar usuario en Firestore: ${error.message}`,
@@ -146,11 +155,6 @@ export class AuthService {
         'Usuario creado en Firebase pero error al guardar en Firestore',
       );
     }
-
-    return {
-      token: firebaseResponse.idToken,
-      userId: firebaseResponse.localId,
-    };
   }
 
   // ✅ Login de usuario

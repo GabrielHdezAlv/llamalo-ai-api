@@ -3,6 +3,24 @@ import * as nodemailer from 'nodemailer';
 import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
 import { SystemLogsService, LogType } from '../system-logs/system-logs.service';
 
+/** MailerSend (gaxios) rechaza con { statusCode, body, headers }, no con Error. */
+function formatOutgoingEmailError(error: unknown): string {
+  if (error && typeof error === 'object' && 'statusCode' in error) {
+    const e = error as { statusCode?: number; body?: unknown };
+    const body = e.body;
+    if (body && typeof body === 'object' && body !== null && 'message' in body) {
+      return `HTTP ${e.statusCode}: ${String((body as { message: string }).message)}`;
+    }
+    try {
+      return `HTTP ${e.statusCode}: ${JSON.stringify(body)}`;
+    } catch {
+      return `HTTP ${e.statusCode}`;
+    }
+  }
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -56,20 +74,24 @@ export class EmailService {
           .setHtml(html)
           .setText(text);
 
-        const response = await this.mailerSend.email.send(emailParams);
+        await this.mailerSend.email.send(emailParams);
         return { success: true, messageId: 'enviado-por-mailersend' };
       } catch (error) {
-        this.logger.error(`❌ Error enviando email vía MailerSend a ${toEmail}:`, error);
-        
+        const detail = formatOutgoingEmailError(error);
+        this.logger.error(
+          `❌ Error enviando email vía MailerSend a ${toEmail}: ${detail}`,
+          error,
+        );
+
         // Log en system_logs
         await this.systemLogsService.logError({
           type: LogType.MAILERSEND_ERROR,
           message: `Error enviando email a ${toEmail}`,
-          reason: (error as Error).message,
+          reason: detail,
           metadata: { toEmail, subject },
         });
 
-        throw new Error(`Error con MailerSend: ${(error as Error).message}`);
+        throw new Error(`Error con MailerSend: ${detail}`);
       }
     } else if (this.transporter) {
       try {
