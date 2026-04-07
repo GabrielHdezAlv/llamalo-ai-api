@@ -62,7 +62,11 @@ export class AuthService {
     console.log(`📝 [Auth] Intento de registro para: ${email}`);
 
     // 1️⃣ Crear usuario en Firebase Auth
-    let firebaseResponse: { idToken: string; localId: string };
+    let firebaseResponse: {
+      idToken: string;
+      localId: string;
+      refreshToken?: string;
+    };
     try {
       const { data } = await axios.post(
         `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${this.firebaseApiKey}`,
@@ -146,6 +150,7 @@ export class AuthService {
         token: firebaseResponse.idToken,
         userId: firebaseResponse.localId,
         verificationEmailSent,
+        refreshToken: firebaseResponse.refreshToken,
       };
     } catch (error: any) {
       console.error(
@@ -226,7 +231,11 @@ export class AuthService {
       console.log(
         `✅ [Auth] Login exitoso para: ${email} (userId: ${data.localId})`,
       );
-      return { token: data.idToken, userId: data.localId };
+      return {
+        token: data.idToken,
+        userId: data.localId,
+        refreshToken: data.refreshToken as string | undefined,
+      };
     } catch (error: any) {
       const message = this.getFirebaseErrorMessage(error);
 
