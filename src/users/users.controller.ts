@@ -232,6 +232,11 @@ export class UsersController {
     status: 200,
     description: 'Plan actualizado correctamente',
   })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Producción: cambio manual desactivado salvo ALLOW_PLAN_CHANGE_MOCK=true',
+  })
   async changePlan(
     @GetUser('uid') userId: string,
     @Body() changePlanDto: ChangePlanDto,

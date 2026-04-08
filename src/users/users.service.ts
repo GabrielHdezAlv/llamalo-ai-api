@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { v4 as uuidv4 } from 'uuid';
@@ -645,8 +646,23 @@ export class UsersService {
     }
   }
 
-  // ✅ Cambiar plan del usuario (Upgrade/Downgrade)
+  /**
+   * En producción el cambio de plan manual está desactivado salvo
+   * ALLOW_PLAN_CHANGE_MOCK=true (pruebas). El flujo real irá vía Stripe/webhooks.
+   */
+  private assertPlanChangeMockAllowed(): void {
+    const isProd = process.env.NODE_ENV === 'production';
+    const allowMock = process.env.ALLOW_PLAN_CHANGE_MOCK === 'true';
+    if (isProd && !allowMock) {
+      throw new ForbiddenException(
+        'El cambio de plan manual no está disponible en este entorno. Usa el proceso de suscripción cuando esté activo.',
+      );
+    }
+  }
+
+  // ✅ Cambiar plan del usuario (Upgrade/Downgrade) — mock / desarrollo
   async changePlan(userId: string, newPlan: PlanType) {
+    this.assertPlanChangeMockAllowed();
     try {
       const docRef = this.firestore.collection('users').doc(userId);
       const snapshot = await docRef.get();
