@@ -23,6 +23,7 @@ import { MetricsService } from '../metrics/metrics.service';
 import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
 import { EmailService } from '../auth/email.service'; // Importar EmailService
 import { SystemLogsService, LogType } from '../system-logs/system-logs.service';
+import { UsersService } from '../users/users.service';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -234,6 +235,7 @@ export class StreamsGateway {
     private readonly agentKnowledgeService: AgentKnowledgeService,
     private readonly emailService: EmailService,
     private readonly systemLogsService: SystemLogsService,
+    private readonly usersService: UsersService,
   ) {
     if (!this.elevenLabsApiKey) {
       console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
@@ -414,23 +416,24 @@ export class StreamsGateway {
       }
     }
 
-    
-    
     let hasAvailableMinutes = true;
-
-    if (userDocumentData) {
-      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-      const usedMinutes = userDocumentData.minutesByMonth?.[currentMonth] || 0;
-      const planLimit = userDocumentData.minutesLimit || 100;
-      const extraMinutes = userDocumentData.extraMinutes || 0;
-      const totalLimit = planLimit + extraMinutes;
-      
-      if (usedMinutes >= totalLimit) {
+    if (userId) {
+      try {
+        const quota = await this.usersService.hasAvailableMinutes(userId);
+        hasAvailableMinutes = quota.hasMinutes;
+        if (!hasAvailableMinutes) {
+          console.warn(
+            `⚠️ [${callSid}] Usuario ${userId} sin minutos (${quota.usedMinutes}/${quota.totalLimit}).`,
+          );
+        }
+      } catch (quotaErr) {
+        console.error(
+          `❌ [${callSid}] Error comprobando cupo de minutos:`,
+          quotaErr,
+        );
         hasAvailableMinutes = false;
-        console.warn(`⚠️ [${callSid}] Usuario ${userId} no tiene minutos disponibles (${usedMinutes} >= ${totalLimit}).`);
       }
     }
-
 
     let instructions = this.resolveInstructions(customParameters);
     let pendingGreeting = this.resolveGreeting(customParameters);

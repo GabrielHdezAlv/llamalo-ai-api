@@ -6,9 +6,10 @@ import { ShopifyModule } from '../shopify/shopify.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { AgentsModule } from '../agents/agents.module';
 import { AuthModule } from '../auth/auth.module'; // Importar AuthModule para usar EmailService
+import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [ShopifyModule, MetricsModule, AgentsModule, AuthModule],
+  imports: [ShopifyModule, MetricsModule, AgentsModule, AuthModule, UsersModule],
   controllers: [CallsController],
   providers: [TwilioService, StreamsGateway],
   exports: [StreamsGateway],

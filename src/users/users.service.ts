@@ -8,6 +8,7 @@ import * as admin from 'firebase-admin';
 import { v4 as uuidv4 } from 'uuid';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PLAN_LIMITS, PlanType } from '../common/constants/plans.constants';
+import { computeMinuteQuotaFromUserData } from '../common/utils/minute-quota.util';
 import { getFirestore } from '../firebase/firebase.config';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
 
@@ -716,22 +717,7 @@ export class UsersService {
       }
 
       const userData = snapshot.data() as UserData;
-      
-      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-      const usedMinutes = userData.minutesByMonth?.[currentMonth] || 0;
-      
-      const planLimit = userData.minutesLimit || 100; // default
-      const extraMinutes = userData.extraMinutes || 0;
-      const totalLimit = planLimit + extraMinutes;
-      
-      const availableMinutes = Math.max(0, totalLimit - usedMinutes);
-      
-      return {
-        hasMinutes: availableMinutes > 0,
-        availableMinutes,
-        usedMinutes,
-        totalLimit,
-      };
+      return computeMinuteQuotaFromUserData(userData);
     } catch (error) {
       if (error instanceof NotFoundException) throw error;
       throw new BadRequestException(

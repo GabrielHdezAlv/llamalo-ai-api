@@ -2,6 +2,7 @@ import { Controller, Post, Body, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
+import { UsersService } from '../users/users.service';
 import * as admin from 'firebase-admin';
 
 class IncomingDto {
@@ -15,6 +16,7 @@ export class CallsController {
   constructor(
     private readonly twilio: TwilioService,
     private readonly agentKnowledgeService: AgentKnowledgeService,
+    private readonly usersService: UsersService,
   ) {}
 
   // 🔒 Helper para enmascarar números de teléfono
@@ -249,6 +251,30 @@ export class CallsController {
         console.log(
           `⚠️ [Calls] Agente inactivo — cuelgue inmediato (userId=${userId}, agentId=${String(agentData.agentId)})`,
         );
+        return res.type('text/xml').send('<Response><Reject /></Response>');
+      }
+
+      try {
+        const quota = await this.usersService.hasAvailableMinutes(userId);
+        if (!quota.hasMinutes) {
+          console.warn(
+            `[Calls] Sin minutos disponibles userId=${userId} (${quota.usedMinutes}/${quota.totalLimit})`,
+          );
+          const rQuota = this.twilio.newVoiceResponse();
+          rQuota.say(
+            {
+              voice: 'alice',
+              language: 'es-ES',
+            },
+            'Lo sentimos. Esta cuenta no tiene minutos de llamada disponibles en este periodo. Contacte con el administrador.',
+          );
+          rQuota.hangup();
+          return res.type('text/xml').send(rQuota.toString());
+        }
+      } catch (quotaErr) {
+        const msg =
+          quotaErr instanceof Error ? quotaErr.message : 'Error desconocido';
+        console.error(`❌ [Calls] Error comprobando cupo de minutos: ${msg}`);
         return res.type('text/xml').send('<Response><Reject /></Response>');
       }
 

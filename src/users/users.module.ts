@@ -8,5 +8,6 @@ import { MailerLiteModule } from '../mailerlite/mailerlite.module';
   imports: [MailerLiteModule],
   controllers: [UsersController],
   providers: [UsersService, AccountDeletionSchedulerService],
+  exports: [UsersService],
 })
 export class UsersModule {}
