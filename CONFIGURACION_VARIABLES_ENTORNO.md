@@ -115,6 +115,12 @@ Para verificar que las variables están configuradas correctamente:
    - `✅ Variables de entorno cargadas correctamente`
    - O errores como: `⚠️ ELEVENLABS_API_KEY no configurado`
 
+## Planes, cambio de plan y perfil en tiempo real
+
+- **`ALLOW_PLAN_CHANGE_MOCK`**: con `NODE_ENV=production`, el endpoint `POST /users/plan` (cambio manual de plan) responde **403** salvo que definas `ALLOW_PLAN_CHANGE_MOCK=true` (solo pruebas o administración controlada).
+- **Flujo con Stripe (futuro)**: el webhook de suscripción debe actualizar en Firestore `plan` y `minutesLimit` (y opcionalmente `stripeCustomerId`, etc.). Tras persistir, llama a la misma lógica que hoy dispara notificación: `ProfileEventsService.notifyProfileUpdated(userId)` o reutiliza un servicio interno que ya lo haga; así la app recibe `profile_updated` por WebSocket (`/profile/events`) y recarga el perfil.
+- **WebSocket `/profile/events`**: el cliente envía como primer mensaje `{ "type":"auth", "token":"<Firebase ID token>" }`. El servidor empuja `{ "type":"profile_updated" }` cuando cambian plan, cupo o campos de perfil relevantes (notificaciones con throttle corto para no saturar).
+
 ## Rotación de API Keys
 
 Si alguna API key se expuso accidentalmente:

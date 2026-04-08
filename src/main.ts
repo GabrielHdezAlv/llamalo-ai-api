@@ -9,6 +9,7 @@ import { parse as parseUrl } from 'url';
 import { StreamsGateway } from './streams/streams.gateway';
 import { TestCallGateway } from './test-call/test-call.gateway';
 import { SupportChatGateway } from './support-chat/support-chat.gateway';
+import { ProfileEventsService } from './profile-events/profile-events.service';
 import { configureLogging } from './utils/logging';
 
 async function bootstrap() {
@@ -74,6 +75,7 @@ async function bootstrap() {
   const wss = new WebSocket.Server({ noServer: true });
   const testWss = new WebSocket.Server({ noServer: true });
   const supportWss = new WebSocket.Server({ noServer: true });
+  const profileEventsWss = new WebSocket.Server({ noServer: true });
 
   // Un único handler de upgrade que enruta al servidor correcto según la ruta
   server.on('upgrade', (request, socket, head) => {
@@ -90,6 +92,10 @@ async function bootstrap() {
     } else if (pathname === '/support/chat') {
       supportWss.handleUpgrade(request, socket, head, (ws) => {
         supportWss.emit('connection', ws, request);
+      });
+    } else if (pathname === '/profile/events') {
+      profileEventsWss.handleUpgrade(request, socket, head, (ws) => {
+        profileEventsWss.emit('connection', ws, request);
       });
     } else {
       socket.destroy();
@@ -253,6 +259,18 @@ async function bootstrap() {
   });
 
   console.log('💬 WebSocket Server de soporte configurado en /support/chat');
+
+  profileEventsWss.on('connection', (profileWs: WebSocket) => {
+    const profileEvents = app.get(ProfileEventsService);
+    profileEvents.handleConnection(profileWs);
+    profileWs.on('error', (error) => {
+      console.error('❌ Error en WebSocket profile/events:', error);
+    });
+  });
+
+  console.log(
+    '📣 WebSocket de eventos de perfil configurado en /profile/events',
+  );
 }
 
 void bootstrap();

@@ -18,6 +18,7 @@ import { NewsModule } from './news/news.module';
 import { MailerLiteModule } from './mailerlite/mailerlite.module';
 import { LearningModule } from './learning/learning.module';
 import { SystemLogsModule } from './system-logs/system-logs.module';
+import { ProfileEventsModule } from './profile-events/profile-events.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { SystemLogsModule } from './system-logs/system-logs.module';
     MailerLiteModule,
     LearningModule,
     SystemLogsModule,
+    ProfileEventsModule,
   ],
   controllers: [],
   providers: [],

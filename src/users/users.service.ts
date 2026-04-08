@@ -11,6 +11,7 @@ import { PLAN_LIMITS, PlanType } from '../common/constants/plans.constants';
 import { computeMinuteQuotaFromUserData } from '../common/utils/minute-quota.util';
 import { getFirestore } from '../firebase/firebase.config';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
+import { ProfileEventsService } from '../profile-events/profile-events.service';
 
 interface PhoneNumber {
   phoneId: number;
@@ -159,7 +160,10 @@ export class UsersService {
   private firestore = getFirestore();
   private storage = admin.storage();
 
-  constructor(private readonly mailerLiteService: MailerLiteService) {}
+  constructor(
+    private readonly mailerLiteService: MailerLiteService,
+    private readonly profileEventsService: ProfileEventsService,
+  ) {}
 
   private filterPhoneNumbers(phoneNumbers: PhoneNumber[], query?: string) {
     if (!query || !query.trim()) {
@@ -371,6 +375,13 @@ export class UsersService {
 
       // ✏️ Actualizar Firestore
       await docRef.update(updates);
+
+      if (
+        updates.minutesLimit !== undefined ||
+        updates.extraMinutes !== undefined
+      ) {
+        this.profileEventsService.notifyProfileUpdated(userId);
+      }
 
       // 🔄 Sincronizar con MailerLite si se actualizaron campos relevantes
       if (
@@ -632,6 +643,8 @@ export class UsersService {
         redeemedRewards: newRedeemedRewards,
       });
 
+      this.profileEventsService.notifyProfileUpdated(userId);
+
       return {
         message: `Recompensa canjeada con éxito. Se han añadido ${minutesToAdd} minutos extra.`,
         extraMinutes: newExtraMinutes,
@@ -682,6 +695,8 @@ export class UsersService {
         plan: newPlan,
         minutesLimit: planLimit.minutesLimit,
       });
+
+      this.profileEventsService.notifyProfileUpdated(userId);
 
       return {
         message: 'Plan actualizado correctamente',

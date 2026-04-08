@@ -14,6 +14,7 @@ import {
 } from './dto/dashboard-metrics-response.dto';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import { computeAutoExtraMinutesAfterSync } from '../common/utils/minute-quota.util';
+import { ProfileEventsService } from '../profile-events/profile-events.service';
 import {
   TwilioDetailedMetricsResponseDto,
   ComparacionDiaAnteriorDto,
@@ -47,7 +48,10 @@ export class MetricsService {
   // Factor de ahorro: cada minuto de IA ahorra 2.5 minutos de trabajo manual
   private readonly TIEMPO_AHORRO_FACTOR = 2.5;
 
-  constructor(private readonly mailerLiteService: MailerLiteService) {}
+  constructor(
+    private readonly mailerLiteService: MailerLiteService,
+    private readonly profileEventsService: ProfileEventsService,
+  ) {}
 
   /**
    * Persiste una llamada completada en Firestore (fuente de verdad para dashboards).
@@ -1102,6 +1106,10 @@ export class MetricsService {
 
     await userRef.update(update);
     this.mailerLiteService.syncUser(userId).catch(() => {});
+
+    if (extraChanged || minutesChanged) {
+      this.profileEventsService.notifyProfileUpdated(userId);
+    }
   }
 
   /**
