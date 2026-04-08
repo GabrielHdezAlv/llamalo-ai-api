@@ -23,3 +23,8 @@ export const DEFAULT_PLAN: PlanType = 'gratis';
 
 /** Valores antiguos de `user.plan` que equivalen al plan gratuito */
 export const LEGACY_FREE_PLAN_SLUGS = ['basic', 'free'] as const;
+
+/** Plan Premium: minutos ilimitados para cupo de voz (no aplica techo numérico). */
+export function isUnlimitedPlan(plan?: string): boolean {
+  return plan === 'premium';
+}

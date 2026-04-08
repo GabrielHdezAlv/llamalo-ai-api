@@ -13,6 +13,7 @@ import {
   MetricaConComparacionDto,
 } from './dto/dashboard-metrics-response.dto';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
+import { computeAutoExtraMinutesAfterSync } from '../common/utils/minute-quota.util';
 import {
   TwilioDetailedMetricsResponseDto,
   ComparacionDiaAnteriorDto,
@@ -1059,18 +1060,47 @@ export class MetricsService {
       return;
     }
 
-    const prevRaw = (
-      snap.data()?.minutesByMonth as Record<string, number> | undefined
-    )?.[monthKey];
-    const prev = typeof prevRaw === 'number' && !Number.isNaN(prevRaw) ? prevRaw : 0;
+    const userData = snap.data() as {
+      plan?: string;
+      minutesLimit?: number;
+      extraMinutes?: number;
+      minutesByMonth?: Record<string, number>;
+    };
 
-    if (Math.abs(prev - totalMinutes) < 1e-9) {
+    const prevRaw = userData.minutesByMonth?.[monthKey];
+    const prev =
+      typeof prevRaw === 'number' && !Number.isNaN(prevRaw) ? prevRaw : 0;
+
+    const { newExtraMinutes } = computeAutoExtraMinutesAfterSync({
+      plan: userData.plan,
+      minutesLimit: userData.minutesLimit,
+      extraMinutes: userData.extraMinutes,
+      usedMinutes: totalMinutes,
+    });
+
+    const currentExtra = userData.extraMinutes ?? 0;
+    const minutesChanged = Math.abs(prev - totalMinutes) >= 1e-9;
+    const extraChanged = newExtraMinutes !== currentExtra;
+
+    if (!minutesChanged && !extraChanged) {
       return;
     }
 
-    await userRef.update({
-      [`minutesByMonth.${monthKey}`]: totalMinutes,
-    });
+    const update: Record<string, unknown> = {};
+    if (minutesChanged) {
+      update[`minutesByMonth.${monthKey}`] = totalMinutes;
+    }
+    if (extraChanged) {
+      update.extraMinutes = newExtraMinutes;
+    }
+
+    if (extraChanged) {
+      console.log(
+        `[Metrics] extraMinutes auto ajustado (${currentExtra} → ${newExtraMinutes}) por consumo ${totalMinutes.toFixed(2)} min (userId=${userId})`,
+      );
+    }
+
+    await userRef.update(update);
     this.mailerLiteService.syncUser(userId).catch(() => {});
   }
 

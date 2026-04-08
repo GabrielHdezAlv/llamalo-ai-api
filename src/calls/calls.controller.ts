@@ -4,6 +4,11 @@ import { TwilioService } from './twilio.service';
 import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
 import { UsersService } from '../users/users.service';
 import * as admin from 'firebase-admin';
+import type {
+  DocumentData,
+  QueryDocumentSnapshot,
+  QuerySnapshot,
+} from 'firebase-admin/firestore';
 
 class IncomingDto {
   To?: string;
@@ -31,7 +36,6 @@ export class CallsController {
   @Post('incoming')
   async incoming(@Body() body: IncomingDto, @Res() res: Response) {
     const r = this.twilio.newVoiceResponse();
-    const firestore = admin.firestore();
 
     console.log('📞 Llamada entrante detectada');
     // 🔒 Enmascarar números de teléfono para proteger privacidad
@@ -48,61 +52,19 @@ export class CallsController {
     }
 
     try {
-      // 🔹 Buscar agente por su número Twilio (body.To)
-      const rawNumber = body.To?.replace('+34', '').replace(/\D/g, '');
-      const agentNumber = parseInt(rawNumber || '0', 10);
-
-      console.log('🔍 Buscando agente con número:', agentNumber);
-
-      // Primero intentar búsqueda con estructura antigua (compatibilidad)
-      let agentSnapshot = await firestore
-        .collection('users')
-        .where('twilio.phoneNumber', '==', agentNumber)
-        .limit(1)
-        .get();
-
-      // Si no se encuentra, buscar en la nueva estructura phoneNumbers[]
-      if (agentSnapshot.empty) {
-        console.log('🔍 Buscando en nueva estructura phoneNumbers[]...');
-        const allUsers = await firestore.collection('users').get();
-
-        for (const userDoc of allUsers.docs) {
-          const userData = userDoc.data();
-          const phoneNumbers =
-            (userData.phoneNumbers as Array<{
-              phoneId?: number;
-              countryCode?: string;
-              number?: string;
-            }>) || [];
-
-          // Buscar en el array de números
-          const found = phoneNumbers.some((phone) => {
-            const phoneNumStr = phone.number?.replace(/\D/g, '') || '';
-            const phoneNum = parseInt(phoneNumStr, 10);
-            return phoneNum === agentNumber;
-          });
-
-          if (found) {
-            agentSnapshot = {
-              empty: false,
-              docs: [userDoc],
-              size: 1,
-            } as FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
-            break;
-          }
-        }
-      }
-
-      if (agentSnapshot.empty) {
+      const agentDoc = await this.resolveUserDocFromPhoneTo(body.To);
+      if (!agentDoc) {
         console.log(
           '⚠️ No se encontró ningún agente con ese número — cuelgue inmediato (Reject)',
         );
         return res.type('text/xml').send('<Response><Reject /></Response>');
       }
 
-      const agentDoc = agentSnapshot.docs[0];
       const userId = agentDoc.id;
-      const agent = agentDoc.data();
+      const agent = agentDoc.data() as Record<string, unknown>;
+
+      const rawNumber = body.To?.replace('+34', '').replace(/\D/g, '');
+      const agentNumber = parseInt(rawNumber || '0', 10);
 
       // 🔍 Debug: Ver estructura del documento
       console.log(
@@ -526,7 +488,43 @@ export class CallsController {
   }
 
   @Post('resume')
-  resume(@Body() body: Record<string, unknown>, @Res() res: Response) {
+  async resume(@Body() body: Record<string, unknown>, @Res() res: Response) {
+    const to =
+      typeof body.To === 'string'
+        ? body.To
+        : typeof body.Called === 'string'
+          ? body.Called
+          : undefined;
+
+    try {
+      const agentDoc = await this.resolveUserDocFromPhoneTo(to);
+      if (!agentDoc) {
+        console.warn('[Calls] resume: no se pudo resolver usuario por To/Called');
+        return res.type('text/xml').send('<Response><Reject /></Response>');
+      }
+      const userId = agentDoc.id;
+      const quota = await this.usersService.hasAvailableMinutes(userId);
+      if (!quota.hasMinutes) {
+        console.warn(
+          `[Calls] resume sin minutos userId=${userId} (${quota.usedMinutes}/${quota.totalLimit})`,
+        );
+        const rQuota = this.twilio.newVoiceResponse();
+        rQuota.say(
+          {
+            voice: 'alice',
+            language: 'es-ES',
+          },
+          'Lo sentimos. Esta cuenta no tiene minutos de llamada disponibles en este periodo. Contacte con el administrador.',
+        );
+        rQuota.hangup();
+        return res.type('text/xml').send(rQuota.toString());
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error desconocido';
+      console.error(`[Calls] resume error comprobando cupo: ${msg}`);
+      return res.type('text/xml').send('<Response><Reject /></Response>');
+    }
+
     const r = this.twilio.newVoiceResponse();
     const wsUrl =
       process.env.NODE_ENV === 'production'
@@ -543,12 +541,69 @@ export class CallsController {
     });
 
     const twimlString = r.toString();
-    // ✅ Solo loggear longitud, no el contenido completo
     console.log(
       '📄 TwiML resume generado (longitud:',
       twimlString.length,
       'caracteres)',
     );
     res.type('text/xml').send(twimlString);
+  }
+
+  /**
+   * Misma resolución usuario/agente que en incoming (número Twilio en To).
+   */
+  private async resolveUserDocFromPhoneTo(
+    to: string | undefined,
+  ): Promise<QueryDocumentSnapshot<DocumentData> | null> {
+    if (!to || to === 'N/A' || to.includes('client:')) {
+      return null;
+    }
+    const firestore = admin.firestore();
+    const rawNumber = to.replace('+34', '').replace(/\D/g, '');
+    const agentNumber = parseInt(rawNumber || '0', 10);
+
+    console.log('🔍 Buscando agente con número:', agentNumber);
+
+    let agentSnapshot = await firestore
+      .collection('users')
+      .where('twilio.phoneNumber', '==', agentNumber)
+      .limit(1)
+      .get();
+
+    if (agentSnapshot.empty) {
+      console.log('🔍 Buscando en nueva estructura phoneNumbers[]...');
+      const allUsers = await firestore.collection('users').get();
+
+      for (const userDoc of allUsers.docs) {
+        const userData = userDoc.data();
+        const phoneNumbers =
+          (userData.phoneNumbers as Array<{
+            phoneId?: number;
+            countryCode?: string;
+            number?: string;
+          }>) || [];
+
+        const found = phoneNumbers.some((phone) => {
+          const phoneNumStr = phone.number?.replace(/\D/g, '') || '';
+          const phoneNum = parseInt(phoneNumStr, 10);
+          return phoneNum === agentNumber;
+        });
+
+        if (found) {
+          agentSnapshot = {
+            empty: false,
+            docs: [userDoc],
+            size: 1,
+          } as QuerySnapshot<DocumentData>;
+          break;
+        }
+      }
+    }
+
+    if (agentSnapshot.empty) {
+      return null;
+    }
+
+    return agentSnapshot.docs[0];
   }
 }
