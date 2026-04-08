@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { getFirestore } from '../firebase/firebase.config';
 import * as admin from 'firebase-admin';
+import {
+  DEFAULT_PLAN,
+  LEGACY_FREE_PLAN_SLUGS,
+} from '../common/constants/plans.constants';
 
 @Injectable()
 export class MailerLiteService {
@@ -81,9 +85,12 @@ export class MailerLiteService {
         groupsToJoin.push(this.groups.SETUP_NO_COMPLETADO);
       }
 
-      // 3. Plan de Pago
-      // Nota: Asumimos que si minutesLimit > 100 o existe un campo 'plan' no 'free', es de pago
-      const isPaid = userData.minutesLimit > 100 || (userData.plan && userData.plan !== 'free');
+      // 3. Plan de Pago (gratis + slugs legacy = sin pago; pro/premium = pago)
+      const freePlans: string[] = [DEFAULT_PLAN, ...LEGACY_FREE_PLAN_SLUGS];
+      const planSlug = userData.plan as string | undefined;
+      const isPaid =
+        userData.minutesLimit > 100 ||
+        (planSlug != null && planSlug !== '' && !freePlans.includes(planSlug));
       if (isPaid) {
         groupsToJoin.push(this.groups.PLAN_PAGO);
       }

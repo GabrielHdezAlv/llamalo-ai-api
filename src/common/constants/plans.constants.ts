@@ -1,6 +1,7 @@
 export const PLAN_LIMITS = {
-  basic: {
-    name: 'Básico',
+  /** Gratis; el slug legacy `basic` se migra a `gratis` en usuarios */
+  gratis: {
+    name: 'Gratis',
     price: 0,
     minutesLimit: 100,
   },
@@ -18,4 +19,7 @@ export const PLAN_LIMITS = {
 
 export type PlanType = keyof typeof PLAN_LIMITS;
 
-export const DEFAULT_PLAN: PlanType = 'basic';
+export const DEFAULT_PLAN: PlanType = 'gratis';
+
+/** Valores antiguos de `user.plan` que equivalen al plan gratuito */
+export const LEGACY_FREE_PLAN_SLUGS = ['basic', 'free'] as const;

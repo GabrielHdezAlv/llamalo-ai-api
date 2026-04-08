@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 /**
- * Asigna `plan: basic` y, si falta, `minutesLimit` según el plan básico
- * a documentos de la colección `users` en Firestore.
- *
- * Requisitos: firebase-admin instalado (npm i en el repo API).
- * Credenciales (una de):
- *   - /etc/secrets/firebase_service_account.json (Render)
- *   - src/config/firebase-service-account.json (local, relativo a la raíz del API)
+ * Asigna `plan: gratis` y, si falta, `minutesLimit` según el plan gratuito.
+ * Migra el slug legacy `basic` → `gratis`.
  *
  * Uso (desde la raíz de llamalo-ai-api):
  *   node scripts/migrate-user-plans.js
@@ -17,8 +12,8 @@ const fs = require('fs');
 const path = require('path');
 const admin = require('firebase-admin');
 
-const BASIC_PLAN = 'basic';
-const BASIC_MINUTES_LIMIT = 100;
+const DEFAULT_FREE_PLAN = 'gratis';
+const FREE_MINUTES_LIMIT = 100;
 
 function loadServiceAccount() {
   const renderPath = '/etc/secrets/firebase_service_account.json';
@@ -52,6 +47,10 @@ function needsMinutesLimit(data) {
   return m === undefined || m === null || Number.isNaN(Number(m));
 }
 
+function isLegacyBasicPlan(data) {
+  return data.plan === 'basic';
+}
+
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   if (dryRun) {
@@ -79,10 +78,13 @@ async function main() {
     const patch = {};
 
     if (needsPlan(data)) {
-      patch.plan = BASIC_PLAN;
+      patch.plan = DEFAULT_FREE_PLAN;
     }
     if (needsMinutesLimit(data)) {
-      patch.minutesLimit = BASIC_MINUTES_LIMIT;
+      patch.minutesLimit = FREE_MINUTES_LIMIT;
+    }
+    if (isLegacyBasicPlan(data)) {
+      patch.plan = DEFAULT_FREE_PLAN;
     }
 
     if (Object.keys(patch).length === 0) {

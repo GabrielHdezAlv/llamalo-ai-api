@@ -257,7 +257,7 @@ export class UsersService {
           importedBy: phone.importedBy || 'Twilio',
         })),
         agents: userData?.agents || [],
-        plan: userData?.plan ?? 'basic',
+        plan: userData?.plan ?? 'gratis',
         minutesLimit: userData?.minutesLimit ?? 100, // Límite por defecto si no existe
         extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
         minutesByMonth: userData?.minutesByMonth ?? {}, // Historial de minutos por mes
