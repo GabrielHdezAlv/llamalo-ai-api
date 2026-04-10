@@ -184,14 +184,33 @@ export class KnowledgeBaseService {
     this.logger.log(
       `[KnowledgeBaseService] Updating source status to COMPLETED...`,
     );
-    await this.firestore.collection('knowledgeSources').doc(sourceId).update({
+    const sourceRef = this.firestore.collection('knowledgeSources').doc(sourceId);
+    const beforeSnap = await sourceRef.get();
+    const beforeData = beforeSnap.data() as Record<string, unknown> | undefined;
+    const completedUpdate: Record<string, unknown> = {
       status: KnowledgeSourceStatus.COMPLETED,
       updatedAt: new Date(),
       metadata: {
         ...processedText.metadata,
         chunkCount: chunks.length,
       },
-    });
+    };
+    // Reafirmar texto guardado para que el listado siga exponiendo descarga/edición tras reindexar.
+    if (
+      beforeData?.type === KnowledgeSourceType.TEXT &&
+      typeof beforeData.storedTextContent === 'string' &&
+      beforeData.storedTextContent.length > 0
+    ) {
+      completedUpdate.storedTextContent = beforeData.storedTextContent;
+    }
+    if (
+      beforeData?.type === KnowledgeSourceType.WEB &&
+      typeof beforeData.originalUrl === 'string' &&
+      beforeData.originalUrl.trim().length > 0
+    ) {
+      completedUpdate.originalUrl = beforeData.originalUrl;
+    }
+    await sourceRef.update(completedUpdate);
     this.logger.log(
       `[KnowledgeBaseService] Source status updated to COMPLETED`,
     );
@@ -310,7 +329,7 @@ export class KnowledgeBaseService {
         .get();
 
       return snapshot.docs.map((doc) =>
-        this.mapToDto({ id: doc.id, ...doc.data() }),
+        this.mapToDto({ ...doc.data(), id: doc.id }),
       );
     } catch (error) {
       this.logger.error(`Error getting user sources: ${error.message}`);
@@ -763,13 +782,16 @@ export class KnowledgeBaseService {
         .where(FieldPath.documentId(), 'in', sourceIds)
         .get();
 
-      return sourceDocs.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        addedAt: snapshot.docs
+      return sourceDocs.docs.map((doc) => {
+        const addedAt = snapshot.docs
           .find((link) => link.data().knowledgeSourceId === doc.id)
-          ?.data().addedAt,
-      }));
+          ?.data().addedAt;
+        const dto = this.mapToDto({ ...doc.data(), id: doc.id });
+        return {
+          ...dto,
+          addedAt,
+        };
+      });
     } catch (error) {
       this.logger.error(
         `Error getting agent knowledge sources: ${error.message}`,
@@ -795,19 +817,40 @@ export class KnowledgeBaseService {
   }
 
   private mapToDto(sourceData: any): KnowledgeSourceDto {
-    const type = sourceData.type as KnowledgeSourceType;
+    const rawType = String(sourceData.type ?? '').toLowerCase();
+    const type: KnowledgeSourceType =
+      rawType === 'pdf'
+        ? KnowledgeSourceType.PDF
+        : rawType === 'web'
+          ? KnowledgeSourceType.WEB
+          : rawType === 'text'
+            ? KnowledgeSourceType.TEXT
+            : (sourceData.type as KnowledgeSourceType);
+
+    const rawStatus = String(sourceData.status ?? '').toLowerCase();
+    const status: KnowledgeSourceStatus =
+      rawStatus === 'completed'
+        ? KnowledgeSourceStatus.COMPLETED
+        : rawStatus === 'processing'
+          ? KnowledgeSourceStatus.PROCESSING
+          : rawStatus === 'failed'
+            ? KnowledgeSourceStatus.FAILED
+            : (sourceData.status as KnowledgeSourceStatus);
+
     const hasDownloadableContent =
       (type === KnowledgeSourceType.PDF && !!sourceData.storagePath) ||
-      (type === KnowledgeSourceType.TEXT && !!sourceData.storedTextContent);
+      (type === KnowledgeSourceType.TEXT &&
+        typeof sourceData.storedTextContent === 'string' &&
+        sourceData.storedTextContent.length > 0);
 
     return {
       id: sourceData.id,
       userId: sourceData.userId,
       name: sourceData.name,
-      type: sourceData.type,
+      type,
       originalUrl: sourceData.originalUrl,
       fileName: sourceData.fileName,
-      status: sourceData.status,
+      status,
       createdAt: sourceData.createdAt?.toDate?.() || sourceData.createdAt,
       updatedAt: sourceData.updatedAt?.toDate?.() || sourceData.updatedAt,
       metadata: sourceData.metadata,
