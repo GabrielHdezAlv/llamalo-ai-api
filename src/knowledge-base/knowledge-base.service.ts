@@ -20,6 +20,7 @@ import {
 import { PdfProcessor } from './processors/pdf.processor';
 import { WebScraperProcessor } from './processors/web-scraper.processor';
 import { TextProcessor } from './processors/text.processor';
+import type { ProcessedText } from './processors/base.processor';
 import { EmbeddingsService } from './embeddings/embeddings.service';
 import { VectorStoreService } from './embeddings/vector-store.service';
 import { TextChunker } from './utils/chunker';
@@ -105,6 +106,97 @@ export class KnowledgeBaseService {
     }
   }
 
+  /**
+   * Limpia texto, genera chunks y embeddings, persiste en vectorChunks y marca la fuente como completada.
+   */
+  private async finalizeProcessedKnowledge(
+    sourceId: string,
+    processedText: ProcessedText,
+  ): Promise<void> {
+    const cleanedText = this.textCleaner.clean(processedText.text as string);
+
+    this.logger.log(`[KnowledgeBaseService] Creating chunks from text...`);
+    const chunks = this.textChunker.createChunks(cleanedText, sourceId);
+    this.logger.log(`[KnowledgeBaseService] Created ${chunks.length} chunks`);
+
+    this.logger.log(`[KnowledgeBaseService] Generating embeddings...`);
+    const chunkTexts = chunks.map((chunk) => chunk.content);
+
+    const allEmbeddings: number[][] = [];
+    const maxTokensPerBatch = 250000;
+    let totalTokensUsed = 0;
+
+    let i = 0;
+    let batchIndex = 0;
+    while (i < chunkTexts.length) {
+      let batchTokens = 0;
+      let batchSize = 0;
+
+      while (
+        i + batchSize < chunkTexts.length &&
+        batchTokens < maxTokensPerBatch
+      ) {
+        const estimatedTokens = Math.ceil(
+          chunkTexts[i + batchSize].length / 4,
+        );
+        if (batchTokens + estimatedTokens > maxTokensPerBatch) break;
+        batchTokens += estimatedTokens;
+        batchSize++;
+      }
+
+      totalTokensUsed += batchTokens;
+      const batch = chunkTexts.slice(i, i + batchSize);
+      this.logger.log(
+        `[KnowledgeBaseService] Processing batch ${batchIndex + 1}/${Math.ceil(chunkTexts.length / 100)} (${batch.length} chunks, ~${batchTokens} tokens)`,
+      );
+
+      try {
+        const batchEmbeddings =
+          await this.embeddingsService.generateBatchEmbeddings(batch);
+        allEmbeddings.push(...batchEmbeddings);
+      } catch (batchError) {
+        this.logger.error(
+          `[KnowledgeBaseService] Batch ${batchIndex + 1} failed: ${batchError.message}`,
+        );
+        throw new Error(
+          `Error generating embeddings for batch ${batchIndex + 1}: ${batchError.message}`,
+        );
+      }
+
+      i += batchSize;
+      batchIndex++;
+    }
+
+    const embeddings = allEmbeddings;
+    this.logger.log(
+      `[KnowledgeBaseService] Generated ${embeddings.length} embeddings in ${batchIndex} batches`,
+    );
+    this.logger.log(
+      `[KnowledgeBaseService] Total tokens used: ${totalTokensUsed.toLocaleString()}`,
+    );
+
+    this.logger.log(
+      `[KnowledgeBaseService] Storing chunks in vector database...`,
+    );
+    await this.vectorStoreService.storeChunks(sourceId, chunks, embeddings);
+    this.logger.log(`[KnowledgeBaseService] Chunks stored successfully`);
+
+    this.logger.log(
+      `[KnowledgeBaseService] Updating source status to COMPLETED...`,
+    );
+    await this.firestore.collection('knowledgeSources').doc(sourceId).update({
+      status: KnowledgeSourceStatus.COMPLETED,
+      updatedAt: new Date(),
+      metadata: {
+        ...processedText.metadata,
+        chunkCount: chunks.length,
+      },
+    });
+    this.logger.log(
+      `[KnowledgeBaseService] Source status updated to COMPLETED`,
+    );
+  }
+
   private async processKnowledgeSource(
     sourceId: string,
     userId: string,
@@ -187,107 +279,14 @@ export class KnowledgeBaseService {
           );
       }
 
-      // Clean text
-      const cleanedText = this.textCleaner.clean(processedText.text as string);
-
-      this.logger.log(`[KnowledgeBaseService] Creating chunks from text...`);
-      // Split text into chunks
-      const chunks = this.textChunker.createChunks(cleanedText, sourceId);
-      this.logger.log(`[KnowledgeBaseService] Created ${chunks.length} chunks`);
-
-      this.logger.log(`[KnowledgeBaseService] Generating embeddings...`);
-      // Generate embeddings
-      const chunkTexts = chunks.map((chunk) => chunk.content);
-
-      // Process embeddings in batches with dynamic sizing based on tokens
-      const allEmbeddings: number[][] = [];
-      const maxTokensPerBatch = 250000; // Stay under 300K limit with margin
-      let totalTokensUsed = 0;
-
-      let i = 0;
-      let batchIndex = 0;
-      while (i < chunkTexts.length) {
-        let batchTokens = 0;
-        let batchSize = 0;
-
-        // Calculate optimal batch size based on token estimation
-        while (
-          i + batchSize < chunkTexts.length &&
-          batchTokens < maxTokensPerBatch
-        ) {
-          const estimatedTokens = Math.ceil(
-            chunkTexts[i + batchSize].length / 4,
-          );
-          if (batchTokens + estimatedTokens > maxTokensPerBatch) break;
-          batchTokens += estimatedTokens;
-          batchSize++;
-        }
-
-        totalTokensUsed += batchTokens;
-        const batch = chunkTexts.slice(i, i + batchSize);
-        this.logger.log(
-          `[KnowledgeBaseService] Processing batch ${batchIndex + 1}/${Math.ceil(chunkTexts.length / 100)} (${batch.length} chunks, ~${batchTokens} tokens)`,
-        );
-
-        try {
-          const batchEmbeddings =
-            await this.embeddingsService.generateBatchEmbeddings(batch);
-          allEmbeddings.push(...batchEmbeddings);
-        } catch (batchError) {
-          this.logger.error(
-            `[KnowledgeBaseService] Batch ${batchIndex + 1} failed: ${batchError.message}`,
-          );
-          throw new Error(
-            `Error generating embeddings for batch ${batchIndex + 1}: ${batchError.message}`,
-          );
-        }
-
-        i += batchSize;
-        batchIndex++;
-      }
-
-      const embeddings = allEmbeddings;
-      this.logger.log(
-        `[KnowledgeBaseService] Generated ${embeddings.length} embeddings in ${batchIndex} batches`,
-      );
-      this.logger.log(
-        `[KnowledgeBaseService] Total tokens used: ${totalTokensUsed.toLocaleString()}`,
-      );
-
-      this.logger.log(
-        `[KnowledgeBaseService] Storing chunks in vector database...`,
-      );
-      // Store in vector database
-      await this.vectorStoreService.storeChunks(sourceId, chunks, embeddings);
-      this.logger.log(`[KnowledgeBaseService] Chunks stored successfully`);
-
-      this.logger.log(
-        `[KnowledgeBaseService] Updating source status to COMPLETED...`,
-      );
-      // Update source with processing results
-      await this.firestore
-        .collection('knowledgeSources')
-        .doc(sourceId)
-        .update({
-          status: KnowledgeSourceStatus.COMPLETED,
-          updatedAt: new Date(),
-          metadata: {
-            ...processedText.metadata,
-            chunkCount: chunks.length,
-          },
-        });
-      this.logger.log(
-        `[KnowledgeBaseService] Source status updated to COMPLETED`,
-      );
+      await this.finalizeProcessedKnowledge(sourceId, processedText);
 
       // Clean up temporary file if it exists
       if (filePath && fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
 
-      this.logger.log(
-        `Successfully processed source ${sourceId} with ${chunks.length} chunks`,
-      );
+      this.logger.log(`Successfully processed source ${sourceId}`);
     } catch (error) {
       if (pdfStoragePath && bucketName) {
         await admin
@@ -323,6 +322,7 @@ export class KnowledgeBaseService {
 
   async updateKnowledgeSource(
     sourceId: string,
+    userId: string,
     updateDto: UpdateKnowledgeSourceDto,
   ): Promise<KnowledgeSourceDto> {
     try {
@@ -335,16 +335,140 @@ export class KnowledgeBaseService {
         throw new NotFoundException('Knowledge source not found');
       }
 
-      const updateData = {
-        ...updateDto,
-        updatedAt: new Date(),
+      const existing = sourceDoc.data() as {
+        userId: string;
+        type: KnowledgeSourceType;
+        name?: string;
       };
 
-      await sourceRef.update(updateData);
+      if (existing.userId !== userId) {
+        throw new ForbiddenException('No autorizado');
+      }
+
+      const { name, tags, isPublic, content, url } = updateDto;
+
+      const hasContentUpdate =
+        content !== undefined && content !== null && String(content).length > 0;
+      const hasUrlUpdate =
+        url !== undefined && url !== null && String(url).trim().length > 0;
+
+      if (hasContentUpdate && hasUrlUpdate) {
+        throw new BadRequestException(
+          'No se puede enviar contenido de texto y URL en la misma petición',
+        );
+      }
+
+      if (
+        hasContentUpdate &&
+        existing.type !== KnowledgeSourceType.TEXT
+      ) {
+        throw new BadRequestException(
+          'El campo content solo aplica a fuentes de tipo texto',
+        );
+      }
+
+      if (hasUrlUpdate && existing.type !== KnowledgeSourceType.WEB) {
+        throw new BadRequestException(
+          'El campo url solo aplica a fuentes de tipo web',
+        );
+      }
+
+      if (hasContentUpdate) {
+        const firestorePatch: Record<string, unknown> = {
+          storedTextContent: content,
+          status: KnowledgeSourceStatus.PROCESSING,
+          updatedAt: new Date(),
+        };
+        if (name !== undefined) firestorePatch.name = name;
+        if (tags !== undefined) firestorePatch.tags = tags;
+        if (isPublic !== undefined) firestorePatch.isPublic = isPublic;
+
+        await sourceRef.update(firestorePatch);
+
+        try {
+          await this.vectorStoreService.deleteSource(sourceId);
+        } catch (delErr) {
+          this.logger.error(
+            `Error clearing vectors before reprocess: ${(delErr as Error).message}`,
+          );
+          await this.updateSourceStatus(sourceId, KnowledgeSourceStatus.FAILED);
+          throw new BadRequestException(
+            'No se pudo actualizar el índice de la fuente. Intenta de nuevo.',
+          );
+        }
+
+        void this.runReprocessAfterEdit(sourceId, KnowledgeSourceType.TEXT, {
+          content: content as string,
+        }).catch((err) =>
+          this.logger.error(
+            `Reprocess text source ${sourceId}: ${(err as Error).message}`,
+          ),
+        );
+
+        const updatedDoc = await sourceRef.get();
+        return this.mapToDto({ id: updatedDoc.id, ...updatedDoc.data() });
+      }
+
+      if (hasUrlUpdate) {
+        const firestorePatch: Record<string, unknown> = {
+          originalUrl: url,
+          status: KnowledgeSourceStatus.PROCESSING,
+          updatedAt: new Date(),
+        };
+        if (name !== undefined) firestorePatch.name = name;
+        if (tags !== undefined) firestorePatch.tags = tags;
+        if (isPublic !== undefined) firestorePatch.isPublic = isPublic;
+
+        await sourceRef.update(firestorePatch);
+
+        try {
+          await this.vectorStoreService.deleteSource(sourceId);
+        } catch (delErr) {
+          this.logger.error(
+            `Error clearing vectors before reprocess: ${(delErr as Error).message}`,
+          );
+          await this.updateSourceStatus(sourceId, KnowledgeSourceStatus.FAILED);
+          throw new BadRequestException(
+            'No se pudo actualizar el índice de la fuente. Intenta de nuevo.',
+          );
+        }
+
+        void this.runReprocessAfterEdit(sourceId, KnowledgeSourceType.WEB, {
+          url: url as string,
+        }).catch((err) =>
+          this.logger.error(
+            `Reprocess web source ${sourceId}: ${(err as Error).message}`,
+          ),
+        );
+
+        const updatedDoc = await sourceRef.get();
+        return this.mapToDto({ id: updatedDoc.id, ...updatedDoc.data() });
+      }
+
+      const metadataOnly: Record<string, unknown> = {
+        updatedAt: new Date(),
+      };
+      if (name !== undefined) metadataOnly.name = name;
+      if (tags !== undefined) metadataOnly.tags = tags;
+      if (isPublic !== undefined) metadataOnly.isPublic = isPublic;
+
+      if (Object.keys(metadataOnly).length <= 1) {
+        const doc = await sourceRef.get();
+        return this.mapToDto({ id: doc.id, ...doc.data() });
+      }
+
+      await sourceRef.update(metadataOnly);
 
       const updatedDoc = await sourceRef.get();
       return this.mapToDto({ id: updatedDoc.id, ...updatedDoc.data() });
     } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
       this.logger.error(`Error updating knowledge source: ${error.message}`);
       throw new BadRequestException(
         `Failed to update knowledge source: ${error.message}`,
@@ -352,12 +476,50 @@ export class KnowledgeBaseService {
     }
   }
 
-  async deleteKnowledgeSource(sourceId: string): Promise<void> {
+  /**
+   * Tras editar texto o URL: embeddings y chunks nuevos (la fuente ya está en PROCESSING y sin vectores viejos).
+   */
+  private async runReprocessAfterEdit(
+    sourceId: string,
+    type: KnowledgeSourceType.TEXT | KnowledgeSourceType.WEB,
+    payload: { content?: string; url?: string },
+  ): Promise<void> {
+    try {
+      let processedText: ProcessedText;
+      if (type === KnowledgeSourceType.TEXT) {
+        if (!payload.content) {
+          throw new Error('Falta contenido de texto');
+        }
+        processedText = await this.textProcessor.extractText(payload.content);
+      } else {
+        if (!payload.url) {
+          throw new Error('Falta URL');
+        }
+        processedText = await this.webScraperProcessor.extractText(
+          payload.url,
+        );
+      }
+      await this.finalizeProcessedKnowledge(sourceId, processedText);
+    } catch (error) {
+      await this.updateSourceStatus(sourceId, KnowledgeSourceStatus.FAILED);
+      throw error;
+    }
+  }
+
+  async deleteKnowledgeSource(sourceId: string, userId: string): Promise<void> {
     try {
       const docRef = this.firestore
         .collection('knowledgeSources')
         .doc(sourceId);
       const snap = await docRef.get();
+      if (!snap.exists) {
+        throw new NotFoundException('Knowledge source not found');
+      }
+      const owner = (snap.data() as { userId?: string })?.userId;
+      if (owner !== userId) {
+        throw new ForbiddenException('No autorizado');
+      }
+
       const data = snap.data() as { storagePath?: string } | undefined;
       const storagePath = data?.storagePath;
 
@@ -378,6 +540,12 @@ export class KnowledgeBaseService {
 
       this.logger.log(`Successfully deleted source ${sourceId}`);
     } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
       this.logger.error(`Error deleting knowledge source: ${error.message}`);
       throw new BadRequestException(
         `Failed to delete knowledge source: ${error.message}`,

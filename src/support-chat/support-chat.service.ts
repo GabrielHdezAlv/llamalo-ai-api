@@ -183,7 +183,10 @@ export class SupportChatService {
         `Fuente ${sourceId} no encontrada en el agente de soporte`,
       );
     }
-    return this.knowledgeBaseService.deleteKnowledgeSource(sourceId);
+    return this.knowledgeBaseService.deleteKnowledgeSource(
+      sourceId,
+      SUPPORT_USER_ID,
+    );
   }
 
   async getSourceIds(): Promise<string[]> {

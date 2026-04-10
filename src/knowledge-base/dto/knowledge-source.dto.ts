@@ -103,6 +103,35 @@ export class UpdateKnowledgeSourceDto {
   @IsOptional()
   @IsBoolean()
   isPublic?: boolean;
+
+  @ApiProperty({
+    description:
+      'Nuevo contenido (solo fuentes tipo text). Dispara reindexación de embeddings.',
+    required: false,
+    maxLength: 50000,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50000, {
+    message:
+      'El contenido de texto no puede exceder los 50,000 caracteres (~20 páginas)',
+  })
+  content?: string;
+
+  @ApiProperty({
+    description:
+      'Nueva URL (solo fuentes tipo web). Dispara re-scrapeo y reindexación.',
+    required: false,
+    maxLength: 2048,
+  })
+  @IsOptional()
+  @IsString()
+  @IsUrl(
+    { protocols: ['http', 'https'], require_protocol: true },
+    { message: 'La URL debe ser válida y comenzar con http:// o https://' },
+  )
+  @MaxLength(2048, { message: 'La URL no puede exceder los 2048 caracteres' })
+  url?: string;
 }
 
 export class KnowledgeSourceDto {

@@ -77,10 +77,15 @@ export class KnowledgeBaseController {
   })
   @ApiResponse({ status: 200, type: KnowledgeSourceDto })
   async updateSource(
+    @GetUser('uid') userId: string,
     @Param('sourceId') sourceId: string,
     @Body() updateDto: UpdateKnowledgeSourceDto,
   ) {
-    return this.knowledgeBaseService.updateKnowledgeSource(sourceId, updateDto);
+    return this.knowledgeBaseService.updateKnowledgeSource(
+      sourceId,
+      userId,
+      updateDto,
+    );
   }
 
   @Delete('knowledge-base/sources/:sourceId')
@@ -92,8 +97,11 @@ export class KnowledgeBaseController {
     example: 'src_1234567890_abc123',
   })
   @ApiResponse({ status: 200 })
-  async deleteSource(@Param('sourceId') sourceId: string) {
-    return this.knowledgeBaseService.deleteKnowledgeSource(sourceId);
+  async deleteSource(
+    @GetUser('uid') userId: string,
+    @Param('sourceId') sourceId: string,
+  ) {
+    return this.knowledgeBaseService.deleteKnowledgeSource(sourceId, userId);
   }
 
   @Post('knowledge-base/search')
