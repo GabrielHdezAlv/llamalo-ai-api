@@ -85,7 +85,7 @@ export class MailerLiteService {
         groupsToJoin.push(this.groups.SETUP_NO_COMPLETADO);
       }
 
-      // 3. Plan de Pago (gratis + slugs legacy = sin pago; pro/premium = pago)
+      // 3. Plan de Pago (gratis + slugs legacy = sin pago; starter/growth/scale = pago)
       const freePlans: string[] = [DEFAULT_PLAN, ...LEGACY_FREE_PLAN_SLUGS];
       const planSlug = userData.plan as string | undefined;
       const isPaid =

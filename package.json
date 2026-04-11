@@ -19,6 +19,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "migrate:user-plans": "node scripts/migrate-user-plans.js",
+    "migrate:legacy-plan-slugs": "node scripts/migrate-legacy-paid-plan-slugs.js",
     "seed:plans": "node scripts/seed-plans-collection.js"
   },
   "dependencies": {

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Crea o actualiza la colección Firestore `plans` (documentos: gratis, pro, premium).
+ * Crea o actualiza la colección Firestore `plans` (documentos: gratis, starter, growth, scale).
  * Los ids coinciden con `user.plan` y con PLAN_LIMITS en el código.
+ * Elimina documentos obsoletos `pro` y `premium` si existían.
  *
  * Uso (desde la raíz del API):
  *   npm run seed:plans
@@ -42,24 +43,75 @@ const PLANS = [
     price: 0,
     currency: 'EUR',
     sortOrder: 1,
+    extraPerMinuteEur: 0,
+    agents: 1,
+    indexedUrls: 0,
+    documentsMax: 0,
+    maxDocSizeMb: 0,
+    storageTotalMb: 0,
+    panelAnalytics: '—',
+    integrations: '—',
+    support: '—',
+    betaAccess: false,
   },
   {
-    id: 'pro',
-    name: 'Pro',
-    minutesLimit: 500,
+    id: 'starter',
+    name: 'Starter',
+    minutesLimit: 45,
     price: 29,
     currency: 'EUR',
     sortOrder: 2,
+    extraPerMinuteEur: 0.23,
+    agents: 1,
+    indexedUrls: 10,
+    documentsMax: 5,
+    maxDocSizeMb: 10,
+    storageTotalMb: 100,
+    panelAnalytics: 'Básico',
+    integrations: 'Make (próximamente)',
+    support: 'Email',
+    betaAccess: false,
   },
   {
-    id: 'premium',
-    name: 'Premium',
-    minutesLimit: 2000,
-    price: 99,
+    id: 'growth',
+    name: 'Growth',
+    minutesLimit: 200,
+    price: 79,
     currency: 'EUR',
     sortOrder: 3,
+    extraPerMinuteEur: 0.2,
+    agents: 2,
+    indexedUrls: 50,
+    documentsMax: 20,
+    maxDocSizeMb: 15,
+    storageTotalMb: 400,
+    panelAnalytics: 'Avanzado',
+    integrations: 'Shopify / WooCommerce, Make (próximamente)',
+    support: 'Prioritario',
+    betaAccess: false,
+  },
+  {
+    id: 'scale',
+    name: 'Scale',
+    minutesLimit: 500,
+    price: 169,
+    currency: 'EUR',
+    sortOrder: 4,
+    extraPerMinuteEur: 0.18,
+    agents: 5,
+    indexedUrls: 150,
+    documentsMax: 60,
+    maxDocSizeMb: 25,
+    storageTotalMb: 1536,
+    panelAnalytics: 'Completo + exportación',
+    integrations:
+      'Shopify / WooCommerce, Make (próximamente), CRM + webhooks',
+    support: 'Dedicado',
+    betaAccess: true,
   },
 ];
+
+const OBSOLETE_PLAN_IDS = ['pro', 'premium'];
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
@@ -86,6 +138,16 @@ async function main() {
       price: p.price,
       currency: p.currency,
       sortOrder: p.sortOrder,
+      extraPerMinuteEur: p.extraPerMinuteEur,
+      agents: p.agents,
+      indexedUrls: p.indexedUrls,
+      documentsMax: p.documentsMax,
+      maxDocSizeMb: p.maxDocSizeMb,
+      storageTotalMb: p.storageTotalMb,
+      panelAnalytics: p.panelAnalytics,
+      integrations: p.integrations,
+      support: p.support,
+      betaAccess: p.betaAccess,
       active: true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -96,12 +158,21 @@ async function main() {
     }
   }
 
+  for (const oldId of OBSOLETE_PLAN_IDS) {
+    const ref = db.collection('plans').doc(oldId);
+    if (dryRun) {
+      console.log(`  [dry-run] delete plans/${oldId}`);
+    } else {
+      batch.delete(ref);
+    }
+  }
+
   if (!dryRun) {
     await batch.commit();
   }
 
   console.log(
-    `\n✅ Colección \`plans\`: ${PLANS.length} documento(s) ${dryRun ? '(simulado)' : 'escritos/actualizados'}.`,
+    `\n✅ Colección \`plans\`: ${PLANS.length} documento(s) ${dryRun ? '(simulado)' : 'escritos/actualizados'}, obsoletos eliminados: ${OBSOLETE_PLAN_IDS.join(', ')}.`,
   );
 }
 

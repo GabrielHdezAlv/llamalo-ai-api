@@ -1,21 +1,92 @@
+/** Metadatos de un plan (catálogo + límites de uso). */
+export type PlanLimitsEntry = {
+  name: string;
+  price: number;
+  currency: string;
+  minutesLimit: number;
+  /** Precio por minuto extra (EUR). */
+  extraPerMinuteEur: number;
+  agents: number;
+  indexedUrls: number;
+  documentsMax: number;
+  maxDocSizeMb: number;
+  /** Almacenamiento total conocimiento (MB). */
+  storageTotalMb: number;
+  panelAnalytics: string;
+  integrations: string;
+  support: string;
+  betaAccess: boolean;
+};
+
 export const PLAN_LIMITS = {
   /** Gratis; el slug legacy `basic` se migra a `gratis` en usuarios */
   gratis: {
     name: 'Gratis',
     price: 0,
+    currency: 'EUR',
     minutesLimit: 100,
+    extraPerMinuteEur: 0,
+    agents: 1,
+    indexedUrls: 0,
+    documentsMax: 0,
+    maxDocSizeMb: 0,
+    storageTotalMb: 0,
+    panelAnalytics: '—',
+    integrations: '—',
+    support: '—',
+    betaAccess: false,
   },
-  pro: {
-    name: 'Pro',
+  starter: {
+    name: 'Starter',
     price: 29,
+    currency: 'EUR',
+    minutesLimit: 45,
+    extraPerMinuteEur: 0.23,
+    agents: 1,
+    indexedUrls: 10,
+    documentsMax: 5,
+    maxDocSizeMb: 10,
+    storageTotalMb: 100,
+    panelAnalytics: 'Básico',
+    integrations: 'Make (próximamente)',
+    support: 'Email',
+    betaAccess: false,
+  },
+  growth: {
+    name: 'Growth',
+    price: 79,
+    currency: 'EUR',
+    minutesLimit: 200,
+    extraPerMinuteEur: 0.2,
+    agents: 2,
+    indexedUrls: 50,
+    documentsMax: 20,
+    maxDocSizeMb: 15,
+    storageTotalMb: 400,
+    panelAnalytics: 'Avanzado',
+    integrations:
+      'Shopify / WooCommerce, Make (próximamente)',
+    support: 'Prioritario',
+    betaAccess: false,
+  },
+  scale: {
+    name: 'Scale',
+    price: 169,
+    currency: 'EUR',
     minutesLimit: 500,
+    extraPerMinuteEur: 0.18,
+    agents: 5,
+    indexedUrls: 150,
+    documentsMax: 60,
+    maxDocSizeMb: 25,
+    storageTotalMb: 1536,
+    panelAnalytics: 'Completo + exportación',
+    integrations:
+      'Shopify / WooCommerce, Make (próximamente), CRM + webhooks',
+    support: 'Dedicado',
+    betaAccess: true,
   },
-  premium: {
-    name: 'Premium',
-    price: 99,
-    minutesLimit: 2000,
-  },
-};
+} as const satisfies Record<string, PlanLimitsEntry>;
 
 export type PlanType = keyof typeof PLAN_LIMITS;
 
@@ -24,7 +95,30 @@ export const DEFAULT_PLAN: PlanType = 'gratis';
 /** Valores antiguos de `user.plan` que equivalen al plan gratuito */
 export const LEGACY_FREE_PLAN_SLUGS = ['basic', 'free'] as const;
 
-/** Plan Premium: minutos ilimitados para cupo de voz (no aplica techo numérico). */
+/**
+ * Slugs de pago antiguos (antes de Starter / Growth / Scale).
+ * `pro` → Starter; `premium` → Scale (tier superior anterior).
+ */
+export const LEGACY_PAID_PLAN_SLUGS = {
+  pro: 'starter',
+  premium: 'scale',
+} as const satisfies Record<string, PlanType>;
+
+/** Resuelve slug almacenado en usuario al catálogo actual. */
+export function normalizePlanSlug(plan?: string | null): PlanType {
+  if (!plan || String(plan).trim() === '') return DEFAULT_PLAN;
+  const p = String(plan).trim();
+  if (p in LEGACY_PAID_PLAN_SLUGS) {
+    return LEGACY_PAID_PLAN_SLUGS[p as keyof typeof LEGACY_PAID_PLAN_SLUGS];
+  }
+  if (p in PLAN_LIMITS && p !== '__proto__') return p as PlanType;
+  if ((LEGACY_FREE_PLAN_SLUGS as readonly string[]).includes(p)) {
+    return DEFAULT_PLAN;
+  }
+  return DEFAULT_PLAN;
+}
+
+/** Plan Premium antiguo: minutos ilimitados para cupo de voz. Ya no existe en catálogo; solo legacy hasta migrar usuarios. */
 export function isUnlimitedPlan(plan?: string): boolean {
   return plan === 'premium';
 }
