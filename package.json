@@ -21,6 +21,7 @@
     "migrate:user-plans": "node scripts/migrate-user-plans.js",
     "migrate:legacy-plan-slugs": "node scripts/migrate-legacy-paid-plan-slugs.js",
     "migrate:trial-ends": "node scripts/migrate-trial-ends-at.js",
+    "sync:user-minutes": "node scripts/sync-user-minutes-from-catalog.js",
     "seed:plans": "node scripts/seed-plans-collection.js"
   },
   "dependencies": {

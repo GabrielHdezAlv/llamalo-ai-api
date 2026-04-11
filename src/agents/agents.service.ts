@@ -86,7 +86,8 @@ export class AgentsService {
     const hasShopify = !!(payload.shopDomain && payload.shopDomain.trim());
     if (!hasShopify) {
       // Eliminar desde el separador de la sección 7 hasta justo antes del separador de la sección 8
-      const shopifySectionRegex = /============================================================\n## 7\. USO DEL CONTEXTO DE SHOPIFY[\s\S]*?(?============================================================\n## 8\.)/;
+      const shopifySectionRegex =
+        /============================================================\n## 7\. USO DEL CONTEXTO DE SHOPIFY[\s\S]*?(?============================================================\n## 8\.)/;
       template = template.replace(shopifySectionRegex, '');
     }
 
@@ -249,7 +250,11 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
   /** Misma lógica que en TwilioService: perfil antiguo (objeto) → array. */
   private normalizeTwilioArray(
     twilioData: unknown,
-  ): Array<{ twilioAccountId: number; twilioSid: string; twilioToken: string }> {
+  ): Array<{
+    twilioAccountId: number;
+    twilioSid: string;
+    twilioToken: string;
+  }> {
     if (!twilioData) {
       return [];
     }
@@ -301,9 +306,7 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     const phoneEntry = phoneNumbersArray.find(
       (p) => (p.phoneId as number) === phoneId,
     );
-    const inferredFromPhone = phoneEntry?.twilioAccountId as
-      | number
-      | undefined;
+    const inferredFromPhone = phoneEntry?.twilioAccountId as number | undefined;
 
     if (twilioArray.length === 0) {
       if (agentTwilioAccountId !== undefined) {
@@ -315,12 +318,12 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     }
 
     if (agentTwilioAccountId !== undefined) {
-      if (this.twilioAccountIdIsValidForUser(twilioArray, agentTwilioAccountId)) {
+      if (
+        this.twilioAccountIdIsValidForUser(twilioArray, agentTwilioAccountId)
+      ) {
         return agentTwilioAccountId;
       }
-      if (
-        this.twilioAccountIdIsValidForUser(twilioArray, inferredFromPhone)
-      ) {
+      if (this.twilioAccountIdIsValidForUser(twilioArray, inferredFromPhone)) {
         return inferredFromPhone;
       }
       if (twilioArray.length === 1) {
@@ -536,7 +539,10 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         }
       }
 
-      await this.planLimitsService.assertCanAddAgent(userId, agentsArray.length);
+      await this.planLimitsService.assertCanAddAgent(
+        userId,
+        agentsArray.length,
+      );
 
       // Agregar el nuevo agente al array
       agentsArray.push(newAgent);
@@ -881,275 +887,6 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       }
       throw new BadRequestException(
         `Error al eliminar el agente: ${(error as Error).message}`,
-      );
-    }
-  }
-
-  // ⚠️ DEPRECATED: Mantener por compatibilidad temporal
-  async setAgentConfig(userId: string, agentConfig: SetAgentConfigDto) {
-    try {
-      // Obtener la referencia al documento del usuario
-      const userDocRef = this.firestore.collection('users').doc(userId);
-      const userSnapshot = await userDocRef.get();
-
-      if (!userSnapshot.exists) {
-        throw new NotFoundException('Usuario no encontrado.');
-      }
-
-      const userData = userSnapshot.data() as Record<string, unknown>;
-      const agentsArray =
-        (userData?.agents as Array<Record<string, unknown>>) || [];
-      const legacyAgent = (userData?.agent as Record<string, unknown>) || {};
-
-      // Determinar si usar nueva estructura (agents[]) o antigua (agent)
-      const useNewStructure =
-        agentsArray.length > 0 ||
-        !legacyAgent ||
-        Object.keys(legacyAgent).length === 0;
-
-      let hasChanges = false;
-      const updates: Record<string, unknown> = {};
-
-      if (useNewStructure) {
-        // Nueva estructura: trabajar con agents[]
-        let firstAgent = agentsArray.length > 0 ? { ...agentsArray[0] } : null;
-
-        // Generar phoneId si no existe
-        let phoneId = 0;
-        if (firstAgent?.phoneNumbers) {
-          const existingPhone = firstAgent.phoneNumbers as Record<
-            string,
-            unknown
-          >;
-          phoneId = (existingPhone.phoneId as number) || 0;
-        }
-        // Si no hay phoneId, generar uno nuevo basado en timestamp
-        if (phoneId === 0) {
-          phoneId = Date.now();
-        }
-
-        // Preparar phoneNumbers con phoneId
-        const phoneNumbersWithId = {
-          phoneId: phoneId,
-          countryCode: agentConfig.phoneNumbers.countryCode,
-          number: agentConfig.phoneNumbers.number.toString(), // Convertir a string para Firestore
-        };
-
-        // Si no hay agentes, crear uno nuevo
-        if (!firstAgent) {
-          const newAgentId = Date.now();
-          const shopifyDomain = this.normalizeShopifyDomain(
-            agentConfig.shopifyDomain,
-          );
-          firstAgent = {
-            agentId: newAgentId,
-            name: agentConfig.name,
-            type: agentConfig.type,
-            language: agentConfig.language,
-            voiceId: agentConfig.voiceId,
-            firstInteraction: agentConfig.firstInteraction,
-            agentInstruction: agentConfig.agentInstruction,
-            phoneNumbers: phoneNumbersWithId,
-            label: agentConfig.label,
-            state: agentConfig.state || 'Activo',
-            parameters: agentConfig.parameters,
-            totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
-            ...(shopifyDomain && { shopifyDomain }),
-          };
-          hasChanges = true;
-        } else {
-          // Asegurar que el agente existente tenga agentId
-          if (!firstAgent.agentId) {
-            firstAgent.agentId = Date.now();
-            hasChanges = true;
-          }
-          // Actualizar campos existentes
-          if (firstAgent.name !== agentConfig.name) {
-            firstAgent.name = agentConfig.name;
-            hasChanges = true;
-          }
-          if (firstAgent.type !== agentConfig.type) {
-            firstAgent.type = agentConfig.type;
-            hasChanges = true;
-          }
-          if (firstAgent.language !== agentConfig.language) {
-            firstAgent.language = agentConfig.language;
-            hasChanges = true;
-          }
-          if (firstAgent.voiceId !== agentConfig.voiceId) {
-            firstAgent.voiceId = agentConfig.voiceId;
-            hasChanges = true;
-          }
-          if (firstAgent.firstInteraction !== agentConfig.firstInteraction) {
-            firstAgent.firstInteraction = agentConfig.firstInteraction;
-            hasChanges = true;
-          }
-          if (firstAgent.agentInstruction !== agentConfig.agentInstruction) {
-            firstAgent.agentInstruction = agentConfig.agentInstruction;
-            hasChanges = true;
-          }
-          if (firstAgent.label !== agentConfig.label) {
-            firstAgent.label = agentConfig.label;
-            hasChanges = true;
-          }
-          if ((firstAgent.state as string) !== agentConfig.state) {
-            firstAgent.state = agentConfig.state || 'Activo';
-            hasChanges = true;
-          }
-          if (
-            JSON.stringify(firstAgent.parameters) !==
-            JSON.stringify(agentConfig.parameters)
-          ) {
-            firstAgent.parameters = agentConfig.parameters;
-            hasChanges = true;
-          }
-          // totalMinutes no se actualiza desde el request, se mantiene el valor existente
-
-          // Actualizar phoneNumbers (mantener phoneId existente si es el mismo número)
-          const existingPhone = firstAgent.phoneNumbers as Record<
-            string,
-            unknown
-          >;
-          const existingCountryCode = existingPhone?.countryCode as string;
-          const existingNumber = existingPhone?.number as string;
-          const newCountryCode = agentConfig.phoneNumbers.countryCode;
-          const newNumber = agentConfig.phoneNumbers.number.toString();
-
-          if (
-            existingCountryCode !== newCountryCode ||
-            existingNumber !== newNumber
-          ) {
-            // Si cambia el número, mantener el phoneId existente o generar uno nuevo
-            firstAgent.phoneNumbers = {
-              phoneId: phoneId,
-              countryCode: newCountryCode,
-              number: newNumber,
-            };
-            hasChanges = true;
-          }
-
-          // Actualizar shopifyDomain si viene en el request
-          if (agentConfig.shopifyDomain !== undefined) {
-            const newShopifyDomain = this.normalizeShopifyDomain(
-              agentConfig.shopifyDomain,
-            );
-            const currentShopifyDomain = firstAgent.shopifyDomain as
-              | string
-              | undefined;
-            if (newShopifyDomain !== (currentShopifyDomain ?? null)) {
-              firstAgent.shopifyDomain = newShopifyDomain ?? null;
-              hasChanges = true;
-            }
-          }
-        }
-
-        if (hasChanges) {
-          // Actualizar o crear el array de agents
-          if (agentsArray.length === 0) {
-            updates.agents = [firstAgent];
-          } else {
-            agentsArray[0] = firstAgent;
-            updates.agents = agentsArray;
-          }
-
-          // Actualizar el estado de todos los phoneNumbers basado en los agentes
-          const phoneNumbersArray =
-            (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
-          const finalAgentsArray =
-            agentsArray.length === 0 ? [firstAgent] : agentsArray;
-          const updatedPhoneNumbers = this.updatePhoneNumbersState(
-            phoneNumbersArray,
-            finalAgentsArray,
-          );
-          updates.phoneNumbers = updatedPhoneNumbers;
-        }
-      } else {
-        // Estructura antigua: mantener compatibilidad pero migrar a nueva estructura
-        // Generar phoneId
-        const phoneId = Date.now();
-
-        const phoneNumbersWithId = {
-          phoneId: phoneId,
-          countryCode: agentConfig.phoneNumbers.countryCode,
-          number: agentConfig.phoneNumbers.number.toString(),
-        };
-
-        // Crear nuevo agente con estructura completa
-        const newAgentId = Date.now();
-        const shopifyDomain = this.normalizeShopifyDomain(
-          agentConfig.shopifyDomain,
-        );
-        const newAgent = {
-          agentId: newAgentId,
-          name: agentConfig.name,
-          type: agentConfig.type,
-          language: agentConfig.language,
-          voiceId: agentConfig.voiceId,
-          firstInteraction: agentConfig.firstInteraction,
-          agentInstruction: agentConfig.agentInstruction,
-          phoneNumbers: phoneNumbersWithId,
-          label: agentConfig.label,
-          state: agentConfig.state || 'Activo',
-          parameters: agentConfig.parameters,
-          totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
-          ...(shopifyDomain && { shopifyDomain }),
-        };
-
-        // Migrar a nueva estructura
-        updates.agents = [newAgent];
-        hasChanges = true;
-      }
-
-      if (hasChanges) {
-        // Si se está usando estructura antigua, también actualizar phoneNumbers
-        if (!useNewStructure && updates.agents) {
-          const phoneNumbersArray =
-            (userData?.phoneNumbers as Array<Record<string, unknown>>) || [];
-          const newAgentsArray = updates.agents as Array<
-            Record<string, unknown>
-          >;
-
-          // Asegurar que el phoneNumber tenga los campos necesarios
-          const phoneId = (updates.agents[0] as Record<string, unknown>)
-            .phoneNumbers as Record<string, unknown>;
-          const phoneIdValue = phoneId.phoneId as number;
-          if (
-            phoneIdValue &&
-            !phoneNumbersArray.some(
-              (p) => (p.phoneId as number) === phoneIdValue,
-            )
-          ) {
-            phoneNumbersArray.push({
-              phoneId: phoneIdValue,
-              countryCode: phoneId.countryCode as string,
-              number: phoneId.number as string,
-              state: 'Activo' as const,
-              importedBy: 'Twilio',
-            });
-          }
-
-          const updatedPhoneNumbers = this.updatePhoneNumbersState(
-            phoneNumbersArray,
-            newAgentsArray,
-          );
-          updates.phoneNumbers = updatedPhoneNumbers;
-        }
-
-        await userDocRef.set(updates, { merge: true });
-      }
-
-      return {
-        message: 'Configuración de agente actualizada correctamente.',
-      };
-    } catch (error) {
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
-        throw error;
-      }
-      throw new BadRequestException(
-        `Error al procesar la configuración del agente: ${(error as Error).message}`,
       );
     }
   }

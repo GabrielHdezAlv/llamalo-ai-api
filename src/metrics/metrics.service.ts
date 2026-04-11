@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { getFirestore } from '../firebase/firebase.config';
@@ -54,6 +55,26 @@ export class MetricsService {
     private readonly profileEventsService: ProfileEventsService,
     private readonly planLimitsService: PlanLimitsService,
   ) {}
+
+  /**
+   * Nivel de panel según catálogo efectivo (Básico / Avanzado / Completo + exportación).
+   */
+  private resolvePanelAnalyticsTierFromUserData(
+    userData: Record<string, unknown>,
+  ): {
+    tier: 'basic' | 'advanced' | 'full_export';
+    can_export_csv: boolean;
+  } {
+    const limits = this.planLimitsService.getEffectiveTechLimits(userData);
+    const pa = String(limits.panelAnalytics || '');
+    let tier: 'basic' | 'advanced' | 'full_export' = 'basic';
+    if (pa.includes('Completo')) tier = 'full_export';
+    else if (pa.includes('Avanzado')) tier = 'advanced';
+    return {
+      tier,
+      can_export_csv: tier === 'full_export',
+    };
+  }
 
   /**
    * Persiste una llamada completada en Firestore (fuente de verdad para dashboards).
@@ -296,20 +317,13 @@ export class MetricsService {
         this.calculateLlamadasExitosasPorDia(allCalls7Days, terminacionesDashboard);
 
       const userData = userSnapshot.data() as Record<string, unknown>;
-      const limits = this.planLimitsService.getEffectiveTechLimits(userData);
-      const pa = String(limits.panelAnalytics || '');
-      let tier: 'basic' | 'advanced' | 'full_export' = 'basic';
-      if (pa.includes('Completo')) tier = 'full_export';
-      else if (pa.includes('Avanzado')) tier = 'advanced';
+      const panel = this.resolvePanelAnalyticsTierFromUserData(userData);
 
       return {
         resumen,
         agentes,
         llamadas_exitosas_ultimos_7_dias: llamadasExitosasUltimos7Dias,
-        panel_analytics: {
-          tier,
-          can_export_csv: tier === 'full_export',
-        },
+        panel_analytics: panel,
       };
     } catch (error) {
       if (
@@ -723,6 +737,13 @@ export class MetricsService {
       }
 
       const userData = userSnapshot.data() as Record<string, unknown>;
+      const panelTier = this.resolvePanelAnalyticsTierFromUserData(userData);
+      if (panelTier.tier === 'basic') {
+        throw new ForbiddenException(
+          'Las métricas avanzadas del panel están disponibles desde el plan Growth.',
+        );
+      }
+
       const twilioArray =
         (userData?.twilio as Array<{
           twilioAccountId: number;
@@ -857,11 +878,7 @@ export class MetricsService {
       const callMetricsByHour =
         this.calculateCallMetricsByHour(callsLast14Days);
 
-      const limits = this.planLimitsService.getEffectiveTechLimits(userData);
-      const pa = String(limits.panelAnalytics || '');
-      let tier: 'basic' | 'advanced' | 'full_export' = 'basic';
-      if (pa.includes('Completo')) tier = 'full_export';
-      else if (pa.includes('Avanzado')) tier = 'advanced';
+      const panel = this.resolvePanelAnalyticsTierFromUserData(userData);
 
       return {
         llamadasExitosasUltimos7Dias,
@@ -874,15 +891,13 @@ export class MetricsService {
         razonesFinalizacion,
         latenciaMedia,
         callMetricsByHour,
-        panel_analytics: {
-          tier,
-          can_export_csv: tier === 'full_export',
-        },
+        panel_analytics: panel,
       };
     } catch (error) {
       if (
         error instanceof NotFoundException ||
-        error instanceof BadRequestException
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
       ) {
         throw error;
       }

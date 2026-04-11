@@ -101,6 +101,11 @@ export class MetricsController {
     description: 'Métricas detalladas de Twilio obtenidas correctamente',
   })
   @ApiResponse({
+    status: 403,
+    description:
+      'Plan sin panel avanzado (solo Growth o superior pueden usar métricas detalladas)',
+  })
+  @ApiResponse({
     status: 404,
     description: 'Usuario o cuenta de Twilio no encontrada',
   })
