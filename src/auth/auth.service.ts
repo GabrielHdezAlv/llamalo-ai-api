@@ -118,6 +118,10 @@ export class AuthService {
         verificationToken,
         verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
         createdAt: admin.firestore.Timestamp.now(),
+        trialEndsAt: admin.firestore.Timestamp.fromMillis(
+          admin.firestore.Timestamp.now().toMillis() +
+            7 * 24 * 60 * 60 * 1000,
+        ),
         plan: DEFAULT_PLAN,
         minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
         extraMinutes: 0,
@@ -321,6 +325,10 @@ export class AuthService {
           verificationToken: null,
           verificationTokenExpiresAt: null,
           createdAt: admin.firestore.Timestamp.now(),
+          trialEndsAt: admin.firestore.Timestamp.fromMillis(
+            admin.firestore.Timestamp.now().toMillis() +
+              7 * 24 * 60 * 60 * 1000,
+          ),
           plan: DEFAULT_PLAN,
           minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
           extraMinutes: 0,

@@ -19,6 +19,8 @@ import { MailerLiteModule } from './mailerlite/mailerlite.module';
 import { LearningModule } from './learning/learning.module';
 import { SystemLogsModule } from './system-logs/system-logs.module';
 import { ProfileEventsModule } from './profile-events/profile-events.module';
+import { PlanLimitsModule } from './plan-limits/plan-limits.module';
+import { StripeModule } from './stripe/stripe.module';
 
 @Module({
   imports: [
@@ -47,6 +49,8 @@ import { ProfileEventsModule } from './profile-events/profile-events.module';
     LearningModule,
     SystemLogsModule,
     ProfileEventsModule,
+    PlanLimitsModule,
+    StripeModule,
   ],
   controllers: [],
   providers: [],

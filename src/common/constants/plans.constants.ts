@@ -18,8 +18,35 @@ export type PlanLimitsEntry = {
   betaAccess: boolean;
 };
 
+/** Duración del trial en cuenta gratuita (mismas capacidades técnicas que Starter). */
+export const TRIAL_DURATION_DAYS = 7;
+
+/**
+ * Límites técnicos cuando el trial de 7 días expiró y el usuario sigue en `gratis`
+ * (debe pasar a plan de pago para seguir usando el producto).
+ */
+export const EXPIRED_TRIAL_TECH_LIMITS: PlanLimitsEntry = {
+  name: 'Gratis (trial expirado)',
+  price: 0,
+  currency: 'EUR',
+  minutesLimit: 0,
+  extraPerMinuteEur: 0,
+  agents: 0,
+  indexedUrls: 0,
+  documentsMax: 0,
+  maxDocSizeMb: 0,
+  storageTotalMb: 0,
+  panelAnalytics: '—',
+  integrations: '—',
+  support: '—',
+  betaAccess: false,
+};
+
 export const PLAN_LIMITS = {
-  /** Gratis; el slug legacy `basic` se migra a `gratis` en usuarios */
+  /**
+   * Catálogo “gratis”: minutos por defecto en alta; durante trial activo el backend
+   * aplica los mismos tech limits que Starter (ver PlanLimitsService).
+   */
   gratis: {
     name: 'Gratis',
     price: 0,
@@ -27,13 +54,13 @@ export const PLAN_LIMITS = {
     minutesLimit: 100,
     extraPerMinuteEur: 0,
     agents: 1,
-    indexedUrls: 0,
-    documentsMax: 0,
-    maxDocSizeMb: 0,
-    storageTotalMb: 0,
-    panelAnalytics: '—',
-    integrations: '—',
-    support: '—',
+    indexedUrls: 10,
+    documentsMax: 5,
+    maxDocSizeMb: 10,
+    storageTotalMb: 100,
+    panelAnalytics: 'Básico',
+    integrations: 'Make (próximamente)',
+    support: 'Email',
     betaAccess: false,
   },
   starter: {

@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { ComparacionDiaAnteriorDto } from './twilio-detailed-metrics.dto';
+import { PanelAnalyticsDto } from './panel-analytics.dto';
 
 export class MetricaConComparacionDto {
   @ApiProperty({
@@ -116,4 +117,10 @@ export class DashboardMetricsResponseDto {
     description: 'Llamadas exitosas de los últimos 7 días separadas por día',
   })
   llamadas_exitosas_ultimos_7_dias: LlamadaExitosaPorDiaDto[];
+
+  @ApiProperty({
+    type: PanelAnalyticsDto,
+    description: 'Nivel de panel según plan (Básico / Avanzado / Completo)',
+  })
+  panel_analytics: PanelAnalyticsDto;
 }

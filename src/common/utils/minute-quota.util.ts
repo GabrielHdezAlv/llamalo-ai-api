@@ -11,12 +11,15 @@ export type MinuteQuotaSnapshot = {
   totalLimit: number;
 };
 
-export function computeMinuteQuotaFromUserData(userData: {
-  plan?: string;
-  minutesLimit?: number;
-  extraMinutes?: number;
-  minutesByMonth?: Record<string, number>;
-}): MinuteQuotaSnapshot {
+export function computeMinuteQuotaFromUserData(
+  userData: {
+    plan?: string;
+    minutesLimit?: number;
+    extraMinutes?: number;
+    minutesByMonth?: Record<string, number>;
+  },
+  options?: { effectiveMinutesLimit?: number },
+): MinuteQuotaSnapshot {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const usedMinutes = userData.minutesByMonth?.[currentMonth] || 0;
 
@@ -29,7 +32,10 @@ export function computeMinuteQuotaFromUserData(userData: {
     };
   }
 
-  const planLimit = userData.minutesLimit ?? 100;
+  const planLimit =
+    options?.effectiveMinutesLimit !== undefined
+      ? options.effectiveMinutesLimit
+      : (userData.minutesLimit ?? 100);
   const extraMinutes = userData.extraMinutes || 0;
   const totalLimit = planLimit + extraMinutes;
   const availableMinutes = Math.max(0, totalLimit - usedMinutes);

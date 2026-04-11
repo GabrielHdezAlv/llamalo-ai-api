@@ -11,7 +11,9 @@ import {
   UseGuards,
   BadRequestException,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
+import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -41,7 +43,10 @@ import { ShopifyMasterDataResponseDto } from './dto/shopify-master-data-response
 @ApiTags('shopify')
 @Controller('shopify')
 export class ShopifyController {
-  constructor(private readonly shopifyService: ShopifyService) {}
+  constructor(
+    private readonly shopifyService: ShopifyService,
+    private readonly planLimitsService: PlanLimitsService,
+  ) {}
 
   @Get('auth')
   @UseGuards(FirebaseAuthGuard)
@@ -99,6 +104,7 @@ export class ShopifyController {
     @Req() req: Request,
   ) {
     try {
+      await this.planLimitsService.assertShopifyIntegrationAllowed(userId);
       // Detectar si la petición viene de Swagger
       // Swagger UI típicamente envía referer con /api o swagger en la URL
       const referer = req.headers['referer'] || '';
@@ -142,6 +148,9 @@ export class ShopifyController {
       // Por defecto, redirigir
       return res.redirect(authUrl);
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       throw new BadRequestException(
         `Error al generar URL de autorización: ${(error as Error).message}`,
       );
@@ -239,6 +248,9 @@ export class ShopifyController {
       // Validar sesión OAuth y recuperar userId
       const oauthSession = await this.shopifyService.validateOAuthSession(
         query.state,
+      );
+      await this.planLimitsService.assertShopifyIntegrationAllowed(
+        oauthSession.userId,
       );
       const redirectBase = getRedirectBase(oauthSession.frontendRedirectUrl);
 

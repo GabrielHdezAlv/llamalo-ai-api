@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PanelAnalyticsDto } from './panel-analytics.dto';
 
 export class ComparacionDiaAnteriorDto {
   @ApiProperty({
@@ -272,4 +273,10 @@ export class TwilioDetailedMetricsResponseDto {
     required: false,
   })
   callMetricsByHour?: CallMetricsDto;
+
+  @ApiProperty({
+    type: PanelAnalyticsDto,
+    description: 'Nivel de panel según plan (Básico / Avanzado / Completo)',
+  })
+  panel_analytics: PanelAnalyticsDto;
 }

@@ -2,9 +2,11 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -25,6 +27,7 @@ export class AgentsService {
   constructor(
     @Inject(forwardRef(() => KnowledgeBaseService))
     private readonly knowledgeBaseService: KnowledgeBaseService,
+    private readonly planLimitsService: PlanLimitsService,
   ) {}
 
   private readAgentPromptTemplate(): string {
@@ -533,6 +536,8 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         }
       }
 
+      await this.planLimitsService.assertCanAddAgent(userId, agentsArray.length);
+
       // Agregar el nuevo agente al array
       agentsArray.push(newAgent);
 
@@ -559,7 +564,8 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     } catch (error) {
       if (
         error instanceof NotFoundException ||
-        error instanceof BadRequestException
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
       ) {
         throw error;
       }

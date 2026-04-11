@@ -34,7 +34,10 @@ async function bootstrap() {
           originalUrl?: string;
           rawBody?: Buffer;
         };
-        if (r.originalUrl?.startsWith('/shopify/webhooks')) {
+        if (
+          r.originalUrl?.startsWith('/shopify/webhooks') ||
+          r.originalUrl?.startsWith('/stripe/webhook')
+        ) {
           r.rawBody = buf;
         }
       },

@@ -25,6 +25,7 @@ import { EmbeddingsService } from './embeddings/embeddings.service';
 import { VectorStoreService } from './embeddings/vector-store.service';
 import { TextChunker } from './utils/chunker';
 import { TextCleaner } from './utils/text-cleaner';
+import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -44,6 +45,7 @@ export class KnowledgeBaseService {
     private readonly textProcessor: TextProcessor,
     private readonly embeddingsService: EmbeddingsService,
     private readonly vectorStoreService: VectorStoreService,
+    private readonly planLimitsService: PlanLimitsService,
   ) {}
 
   async createKnowledgeSource(
@@ -52,7 +54,36 @@ export class KnowledgeBaseService {
     filePath?: string,
   ): Promise<KnowledgeSourceDto> {
     try {
+      let pdfSize: number | undefined;
+      if (filePath && fs.existsSync(filePath)) {
+        pdfSize = fs.statSync(filePath).size;
+      }
+      const textBytes =
+        createSourceDto.type === KnowledgeSourceType.TEXT &&
+        createSourceDto.content
+          ? Buffer.byteLength(createSourceDto.content, 'utf8')
+          : undefined;
+
+      await this.planLimitsService.assertCanCreateKnowledgeSource(
+        userId,
+        createSourceDto.type,
+        {
+          fileSizeBytes: pdfSize,
+          textContentBytes: textBytes,
+        },
+      );
+
       const sourceId = `src_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      let sizeBytes = 0;
+      if (createSourceDto.type === KnowledgeSourceType.PDF && pdfSize != null) {
+        sizeBytes = pdfSize;
+      } else if (
+        createSourceDto.type === KnowledgeSourceType.TEXT &&
+        textBytes != null
+      ) {
+        sizeBytes = textBytes;
+      }
 
       const knowledgeSource: Record<string, unknown> = {
         id: sourceId,
@@ -69,6 +100,7 @@ export class KnowledgeBaseService {
         isPublic: createSourceDto.isPublic || false,
         ...(createSourceDto.url && { originalUrl: createSourceDto.url }),
         ...(filePath && { fileName: path.basename(filePath) }),
+        ...(sizeBytes > 0 && { sizeBytes }),
       };
 
       if (
@@ -99,6 +131,9 @@ export class KnowledgeBaseService {
 
       return this.mapToDto(knowledgeSource);
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       this.logger.error(`Error creating knowledge source: ${error.message}`);
       throw new BadRequestException(
         `Failed to create knowledge source: ${error.message}`,
@@ -187,6 +222,7 @@ export class KnowledgeBaseService {
     const sourceRef = this.firestore.collection('knowledgeSources').doc(sourceId);
     const beforeSnap = await sourceRef.get();
     const beforeData = beforeSnap.data() as Record<string, unknown> | undefined;
+    const textByteSize = Buffer.byteLength(cleanedText, 'utf8');
     const completedUpdate: Record<string, unknown> = {
       status: KnowledgeSourceStatus.COMPLETED,
       updatedAt: new Date(),
@@ -195,6 +231,9 @@ export class KnowledgeBaseService {
         chunkCount: chunks.length,
       },
     };
+    if (beforeData?.type === KnowledgeSourceType.WEB) {
+      completedUpdate.sizeBytes = textByteSize;
+    }
     // Reafirmar texto guardado para que el listado siga exponiendo descarga/edición tras reindexar.
     if (
       beforeData?.type === KnowledgeSourceType.TEXT &&

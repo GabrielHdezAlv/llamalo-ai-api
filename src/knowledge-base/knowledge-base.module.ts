@@ -29,7 +29,7 @@ import { extname } from 'path';
         }
       },
       limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
+        fileSize: 25 * 1024 * 1024, // máximo catálogo (Scale); se valida por plan en servicio
       },
     }),
   ],

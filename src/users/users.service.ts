@@ -12,6 +12,8 @@ import { computeMinuteQuotaFromUserData } from '../common/utils/minute-quota.uti
 import { getFirestore } from '../firebase/firebase.config';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import { ProfileEventsService } from '../profile-events/profile-events.service';
+import { PlanLimitsService } from '../plan-limits/plan-limits.service';
+import type { PlanUsageSnapshot } from '../plan-limits/plan-limits.service';
 
 interface PhoneNumber {
   phoneId: number;
@@ -79,6 +81,7 @@ interface UserData {
   extraMinutes?: number;
   minutesByMonth?: Record<string, number>;
   redeemedRewards?: string[];
+  trialEndsAt?: admin.firestore.Timestamp;
 }
 
 export type UserProfileResponse = {
@@ -146,6 +149,8 @@ export type UserProfileResponse = {
   extraMinutes?: number;
   minutesByMonth?: Record<string, number>;
   redeemedRewards?: string[];
+  trialEndsAt?: string | null;
+  planUsage?: PlanUsageSnapshot;
 };
 
 export interface UploadFile {
@@ -163,6 +168,7 @@ export class UsersService {
   constructor(
     private readonly mailerLiteService: MailerLiteService,
     private readonly profileEventsService: ProfileEventsService,
+    private readonly planLimitsService: PlanLimitsService,
   ) {}
 
   private filterPhoneNumbers(phoneNumbers: PhoneNumber[], query?: string) {
@@ -212,6 +218,15 @@ export class UsersService {
       }
 
       const userData = snapshot.data() as UserData;
+      const planUsage = await this.planLimitsService.getPlanUsageSnapshot(userId);
+
+      let trialEndsAtStr: string | null = null;
+      const te = userData.trialEndsAt;
+      if (te && typeof (te as admin.firestore.Timestamp).toDate === 'function') {
+        trialEndsAtStr = (te as admin.firestore.Timestamp).toDate().toISOString();
+      } else if (planUsage?.trialEndsAt) {
+        trialEndsAtStr = planUsage.trialEndsAt;
+      }
 
       // ✅ Convertir createdAt a string legible
       let createdAtStr: string | null = null;
@@ -263,10 +278,14 @@ export class UsersService {
         })),
         agents: userData?.agents || [],
         plan: userData?.plan ?? 'gratis',
-        minutesLimit: userData?.minutesLimit ?? 100, // Límite por defecto si no existe
+        minutesLimit: this.planLimitsService.getEffectiveVoiceMinutesLimit(
+          userData as unknown as admin.firestore.DocumentData,
+        ),
         extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
         minutesByMonth: userData?.minutesByMonth ?? {}, // Historial de minutos por mes
         redeemedRewards: userData?.redeemedRewards ?? [],
+        trialEndsAt: trialEndsAtStr,
+        planUsage: planUsage ?? undefined,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -732,7 +751,11 @@ export class UsersService {
       }
 
       const userData = snapshot.data() as UserData;
-      return computeMinuteQuotaFromUserData(userData);
+      const effectiveMinutes =
+        this.planLimitsService.getEffectiveVoiceMinutesLimit(userData);
+      return computeMinuteQuotaFromUserData(userData, {
+        effectiveMinutesLimit: effectiveMinutes,
+      });
     } catch (error) {
       if (error instanceof NotFoundException) throw error;
       throw new BadRequestException(

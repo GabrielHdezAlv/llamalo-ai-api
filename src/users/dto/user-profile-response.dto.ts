@@ -157,4 +157,16 @@ export class UserProfileResponseDto {
     description: 'Historial de minutos consumidos por mes (formato YYYY-MM)',
   })
   minutesByMonth?: Record<string, number>;
+
+  @ApiProperty({
+    required: false,
+    description: 'Fin de periodo de prueba (ISO), plan gratis',
+  })
+  trialEndsAt?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description: 'Uso vs límites efectivos del plan',
+  })
+  planUsage?: Record<string, unknown>;
 }

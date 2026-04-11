@@ -4,7 +4,6 @@ import { UsersService } from './users.service';
 import { AccountDeletionSchedulerService } from './account-deletion-scheduler.service';
 import { MailerLiteModule } from '../mailerlite/mailerlite.module';
 import { ProfileEventsModule } from '../profile-events/profile-events.module';
-
 @Module({
   imports: [MailerLiteModule, ProfileEventsModule],
   controllers: [UsersController],

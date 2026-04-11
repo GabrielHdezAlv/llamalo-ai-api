@@ -15,6 +15,7 @@ import {
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import { computeAutoExtraMinutesAfterSync } from '../common/utils/minute-quota.util';
 import { ProfileEventsService } from '../profile-events/profile-events.service';
+import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 import {
   TwilioDetailedMetricsResponseDto,
   ComparacionDiaAnteriorDto,
@@ -51,6 +52,7 @@ export class MetricsService {
   constructor(
     private readonly mailerLiteService: MailerLiteService,
     private readonly profileEventsService: ProfileEventsService,
+    private readonly planLimitsService: PlanLimitsService,
   ) {}
 
   /**
@@ -293,10 +295,21 @@ export class MetricsService {
       const llamadasExitosasUltimos7Dias =
         this.calculateLlamadasExitosasPorDia(allCalls7Days, terminacionesDashboard);
 
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const limits = this.planLimitsService.getEffectiveTechLimits(userData);
+      const pa = String(limits.panelAnalytics || '');
+      let tier: 'basic' | 'advanced' | 'full_export' = 'basic';
+      if (pa.includes('Completo')) tier = 'full_export';
+      else if (pa.includes('Avanzado')) tier = 'advanced';
+
       return {
         resumen,
         agentes,
         llamadas_exitosas_ultimos_7_dias: llamadasExitosasUltimos7Dias,
+        panel_analytics: {
+          tier,
+          can_export_csv: tier === 'full_export',
+        },
       };
     } catch (error) {
       if (
@@ -844,6 +857,12 @@ export class MetricsService {
       const callMetricsByHour =
         this.calculateCallMetricsByHour(callsLast14Days);
 
+      const limits = this.planLimitsService.getEffectiveTechLimits(userData);
+      const pa = String(limits.panelAnalytics || '');
+      let tier: 'basic' | 'advanced' | 'full_export' = 'basic';
+      if (pa.includes('Completo')) tier = 'full_export';
+      else if (pa.includes('Avanzado')) tier = 'advanced';
+
       return {
         llamadasExitosasUltimos7Dias,
         resumenComparativoSemanal,
@@ -855,6 +874,10 @@ export class MetricsService {
         razonesFinalizacion,
         latenciaMedia,
         callMetricsByHour,
+        panel_analytics: {
+          tier,
+          can_export_csv: tier === 'full_export',
+        },
       };
     } catch (error) {
       if (
