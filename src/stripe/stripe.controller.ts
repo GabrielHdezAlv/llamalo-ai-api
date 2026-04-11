@@ -67,10 +67,10 @@ export class StripeController {
   @ApiOperation({ summary: 'Portal de facturación Stripe' })
   async billingPortal(
     @GetUser('uid') userId: string,
-    @Body() body: { returnUrl: string; stripeCustomerId: string },
+    @Body() body: { returnUrl: string },
   ) {
-    return this.stripeService.createBillingPortalSession({
-      customerId: body.stripeCustomerId,
+    return this.stripeService.createBillingPortalSessionForUser({
+      userId,
       returnUrl: body.returnUrl,
     });
   }

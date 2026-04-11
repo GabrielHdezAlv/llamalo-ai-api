@@ -169,4 +169,16 @@ export class UserProfileResponseDto {
     description: 'Uso vs límites efectivos del plan',
   })
   planUsage?: Record<string, unknown>;
+
+  @ApiProperty({
+    required: false,
+    description: 'ID de cliente Stripe (facturación)',
+  })
+  stripeCustomerId?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description: 'ID de suscripción Stripe',
+  })
+  stripeSubscriptionId?: string | null;
 }

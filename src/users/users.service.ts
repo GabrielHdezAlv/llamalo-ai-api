@@ -82,6 +82,8 @@ interface UserData {
   minutesByMonth?: Record<string, number>;
   redeemedRewards?: string[];
   trialEndsAt?: admin.firestore.Timestamp;
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
 }
 
 export type UserProfileResponse = {
@@ -151,6 +153,8 @@ export type UserProfileResponse = {
   redeemedRewards?: string[];
   trialEndsAt?: string | null;
   planUsage?: PlanUsageSnapshot;
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
 };
 
 export interface UploadFile {
@@ -286,6 +290,8 @@ export class UsersService {
         redeemedRewards: userData?.redeemedRewards ?? [],
         trialEndsAt: trialEndsAtStr,
         planUsage: planUsage ?? undefined,
+        stripeCustomerId: userData?.stripeCustomerId ?? null,
+        stripeSubscriptionId: userData?.stripeSubscriptionId ?? null,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {

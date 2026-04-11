@@ -106,6 +106,28 @@ export class StripeService {
     return { url: session.url };
   }
 
+  /** Portal de facturación usando el cliente Stripe guardado en Firestore (no confiar en el body). */
+  async createBillingPortalSessionForUser(params: {
+    userId: string;
+    returnUrl: string;
+  }): Promise<{ url: string | null }> {
+    const snap = await this.firestore.collection('users').doc(params.userId).get();
+    if (!snap.exists) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+    const custId = (snap.data() as { stripeCustomerId?: string | null })
+      ?.stripeCustomerId;
+    if (!custId || typeof custId !== 'string' || !custId.trim()) {
+      throw new BadRequestException(
+        'No hay facturación asociada. Suscríbete primero desde la página de planes.',
+      );
+    }
+    return this.createBillingPortalSession({
+      customerId: custId.trim(),
+      returnUrl: params.returnUrl,
+    });
+  }
+
   async handleWebhook(rawBody: Buffer, signature: string | undefined): Promise<void> {
     const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
     if (!secret) {
