@@ -1,0 +1,230 @@
+# Blueprint: crea SOLO los servicios de preprod y prod.
+# No incluye "llamaloiabackend" (producción actual en rama new-dev) para no modificarlo vía YAML.
+# Tras aplicar el Blueprint, revisa en Render cada servicio y rellena las variables (sync: false).
+version: "1"
+services:
+  - type: web
+    name: llamaloiabackend-preprod
+    branch: preprod
+    runtime: node
+    repo: https://github.com/GabrielHdezAlv/llamalo-ai-api
+    plan: starter
+    region: frankfurt
+    buildCommand: yarn install --frozen-lockfile && yarn build
+    startCommand: yarn start:prod
+    healthCheckPath: /ping
+    autoDeployTrigger: commit
+    envVars:
+      - key: STRIPE_PRICE_STARTER
+        sync: false
+      - key: STRIPE_PRICE_SCALE
+        sync: false
+      - key: STRIPE_PRICE_GROWTH
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: ALLOW_PLAN_CHANGE_MOCK
+        sync: false
+      - key: NODE_ENV
+        sync: false
+      - key: SILENCE_PROMPT_TIMEOUT_MS
+        sync: false
+      - key: SILENCE_HANGUP_TIMEOUT_MS
+        sync: false
+      - key: SILENCE_TIMEOUT_MS
+        sync: false
+      - key: MAILERSEND_API_KEY
+        sync: false
+      - key: OPENAI_MAX_TOKENS_FIRST_TURN
+        sync: false
+      - key: OPENAI_MODEL_FIRST_TURN
+        sync: false
+      - key: OPENAI_TEMPERATURE
+        sync: false
+      - key: OPENAI_MAX_TOKENS
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: MAILERLITE_API_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: DG_THINK_PROVIDER
+        sync: false
+      - key: DG_THINK_MODEL
+        sync: false
+      - key: DISABLE_SWAGGER
+        sync: false
+      - key: DG_THINK_TEMPERATURE
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: TTS_PROVIDER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: ELEVENLABS_TTS_VOICE_SPEED
+        sync: false
+      - key: ELEVENLABS_TTS_VOICE_ID
+        sync: false
+      - key: ELEVENLABS_TTS_STYLE
+        sync: false
+      - key: ELEVENLABS_TTS_STABILITY
+        sync: false
+      - key: ELEVENLABS_TTS_SPEAKER_BOOST
+        sync: false
+      - key: ELEVENLABS_TTS_SIMILARITY
+        sync: false
+      - key: FIREBASE_API_KEY
+        sync: false
+      - key: DG_VOICE_AGENT_API_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      - key: SHOPIFY_API_KEY
+        sync: false
+      - key: ELEVENLABS_TTS_OUTPUT_FORMAT
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_TTS_MODEL_ID
+        sync: false
+      - key: ELEVENLABS_LANGUAGE
+        sync: false
+      - key: google-cloud-credentials.json
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: firebase_service_account.json
+        sync: false
+      - key: APP_PORT
+        sync: false
+      - key: LOG_LEVEL
+        sync: false
+
+  - type: web
+    name: llamaloiabackend-prod
+    branch: prod
+    runtime: node
+    repo: https://github.com/GabrielHdezAlv/llamalo-ai-api
+    plan: starter
+    region: frankfurt
+    buildCommand: yarn install --frozen-lockfile && yarn build
+    startCommand: yarn start:prod
+    healthCheckPath: /ping
+    autoDeployTrigger: commit
+    envVars:
+      - key: STRIPE_PRICE_STARTER
+        sync: false
+      - key: STRIPE_PRICE_SCALE
+        sync: false
+      - key: STRIPE_PRICE_GROWTH
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: ALLOW_PLAN_CHANGE_MOCK
+        sync: false
+      - key: NODE_ENV
+        sync: false
+      - key: SILENCE_PROMPT_TIMEOUT_MS
+        sync: false
+      - key: SILENCE_HANGUP_TIMEOUT_MS
+        sync: false
+      - key: SILENCE_TIMEOUT_MS
+        sync: false
+      - key: MAILERSEND_API_KEY
+        sync: false
+      - key: OPENAI_MAX_TOKENS_FIRST_TURN
+        sync: false
+      - key: OPENAI_MODEL_FIRST_TURN
+        sync: false
+      - key: OPENAI_TEMPERATURE
+        sync: false
+      - key: OPENAI_MAX_TOKENS
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: MAILERLITE_API_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: DG_THINK_PROVIDER
+        sync: false
+      - key: DG_THINK_MODEL
+        sync: false
+      - key: DISABLE_SWAGGER
+        sync: false
+      - key: DG_THINK_TEMPERATURE
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: TTS_PROVIDER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: ELEVENLABS_TTS_VOICE_SPEED
+        sync: false
+      - key: ELEVENLABS_TTS_VOICE_ID
+        sync: false
+      - key: ELEVENLABS_TTS_STYLE
+        sync: false
+      - key: ELEVENLABS_TTS_STABILITY
+        sync: false
+      - key: ELEVENLABS_TTS_SPEAKER_BOOST
+        sync: false
+      - key: ELEVENLABS_TTS_SIMILARITY
+        sync: false
+      - key: FIREBASE_API_KEY
+        sync: false
+      - key: DG_VOICE_AGENT_API_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      - key: SHOPIFY_API_KEY
+        sync: false
+      - key: ELEVENLABS_TTS_OUTPUT_FORMAT
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_TTS_MODEL_ID
+        sync: false
+      - key: ELEVENLABS_LANGUAGE
+        sync: false
+      - key: google-cloud-credentials.json
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: firebase_service_account.json
+        sync: false
+      - key: APP_PORT
+        sync: false
+      - key: LOG_LEVEL
+        sync: false
