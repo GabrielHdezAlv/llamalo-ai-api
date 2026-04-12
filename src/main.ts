@@ -13,16 +13,38 @@ import { SupportChatGateway } from './support-chat/support-chat.gateway';
 import { ProfileEventsService } from './profile-events/profile-events.service';
 import { configureLogging } from './utils/logging';
 
-/** Orígenes CORS: FRONTEND_URL por servicio en Render (p. ej. https://dev.llamalo.ai, https://preprod.llamalo.ai) + localhost para ng serve. */
+/** Normaliza un origen (sin barra final, con esquema). */
+function normalizeOrigin(raw: string): string {
+  let o = raw.trim().replace(/\/+$/, '');
+  if (o && !/^https?:\/\//i.test(o)) {
+    o = `https://${o}`;
+  }
+  return o;
+}
+
+/**
+ * Orígenes CORS: FRONTEND_URL (coma-separado si hace falta) + localhost + Vercel
+ * + CORS_EXTRA_ORIGINS (coma-separado) para previews u otros dominios.
+ */
 function buildCorsOrigins(): string[] {
   const raw = process.env.FRONTEND_URL?.trim();
-  let primary = raw
-    ? raw.replace(/\/+$/, '')
-    : 'https://app.llamalo.ai';
-  if (primary && !/^https?:\/\//i.test(primary)) {
-    primary = `https://${primary}`;
-  }
-  return Array.from(new Set([primary, 'http://localhost:4200']));
+  const fromFrontend = raw
+    ? raw.split(',').map((s) => normalizeOrigin(s)).filter(Boolean)
+    : [normalizeOrigin('https://app.llamalo.ai')];
+  const extraFromEnv = (process.env.CORS_EXTRA_ORIGINS ?? '')
+    .split(',')
+    .map((s) => normalizeOrigin(s))
+    .filter(Boolean);
+  /** Dominio por defecto del front en Vercel (producción del proyecto). */
+  const vercelDefault = 'https://llamalo-ai.vercel.app';
+  return Array.from(
+    new Set([
+      ...fromFrontend,
+      'http://localhost:4200',
+      vercelDefault,
+      ...extraFromEnv,
+    ]),
+  );
 }
 
 async function bootstrap() {
