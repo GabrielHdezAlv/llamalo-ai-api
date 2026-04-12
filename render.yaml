@@ -1,6 +1,6 @@
 # Blueprint: crea SOLO llamaloiabackend-dev (rama dev) y llamaloiabackend-preprod (rama preprod).
 # Producción sigue en el servicio existente "llamaloiabackend" (p. ej. rama new-dev), sin incluirlo aquí.
-# Tras aplicar el Blueprint, rellena las variables en Render (sync: false).
+# Cada variable se copia desde el servicio web "llamaloiabackend" (fromService). Puedes editar valores en el panel después.
 version: "1"
 services:
   - type: web
@@ -16,105 +16,255 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: STRIPE_PRICE_STARTER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_PRICE_STARTER
       - key: STRIPE_PRICE_SCALE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_PRICE_SCALE
       - key: STRIPE_PRICE_GROWTH
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_PRICE_GROWTH
       - key: STRIPE_WEBHOOK_SECRET
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_WEBHOOK_SECRET
       - key: STRIPE_SECRET_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_SECRET_KEY
       - key: ALLOW_PLAN_CHANGE_MOCK
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ALLOW_PLAN_CHANGE_MOCK
       - key: NODE_ENV
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: NODE_ENV
       - key: SILENCE_PROMPT_TIMEOUT_MS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SILENCE_PROMPT_TIMEOUT_MS
       - key: SILENCE_HANGUP_TIMEOUT_MS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SILENCE_HANGUP_TIMEOUT_MS
       - key: SILENCE_TIMEOUT_MS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SILENCE_TIMEOUT_MS
       - key: MAILERSEND_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: MAILERSEND_API_KEY
       - key: OPENAI_MAX_TOKENS_FIRST_TURN
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MAX_TOKENS_FIRST_TURN
       - key: OPENAI_MODEL_FIRST_TURN
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MODEL_FIRST_TURN
       - key: OPENAI_TEMPERATURE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_TEMPERATURE
       - key: OPENAI_MAX_TOKENS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MAX_TOKENS
       - key: OPENAI_MODEL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MODEL
       - key: MAILERLITE_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: MAILERLITE_API_KEY
       - key: ENCRYPTION_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ENCRYPTION_KEY
       - key: DG_THINK_PROVIDER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_THINK_PROVIDER
       - key: DG_THINK_MODEL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_THINK_MODEL
       - key: DISABLE_SWAGGER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DISABLE_SWAGGER
       - key: DG_THINK_TEMPERATURE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_THINK_TEMPERATURE
       - key: FRONTEND_URL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FRONTEND_URL
       - key: SMTP_USER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_USER
       - key: SMTP_PORT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_PORT
       - key: SMTP_HOST
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_HOST
       - key: TTS_PROVIDER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: TTS_PROVIDER
       - key: SMTP_PASS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_PASS
       - key: ELEVENLABS_TTS_VOICE_SPEED
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_VOICE_SPEED
       - key: ELEVENLABS_TTS_VOICE_ID
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_VOICE_ID
       - key: ELEVENLABS_TTS_STYLE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_STYLE
       - key: ELEVENLABS_TTS_STABILITY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_STABILITY
       - key: ELEVENLABS_TTS_SPEAKER_BOOST
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_SPEAKER_BOOST
       - key: ELEVENLABS_TTS_SIMILARITY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_SIMILARITY
       - key: FIREBASE_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FIREBASE_API_KEY
       - key: DG_VOICE_AGENT_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_VOICE_AGENT_API_KEY
       - key: APP_URL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: APP_URL
       - key: SHOPIFY_API_SECRET
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SHOPIFY_API_SECRET
       - key: SHOPIFY_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SHOPIFY_API_KEY
       - key: ELEVENLABS_TTS_OUTPUT_FORMAT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_OUTPUT_FORMAT
       - key: ELEVENLABS_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_API_KEY
       - key: ELEVENLABS_TTS_MODEL_ID
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_MODEL_ID
       - key: ELEVENLABS_LANGUAGE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_LANGUAGE
       - key: google-cloud-credentials.json
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: google-cloud-credentials.json
       - key: FIREBASE_STORAGE_BUCKET
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FIREBASE_STORAGE_BUCKET
       - key: FIREBASE_SERVICE_ACCOUNT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FIREBASE_SERVICE_ACCOUNT
       - key: OPENAI_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_API_KEY
       - key: firebase_service_account.json
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: firebase_service_account.json
       - key: APP_PORT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: APP_PORT
       - key: LOG_LEVEL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: LOG_LEVEL
 
   - type: web
     name: llamaloiabackend-preprod
@@ -129,102 +279,252 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: STRIPE_PRICE_STARTER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_PRICE_STARTER
       - key: STRIPE_PRICE_SCALE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_PRICE_SCALE
       - key: STRIPE_PRICE_GROWTH
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_PRICE_GROWTH
       - key: STRIPE_WEBHOOK_SECRET
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_WEBHOOK_SECRET
       - key: STRIPE_SECRET_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: STRIPE_SECRET_KEY
       - key: ALLOW_PLAN_CHANGE_MOCK
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ALLOW_PLAN_CHANGE_MOCK
       - key: NODE_ENV
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: NODE_ENV
       - key: SILENCE_PROMPT_TIMEOUT_MS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SILENCE_PROMPT_TIMEOUT_MS
       - key: SILENCE_HANGUP_TIMEOUT_MS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SILENCE_HANGUP_TIMEOUT_MS
       - key: SILENCE_TIMEOUT_MS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SILENCE_TIMEOUT_MS
       - key: MAILERSEND_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: MAILERSEND_API_KEY
       - key: OPENAI_MAX_TOKENS_FIRST_TURN
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MAX_TOKENS_FIRST_TURN
       - key: OPENAI_MODEL_FIRST_TURN
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MODEL_FIRST_TURN
       - key: OPENAI_TEMPERATURE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_TEMPERATURE
       - key: OPENAI_MAX_TOKENS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MAX_TOKENS
       - key: OPENAI_MODEL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_MODEL
       - key: MAILERLITE_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: MAILERLITE_API_KEY
       - key: ENCRYPTION_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ENCRYPTION_KEY
       - key: DG_THINK_PROVIDER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_THINK_PROVIDER
       - key: DG_THINK_MODEL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_THINK_MODEL
       - key: DISABLE_SWAGGER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DISABLE_SWAGGER
       - key: DG_THINK_TEMPERATURE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_THINK_TEMPERATURE
       - key: FRONTEND_URL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FRONTEND_URL
       - key: SMTP_USER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_USER
       - key: SMTP_PORT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_PORT
       - key: SMTP_HOST
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_HOST
       - key: TTS_PROVIDER
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: TTS_PROVIDER
       - key: SMTP_PASS
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SMTP_PASS
       - key: ELEVENLABS_TTS_VOICE_SPEED
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_VOICE_SPEED
       - key: ELEVENLABS_TTS_VOICE_ID
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_VOICE_ID
       - key: ELEVENLABS_TTS_STYLE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_STYLE
       - key: ELEVENLABS_TTS_STABILITY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_STABILITY
       - key: ELEVENLABS_TTS_SPEAKER_BOOST
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_SPEAKER_BOOST
       - key: ELEVENLABS_TTS_SIMILARITY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_SIMILARITY
       - key: FIREBASE_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FIREBASE_API_KEY
       - key: DG_VOICE_AGENT_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: DG_VOICE_AGENT_API_KEY
       - key: APP_URL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: APP_URL
       - key: SHOPIFY_API_SECRET
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SHOPIFY_API_SECRET
       - key: SHOPIFY_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: SHOPIFY_API_KEY
       - key: ELEVENLABS_TTS_OUTPUT_FORMAT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_OUTPUT_FORMAT
       - key: ELEVENLABS_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_API_KEY
       - key: ELEVENLABS_TTS_MODEL_ID
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_TTS_MODEL_ID
       - key: ELEVENLABS_LANGUAGE
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: ELEVENLABS_LANGUAGE
       - key: google-cloud-credentials.json
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: google-cloud-credentials.json
       - key: FIREBASE_STORAGE_BUCKET
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FIREBASE_STORAGE_BUCKET
       - key: FIREBASE_SERVICE_ACCOUNT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: FIREBASE_SERVICE_ACCOUNT
       - key: OPENAI_API_KEY
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: OPENAI_API_KEY
       - key: firebase_service_account.json
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: firebase_service_account.json
       - key: APP_PORT
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: APP_PORT
       - key: LOG_LEVEL
-        sync: false
+        fromService:
+          name: llamaloiabackend
+          type: web
+          envVarKey: LOG_LEVEL
