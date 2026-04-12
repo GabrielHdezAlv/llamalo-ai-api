@@ -13,6 +13,18 @@ import { SupportChatGateway } from './support-chat/support-chat.gateway';
 import { ProfileEventsService } from './profile-events/profile-events.service';
 import { configureLogging } from './utils/logging';
 
+/** Orígenes CORS: FRONTEND_URL por servicio en Render (p. ej. https://dev.llamalo.ai, https://preprod.llamalo.ai) + localhost para ng serve. */
+function buildCorsOrigins(): string[] {
+  const raw = process.env.FRONTEND_URL?.trim();
+  let primary = raw
+    ? raw.replace(/\/+$/, '')
+    : 'https://app.llamalo.ai';
+  if (primary && !/^https?:\/\//i.test(primary)) {
+    primary = `https://${primary}`;
+  }
+  return Array.from(new Set([primary, 'http://localhost:4200']));
+}
+
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
   getFirebaseApp();
@@ -45,9 +57,11 @@ async function bootstrap() {
     }),
   );
 
-  // ✅ CORS — permite peticiones desde tu frontend
+  // ✅ CORS — FRONTEND_URL define el front de cada entorno en Render
+  const corsOrigins = buildCorsOrigins();
+  console.log(`CORS origins: ${corsOrigins.join(', ')}`);
   app.enableCors({
-    origin: ['https://app.llamalo.ai', 'http://localhost:4200'],
+    origin: corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD'],
     allowedHeaders: ['Content-Type', 'Authorization'],
