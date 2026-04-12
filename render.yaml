@@ -1,6 +1,6 @@
 # Blueprint: crea SOLO llamaloiabackend-dev (rama dev) y llamaloiabackend-preprod (rama preprod).
 # Producción sigue en el servicio existente "llamaloiabackend" (p. ej. rama new-dev), sin incluirlo aquí.
-# Casi todas las variables usan fromService desde "llamaloiabackend". "google-cloud-credentials.json" va con sync:false porque no existe en prod; rellénala a mano en dev/preprod si la necesitas.
+# Casi todas las variables usan fromService desde "llamaloiabackend". google-cloud-credentials.json y firebase_service_account.json van con sync:false porque no existen en prod; rellénalas a mano en dev/preprod si las necesitas.
 version: "1"
 services:
   - type: web
@@ -248,10 +248,7 @@ services:
           type: web
           envVarKey: OPENAI_API_KEY
       - key: firebase_service_account.json
-        fromService:
-          name: llamaloiabackend
-          type: web
-          envVarKey: firebase_service_account.json
+        sync: false
       - key: APP_PORT
         fromService:
           name: llamaloiabackend
@@ -508,10 +505,7 @@ services:
           type: web
           envVarKey: OPENAI_API_KEY
       - key: firebase_service_account.json
-        fromService:
-          name: llamaloiabackend
-          type: web
-          envVarKey: firebase_service_account.json
+        sync: false
       - key: APP_PORT
         fromService:
           name: llamaloiabackend
