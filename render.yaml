@@ -1,6 +1,6 @@
 # Blueprint: crea SOLO llamaloiabackend-dev (rama dev) y llamaloiabackend-preprod (rama preprod).
 # Producción sigue en el servicio existente "llamaloiabackend" (p. ej. rama new-dev), sin incluirlo aquí.
-# Cada variable se copia desde el servicio web "llamaloiabackend" (fromService). Puedes editar valores en el panel después.
+# Casi todas las variables usan fromService desde "llamaloiabackend". "google-cloud-credentials.json" va con sync:false porque no existe en prod; rellénala a mano en dev/preprod si la necesitas.
 version: "1"
 services:
   - type: web
@@ -231,10 +231,7 @@ services:
           type: web
           envVarKey: ELEVENLABS_LANGUAGE
       - key: google-cloud-credentials.json
-        fromService:
-          name: llamaloiabackend
-          type: web
-          envVarKey: google-cloud-credentials.json
+        sync: false
       - key: FIREBASE_STORAGE_BUCKET
         fromService:
           name: llamaloiabackend
@@ -494,10 +491,7 @@ services:
           type: web
           envVarKey: ELEVENLABS_LANGUAGE
       - key: google-cloud-credentials.json
-        fromService:
-          name: llamaloiabackend
-          type: web
-          envVarKey: google-cloud-credentials.json
+        sync: false
       - key: FIREBASE_STORAGE_BUCKET
         fromService:
           name: llamaloiabackend
