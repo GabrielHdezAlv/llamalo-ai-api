@@ -1,11 +1,11 @@
-# Blueprint: crea SOLO los servicios de preprod y prod.
-# No incluye "llamaloiabackend" (producción actual en rama new-dev) para no modificarlo vía YAML.
-# Tras aplicar el Blueprint, revisa en Render cada servicio y rellena las variables (sync: false).
+# Blueprint: crea SOLO llamaloiabackend-dev (rama dev) y llamaloiabackend-preprod (rama preprod).
+# Producción sigue en el servicio existente "llamaloiabackend" (p. ej. rama new-dev), sin incluirlo aquí.
+# Tras aplicar el Blueprint, rellena las variables en Render (sync: false).
 version: "1"
 services:
   - type: web
-    name: llamaloiabackend-preprod
-    branch: preprod
+    name: llamaloiabackend-dev
+    branch: dev
     runtime: node
     repo: https://github.com/GabrielHdezAlv/llamalo-ai-api
     plan: starter
@@ -117,8 +117,8 @@ services:
         sync: false
 
   - type: web
-    name: llamaloiabackend-prod
-    branch: prod
+    name: llamaloiabackend-preprod
+    branch: preprod
     runtime: node
     repo: https://github.com/GabrielHdezAlv/llamalo-ai-api
     plan: starter
