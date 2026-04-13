@@ -1,6 +1,11 @@
 # Blueprint: crea SOLO llamaloiabackend-dev (rama dev) y llamaloiabackend-preprod (rama preprod).
 # Producción sigue en el servicio existente "llamaloiabackend" (p. ej. rama new-dev), sin incluirlo aquí.
 # Todas las variables usan sync:false para que el Blueprint no falle si falta alguna clave en producción (fromService exige que exista en llamaloiabackend). Tras crear los servicios, copia valores desde llamaloiabackend en Environment o Export/Import en Render.
+#
+# FIREBASE_STORAGE_BUCKET en Render (por servicio / proyecto Firebase):
+#   llamaloiabackend-dev:     llamaloio.firebasestorage.app
+#   llamaloiabackend-preprod: llamalo-preprod.firebasestorage.app
+#   producción (servicio manual): llamalo-prod.firebasestorage.app
 version: "1"
 services:
   - type: web
