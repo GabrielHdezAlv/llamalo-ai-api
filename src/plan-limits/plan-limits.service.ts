@@ -27,9 +27,27 @@ export type PlanUsageSnapshot = {
   storageUsedBytes: number;
 };
 
+/** Suscripción Stripe con cobro pendiente o pausada: bloqueo total hasta regularizar pago. */
+const STRIPE_BILLING_BLOCKED_STATUSES = new Set([
+  'past_due',
+  'unpaid',
+  'paused',
+  'incomplete',
+]);
+
 @Injectable()
 export class PlanLimitsService {
   private readonly firestore = getFirestore();
+
+  /** True si Stripe indica que no hay acceso hasta pagar (p. ej. trial terminó sin tarjeta). */
+  isStripeBillingBlocked(
+    userData: admin.firestore.DocumentData | undefined,
+  ): boolean {
+    if (!userData) return false;
+    const s = userData.stripeSubscriptionStatus as string | undefined;
+    if (!s || typeof s !== 'string') return false;
+    return STRIPE_BILLING_BLOCKED_STATUSES.has(s.trim());
+  }
 
   /** Resuelve fin de trial en ms; si falta `trialEndsAt`, deriva de `createdAt` + 7 días. */
   resolveTrialEndsAtMs(userData: admin.firestore.DocumentData | undefined): number | null {
@@ -60,6 +78,9 @@ export class PlanLimitsService {
   getEffectiveTechLimits(
     userData: admin.firestore.DocumentData | undefined,
   ): PlanLimitsEntry {
+    if (this.isStripeBillingBlocked(userData)) {
+      return { ...EXPIRED_TRIAL_TECH_LIMITS };
+    }
     const plan = normalizePlanSlug(userData?.plan as string | undefined);
     if (plan !== 'gratis') {
       return { ...PLAN_LIMITS[plan] };
@@ -82,6 +103,9 @@ export class PlanLimitsService {
   getEffectiveVoiceMinutesLimit(
     userData: admin.firestore.DocumentData | undefined,
   ): number {
+    if (this.isStripeBillingBlocked(userData)) {
+      return 0;
+    }
     const plan = normalizePlanSlug(userData?.plan as string | undefined);
     if (plan !== 'gratis') {
       const m = userData?.minutesLimit;

@@ -84,6 +84,8 @@ interface UserData {
   trialEndsAt?: admin.firestore.Timestamp;
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
+  stripeSubscriptionStatus?: string | null;
+  planSelectionCompleted?: boolean;
 }
 
 export type UserProfileResponse = {
@@ -155,6 +157,9 @@ export type UserProfileResponse = {
   planUsage?: PlanUsageSnapshot;
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
+  stripeSubscriptionStatus?: string | null;
+  /** false = pendiente elegir plan o prueba tras registro; ausente/true = ya elegido (legacy = completado) */
+  planSelectionCompleted?: boolean;
 };
 
 export interface UploadFile {
@@ -292,6 +297,8 @@ export class UsersService {
         planUsage: planUsage ?? undefined,
         stripeCustomerId: userData?.stripeCustomerId ?? null,
         stripeSubscriptionId: userData?.stripeSubscriptionId ?? null,
+        stripeSubscriptionStatus: userData?.stripeSubscriptionStatus ?? null,
+        planSelectionCompleted: userData?.planSelectionCompleted !== false,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {

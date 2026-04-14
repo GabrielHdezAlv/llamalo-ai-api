@@ -181,4 +181,18 @@ export class UserProfileResponseDto {
     description: 'ID de suscripción Stripe',
   })
   stripeSubscriptionId?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Estado de la suscripción en Stripe (trialing, active, past_due, etc.)',
+  })
+  stripeSubscriptionStatus?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'false si aún debe elegir plan o prueba tras registro; true si ya eligió o es cuenta antigua',
+  })
+  planSelectionCompleted?: boolean;
 }

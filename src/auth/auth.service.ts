@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  NotFoundException,
   UnauthorizedException,
   Logger,
 } from '@nestjs/common';
@@ -132,6 +133,8 @@ export class AuthService {
         phoneNumbers: [],
         agents: [],
         hasCompletedSetup: false,
+        /** Hasta elegir plan de pago o prueba gratuita explícita en el modal de registro. */
+        planSelectionCompleted: false,
       });
       console.log(
         `✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`,
@@ -339,6 +342,7 @@ export class AuthService {
           phoneNumbers: [],
           agents: [],
           hasCompletedSetup: false,
+          planSelectionCompleted: false,
         });
 
         console.log(`✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`);
@@ -474,6 +478,55 @@ export class AuthService {
         `No se pudo actualizar la contraseña: ${errorMessage}`,
       );
     }
+  }
+
+  /** Tras elegir "prueba gratuita" en el modal de registro. */
+  async completePlanSelection(userId: string): Promise<{ message: string }> {
+    const ref = this.firestore.collection('users').doc(userId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const data = snap.data();
+    if (data?.planSelectionCompleted !== false) {
+      return { message: 'Selección de plan ya registrada' };
+    }
+    await ref.update({
+      planSelectionCompleted: true,
+      updatedAt: admin.firestore.Timestamp.now(),
+    });
+    this.logger.log(`✅ [Auth] planSelectionCompleted para ${userId}`);
+    return { message: 'Selección completada' };
+  }
+
+  /**
+   * Elimina cuenta en Firestore y Firebase Auth si el usuario aún no completó
+   * la elección de plan (solo registro incompleto).
+   */
+  async cancelIncompleteRegistration(
+    userId: string,
+  ): Promise<{ message: string }> {
+    const ref = this.firestore.collection('users').doc(userId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const data = snap.data();
+    if (data?.planSelectionCompleted !== false) {
+      throw new BadRequestException(
+        'No se puede cancelar: la cuenta ya tiene un plan o prueba confirmados.',
+      );
+    }
+    await ref.delete();
+    try {
+      await admin.auth().deleteUser(userId);
+    } catch (e) {
+      this.logger.warn(
+        `Firestore eliminado pero error borrando Auth ${userId}: ${(e as Error).message}`,
+      );
+    }
+    this.logger.log(`✅ [Auth] Registro cancelado para ${userId}`);
+    return { message: 'Registro cancelado' };
   }
 
   /**

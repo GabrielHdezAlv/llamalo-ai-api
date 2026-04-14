@@ -3,14 +3,24 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { getFirestore } from '../firebase/firebase.config';
 import {
   PLAN_LIMITS,
   PlanType,
 } from '../common/constants/plans.constants';
+import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 
 const PAID_PLANS: PlanType[] = ['starter', 'growth', 'scale'];
+
+/** Cobro pendiente: mantenemos plan e id de suscripción para que el usuario pague vía portal. */
+const STRIPE_BLOCKED_SUB_STATUSES = new Set([
+  'past_due',
+  'unpaid',
+  'paused',
+  'incomplete',
+]);
 
 type CheckoutSessionLike = {
   id?: string;
@@ -33,6 +43,8 @@ export class StripeService {
   private readonly logger = new Logger(StripeService.name);
   private readonly firestore = getFirestore();
   private client: InstanceType<typeof Stripe> | null = null;
+
+  constructor(private readonly planLimitsService: PlanLimitsService) {}
 
   private getStripe(): InstanceType<typeof Stripe> {
     if (!this.client) {
@@ -63,6 +75,11 @@ export class StripeService {
     return id.trim();
   }
 
+  /**
+   * Starter: 7 días de prueba en Stripe sin tarjeta si el periodo de prueba de cuenta `gratis` ya terminó.
+   * Si el trial de cuenta sigue activo, no se duplica periodo gratuito en Stripe (suscripción sin trial en checkout).
+   * Growth/Scale: cobro al confirmar, sin periodo de prueba.
+   */
   async createCheckoutSession(params: {
     userId: string;
     plan: PlanType;
@@ -74,6 +91,29 @@ export class StripeService {
     }
     const priceId = this.priceIdForPlan(params.plan);
     const stripe = this.getStripe();
+
+    const userSnap = await this.firestore
+      .collection('users')
+      .doc(params.userId)
+      .get();
+    const userData = userSnap.exists ? userSnap.data() : undefined;
+    const accountTrialActive =
+      !!userData && this.planLimitsService.isTrialActive(userData);
+
+    const useStarterStripeTrial =
+      params.plan === 'starter' && !accountTrialActive;
+
+    const subscriptionData: {
+      metadata: { userId: string; plan: string };
+      trial_period_days?: number;
+    } = {
+      metadata: {
+        userId: params.userId,
+        plan: params.plan,
+      },
+      ...(useStarterStripeTrial ? { trial_period_days: 7 } : {}),
+    };
+
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
@@ -84,12 +124,10 @@ export class StripeService {
         userId: params.userId,
         plan: params.plan,
       },
-      subscription_data: {
-        metadata: {
-          userId: params.userId,
-          plan: params.plan,
-        },
-      },
+      subscription_data: subscriptionData,
+      ...(useStarterStripeTrial
+        ? { payment_method_collection: 'if_required' as const }
+        : {}),
     });
     return { url: session.url, sessionId: session.id };
   }
@@ -157,6 +195,7 @@ export class StripeService {
         );
         break;
       }
+      case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         await this.syncSubscriptionToUser(
@@ -190,19 +229,35 @@ export class StripeService {
       typeof session.subscription === 'string'
         ? session.subscription
         : session.subscription?.id;
+
+    const stripe = this.getStripe();
+    let stripeSubscriptionStatus: string | null = null;
+    if (subId) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(subId);
+        stripeSubscriptionStatus = sub.status;
+      } catch (e) {
+        this.logger.warn(
+          `No se pudo leer suscripción ${subId}: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    const payload: Record<string, unknown> = {
+      plan,
+      minutesLimit: lim.minutesLimit,
+      stripeCustomerId: customerId ?? null,
+      stripeSubscriptionId: subId ?? null,
+      stripeSubscriptionStatus,
+      planSelectionCompleted: true,
+      updatedAt: new Date(),
+      trialEndsAt: admin.firestore.FieldValue.delete(),
+    };
+
     await this.firestore
       .collection('users')
       .doc(userId)
-      .set(
-        {
-          plan,
-          minutesLimit: lim.minutesLimit,
-          stripeCustomerId: customerId ?? null,
-          stripeSubscriptionId: subId ?? null,
-          updatedAt: new Date(),
-        },
-        { merge: true },
-      );
+      .set(payload, { merge: true });
     this.logger.log(`Plan ${plan} aplicado a usuario ${userId} tras checkout.`);
   }
 
@@ -230,11 +285,8 @@ export class StripeService {
     sub: SubscriptionLike,
   ): Promise<void> {
     const status = sub.status;
-    if (
-      status === 'canceled' ||
-      status === 'unpaid' ||
-      status === 'incomplete_expired'
-    ) {
+
+    if (status === 'canceled' || status === 'incomplete_expired') {
       await this.firestore
         .collection('users')
         .doc(userId)
@@ -243,16 +295,49 @@ export class StripeService {
             plan: 'gratis',
             minutesLimit: PLAN_LIMITS.gratis.minutesLimit,
             stripeSubscriptionId: null,
+            stripeSubscriptionStatus: null,
             updatedAt: new Date(),
           },
           { merge: true },
         );
       return;
     }
-    let plan = sub.metadata?.plan as PlanType | undefined;
-    if (!plan && sub.items?.data?.[0]?.price?.id) {
-      plan = this.planFromPriceId(sub.items.data[0].price.id);
+
+    const planFromSub = (): PlanType | undefined => {
+      let plan = sub.metadata?.plan as PlanType | undefined;
+      if (!plan && sub.items?.data?.[0]?.price?.id) {
+        plan = this.planFromPriceId(sub.items.data[0].price.id);
+      }
+      return plan;
+    };
+
+    if (STRIPE_BLOCKED_SUB_STATUSES.has(status)) {
+      const plan = planFromSub();
+      if (!plan || !PLAN_LIMITS[plan]) {
+        this.logger.warn(
+          `No se pudo mapear plan para suscripción bloqueada ${sub.id}`,
+        );
+        return;
+      }
+      const lim = PLAN_LIMITS[plan];
+      await this.firestore
+        .collection('users')
+        .doc(userId)
+        .set(
+          {
+            plan,
+            minutesLimit: lim.minutesLimit,
+            stripeSubscriptionId: sub.id,
+            stripeSubscriptionStatus: status,
+            planSelectionCompleted: true,
+            updatedAt: new Date(),
+          },
+          { merge: true },
+        );
+      return;
     }
+
+    const plan = planFromSub();
     if (!plan || !PLAN_LIMITS[plan]) {
       this.logger.warn(`No se pudo mapear plan para suscripción ${sub.id}`);
       return;
@@ -266,6 +351,8 @@ export class StripeService {
           plan,
           minutesLimit: lim.minutesLimit,
           stripeSubscriptionId: sub.id,
+          stripeSubscriptionStatus: status,
+          planSelectionCompleted: true,
           updatedAt: new Date(),
         },
         { merge: true },
