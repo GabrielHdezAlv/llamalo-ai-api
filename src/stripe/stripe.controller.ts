@@ -51,6 +51,8 @@ export class StripeController {
       plan: PlanType;
       successUrl: string;
       cancelUrl: string;
+      /** Solo plan `starter`: `trial` (7 días en Stripe, tarjeta opcional) o `pay` (cobro según precio). */
+      starterMode?: 'trial' | 'pay';
     },
   ) {
     return this.stripeService.createCheckoutSession({
@@ -58,6 +60,7 @@ export class StripeController {
       plan: body.plan,
       successUrl: body.successUrl,
       cancelUrl: body.cancelUrl,
+      starterMode: body.starterMode,
     });
   }
 

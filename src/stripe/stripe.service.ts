@@ -73,28 +73,44 @@ export class StripeService {
   }
 
   /**
-   * Checkout de suscripción pago: sin periodo de prueba en Stripe (el trial de cuenta `gratis` es independiente).
-   * Asegurar en el Dashboard que el precio `STRIPE_PRICE_STARTER` no tenga trial configurado en el producto si la UI debe mostrar solo el cobro del plan.
+   * Starter: la UI puede enviar `starterMode: 'trial'` (7 días en Stripe) o `'pay'` (suscripción sin trial en sesión).
+   * Otros planes: ignorar `starterMode`. Por compatibilidad, Starter sin `starterMode` se trata como `'pay'`.
    */
   async createCheckoutSession(params: {
     userId: string;
     plan: PlanType;
     successUrl: string;
     cancelUrl: string;
+    starterMode?: 'trial' | 'pay';
   }): Promise<{ url: string | null; sessionId: string }> {
     if (!PAID_PLANS.includes(params.plan)) {
       throw new BadRequestException('Plan no válido para checkout');
     }
+    if (
+      params.starterMode != null &&
+      params.plan !== 'starter'
+    ) {
+      throw new BadRequestException(
+        'starterMode solo es válido cuando plan es starter',
+      );
+    }
+
     const priceId = this.priceIdForPlan(params.plan);
     const stripe = this.getStripe();
 
+    const starterTrial =
+      params.plan === 'starter' &&
+      (params.starterMode ?? 'pay') === 'trial';
+
     const subscriptionData: {
       metadata: { userId: string; plan: string };
+      trial_period_days?: number;
     } = {
       metadata: {
         userId: params.userId,
         plan: params.plan,
       },
+      ...(starterTrial ? { trial_period_days: 7 } : {}),
     };
 
     const session = await stripe.checkout.sessions.create({
@@ -108,7 +124,9 @@ export class StripeService {
         plan: params.plan,
       },
       subscription_data: subscriptionData,
-      payment_method_collection: 'always',
+      ...(starterTrial
+        ? { payment_method_collection: 'if_required' as const }
+        : { payment_method_collection: 'always' as const }),
     });
     return { url: session.url, sessionId: session.id };
   }
