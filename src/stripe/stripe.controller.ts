@@ -51,7 +51,7 @@ export class StripeController {
       plan: PlanType;
       successUrl: string;
       cancelUrl: string;
-      /** Solo plan `starter`: `trial` (7 días en Stripe, tarjeta opcional) o `pay` (cobro según precio). */
+      /** Solo plan `starter`: `trial` (7 días, tarjeta obligatoria; cobro al acabar si no cancelan) o `pay`. */
       starterMode?: 'trial' | 'pay';
     },
   ) {

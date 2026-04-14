@@ -73,8 +73,9 @@ export class StripeService {
   }
 
   /**
-   * Starter: la UI puede enviar `starterMode: 'trial'` (7 días en Stripe) o `'pay'` (suscripción sin trial en sesión).
-   * Otros planes: ignorar `starterMode`. Por compatibilidad, Starter sin `starterMode` se trata como `'pay'`.
+   * Starter: `starterMode: 'trial'` → 7 días en Stripe con tarjeta obligatoria en Checkout para poder
+   * cobrar al finalizar la prueba si el usuario no cancela. `pay` → suscripción sin trial.
+   * Siempre `payment_method_collection: 'always'`.
    */
   async createCheckoutSession(params: {
     userId: string;
@@ -124,9 +125,8 @@ export class StripeService {
         plan: params.plan,
       },
       subscription_data: subscriptionData,
-      ...(starterTrial
-        ? { payment_method_collection: 'if_required' as const }
-        : { payment_method_collection: 'always' as const }),
+      /** Trial €0 primero: igual exigir tarjeta para cargar al día 7 si siguen suscritos. */
+      payment_method_collection: 'always',
     });
     return { url: session.url, sessionId: session.id };
   }
