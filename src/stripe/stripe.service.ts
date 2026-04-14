@@ -10,7 +10,6 @@ import {
   PLAN_LIMITS,
   PlanType,
 } from '../common/constants/plans.constants';
-import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 
 const PAID_PLANS: PlanType[] = ['starter', 'growth', 'scale'];
 
@@ -44,8 +43,6 @@ export class StripeService {
   private readonly firestore = getFirestore();
   private client: InstanceType<typeof Stripe> | null = null;
 
-  constructor(private readonly planLimitsService: PlanLimitsService) {}
-
   private getStripe(): InstanceType<typeof Stripe> {
     if (!this.client) {
       const key = process.env.STRIPE_SECRET_KEY?.trim();
@@ -76,9 +73,8 @@ export class StripeService {
   }
 
   /**
-   * Starter: 7 días de prueba en Stripe sin tarjeta si el periodo de prueba de cuenta `gratis` ya terminó.
-   * Si el trial de cuenta sigue activo, no se duplica periodo gratuito en Stripe (suscripción sin trial en checkout).
-   * Growth/Scale: cobro al confirmar, sin periodo de prueba.
+   * Checkout de suscripción pago: sin periodo de prueba en Stripe (el trial de cuenta `gratis` es independiente).
+   * Asegurar en el Dashboard que el precio `STRIPE_PRICE_STARTER` no tenga trial configurado en el producto si la UI debe mostrar solo el cobro del plan.
    */
   async createCheckoutSession(params: {
     userId: string;
@@ -92,26 +88,13 @@ export class StripeService {
     const priceId = this.priceIdForPlan(params.plan);
     const stripe = this.getStripe();
 
-    const userSnap = await this.firestore
-      .collection('users')
-      .doc(params.userId)
-      .get();
-    const userData = userSnap.exists ? userSnap.data() : undefined;
-    const accountTrialActive =
-      !!userData && this.planLimitsService.isTrialActive(userData);
-
-    const useStarterStripeTrial =
-      params.plan === 'starter' && !accountTrialActive;
-
     const subscriptionData: {
       metadata: { userId: string; plan: string };
-      trial_period_days?: number;
     } = {
       metadata: {
         userId: params.userId,
         plan: params.plan,
       },
-      ...(useStarterStripeTrial ? { trial_period_days: 7 } : {}),
     };
 
     const session = await stripe.checkout.sessions.create({
@@ -125,9 +108,7 @@ export class StripeService {
         plan: params.plan,
       },
       subscription_data: subscriptionData,
-      ...(useStarterStripeTrial
-        ? { payment_method_collection: 'if_required' as const }
-        : {}),
+      payment_method_collection: 'always',
     });
     return { url: session.url, sessionId: session.id };
   }

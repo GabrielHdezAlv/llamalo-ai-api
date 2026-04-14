@@ -23,6 +23,11 @@ export class AuthService {
   private firestore = getFirestore();
   private readonly logger = new Logger(AuthService.name);
 
+  /** Si es true, no se exige código por correo: registro como activo y login sin bloqueo por estado 3. */
+  private isEmailVerificationSkipped(): boolean {
+    return process.env.SKIP_EMAIL_VERIFICATION === 'true';
+  }
+
   constructor(
     private readonly emailService: EmailService,
     private readonly mailerLiteService: MailerLiteService,
@@ -93,10 +98,13 @@ export class AuthService {
     // 2️⃣ Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3️⃣ Generar token de verificación
-    const verificationToken = this.generateVerificationToken();
+    // 3️⃣ Token de verificación (omitido si SKIP_EMAIL_VERIFICATION)
+    const skipVerify = this.isEmailVerificationSkipped();
+    const verificationToken = skipVerify
+      ? null
+      : this.generateVerificationToken();
 
-    // 4️⃣ Guardar usuario en Firestore con estado 3 (No validado) y token
+    // 4️⃣ Guardar usuario en Firestore (3 = no validado, 1 = activo si omitimos verificación)
     try {
       const userRef = this.firestore
         .collection('users')
@@ -114,14 +122,18 @@ export class AuthService {
         password: hashedPassword,
         country,
         marketingConsent,
-        accountStatus: 3, // Forzar estado 3 = No validado
+        accountStatus: skipVerify ? 1 : 3,
         rol: rol || 'client_user', // Por defecto 'client_user' si no se especifica
         verificationToken,
-        verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
+        verificationTokenExpiresAt: skipVerify
+          ? null
+          : admin.firestore.Timestamp.now(),
+        ...(skipVerify
+          ? { emailVerifiedAt: admin.firestore.Timestamp.now() }
+          : {}),
         createdAt: admin.firestore.Timestamp.now(),
         trialEndsAt: admin.firestore.Timestamp.fromMillis(
-          admin.firestore.Timestamp.now().toMillis() +
-            7 * 24 * 60 * 60 * 1000,
+          admin.firestore.Timestamp.now().toMillis() + 7 * 24 * 60 * 60 * 1000,
         ),
         plan: DEFAULT_PLAN,
         minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
@@ -143,24 +155,27 @@ export class AuthService {
       // 🔄 Sincronizar con MailerLite
       this.mailerLiteService.syncUser(firebaseResponse.localId).catch(() => {});
 
-      // 5️⃣ Enviar email de verificación
+      // 5️⃣ Enviar email de verificación (omitido si SKIP_EMAIL_VERIFICATION)
       let verificationEmailSent = false;
-      try {
-        await this.emailService.sendVerificationEmail(email, verificationToken);
-        verificationEmailSent = true;
-        console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
-      } catch (emailError) {
-        console.error(
-          `❌ [Auth] Error al enviar email de verificación:`,
-          emailError,
-        );
-        // No fallamos el registro si el email no se envía, pero lo registramos
+      if (!skipVerify && verificationToken) {
+        try {
+          await this.emailService.sendVerificationEmail(email, verificationToken);
+          verificationEmailSent = true;
+          console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
+        } catch (emailError) {
+          console.error(
+            `❌ [Auth] Error al enviar email de verificación:`,
+            emailError,
+          );
+          // No fallamos el registro si el email no se envía, pero lo registramos
+        }
       }
 
       return {
         token: firebaseResponse.idToken,
         userId: firebaseResponse.localId,
         verificationEmailSent,
+        emailVerificationRequired: !skipVerify,
         refreshToken: firebaseResponse.refreshToken,
       };
     } catch (error: any) {
@@ -203,14 +218,25 @@ export class AuthService {
 
         const userData = userDoc.data();
 
-        // 🚫 Bloquear login si accountStatus es 3 (No validado)
+        // 🚫 Bloquear login si accountStatus es 3 (No validado), salvo modo sin verificación por correo
         if (userData?.accountStatus === 3) {
-          console.warn(
-            `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
-          );
-          throw new UnauthorizedException(
-            'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
-          );
+          if (this.isEmailVerificationSkipped()) {
+            await userDoc.ref.update({
+              accountStatus: 1,
+              verificationToken: null,
+              emailVerifiedAt: admin.firestore.Timestamp.now(),
+            });
+            console.warn(
+              `⚠️ [Auth] SKIP_EMAIL_VERIFICATION: activando cuenta ${email} (era estado 3)`,
+            );
+          } else {
+            console.warn(
+              `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
+            );
+            throw new UnauthorizedException(
+              'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
+            );
+          }
         }
 
         // 🚫 Bloquear login si accountStatus es 2 (Eliminado)
@@ -299,7 +325,9 @@ export class AuthService {
       const name = decodedToken.name || '';
       const picture = decodedToken.picture || '';
 
-      console.log(`🔐 [Auth] Intento de login con Google para: ${email} (uid: ${userId})`);
+      console.log(
+        `🔐 [Auth] Intento de login con Google para: ${email} (uid: ${userId})`,
+      );
 
       // 2. Comprobar si el usuario ya existe en Firestore
       const userRef = this.firestore.collection('users').doc(userId);
@@ -309,7 +337,8 @@ export class AuthService {
         // 3. Es un usuario nuevo: Lo creamos en Firestore
         const nameParts = name.split(' ');
         const firstName = nameParts[0] || '';
-        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+        const lastName =
+          nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
         await userRef.set({
           userId: userId,
@@ -345,8 +374,10 @@ export class AuthService {
           planSelectionCompleted: false,
         });
 
-        console.log(`✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`);
-        
+        console.log(
+          `✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`,
+        );
+
         // 🔄 Sincronizar con MailerLite
         this.mailerLiteService.syncUser(userId).catch(() => {});
       } else {
@@ -354,23 +385,29 @@ export class AuthService {
 
         // Validar si la cuenta estaba eliminada (status 2) o inactiva (status 0)
         if (userData?.accountStatus === 2) {
-          console.warn(`⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta eliminada (accountStatus: 2)`);
+          console.warn(
+            `⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta eliminada (accountStatus: 2)`,
+          );
           throw new UnauthorizedException('Esta cuenta ha sido eliminada');
         }
 
         if (userData?.accountStatus === 0) {
-          console.warn(`⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta inactiva (accountStatus: 0)`);
+          console.warn(
+            `⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta inactiva (accountStatus: 0)`,
+          );
           throw new UnauthorizedException('Esta cuenta está inactiva');
         }
-        
+
         // Si el estado es 3 (no validado) pero entran con Google, lo pasamos a 1 (activo)
         if (userData?.accountStatus === 3) {
           await userRef.update({
             accountStatus: 1,
             emailVerifiedAt: admin.firestore.Timestamp.now(),
-            verificationToken: null
+            verificationToken: null,
           });
-          console.log(`✅ [Auth] Usuario ${userId} pasó de estado 3 a 1 tras login con Google`);
+          console.log(
+            `✅ [Auth] Usuario ${userId} pasó de estado 3 a 1 tras login con Google`,
+          );
         }
       }
 
@@ -382,7 +419,7 @@ export class AuthService {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      
+
       console.error(`❌ [Auth] Error en login de Google: ${error.message}`);
       throw new UnauthorizedException('Token de Google inválido o expirado');
     }
