@@ -23,6 +23,13 @@ export class AuthService {
   private firestore = getFirestore();
   private readonly logger = new Logger(AuthService.name);
 
+  /**
+   * Código de 6 dígitos por correo + bloqueo de login si la cuenta no está verificada.
+   * Activar en producción: REQUIRE_EMAIL_VERIFICATION_PIN=true (Render / .env).
+   */
+  private readonly requireEmailVerificationPin =
+    process.env.REQUIRE_EMAIL_VERIFICATION_PIN === 'true';
+
   constructor(
     private readonly emailService: EmailService,
     private readonly mailerLiteService: MailerLiteService,
@@ -93,14 +100,17 @@ export class AuthService {
     // 2️⃣ Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3️⃣ Generar token de verificación
-    const verificationToken = this.generateVerificationToken();
+    // 3️⃣ Token de verificación solo si el PIN por correo está activo
+    const verificationToken = this.requireEmailVerificationPin
+      ? this.generateVerificationToken()
+      : null;
 
-    // 4️⃣ Guardar usuario en Firestore con estado 3 (No validado) y token
+    // 4️⃣ Guardar usuario en Firestore (validado de inmediato si el PIN está desactivado)
     try {
       const userRef = this.firestore
         .collection('users')
         .doc(firebaseResponse.localId);
+      const nowTs = admin.firestore.Timestamp.now();
       await userRef.set({
         userId: firebaseResponse.localId,
         profileImage: '',
@@ -114,13 +124,16 @@ export class AuthService {
         password: hashedPassword,
         country,
         marketingConsent,
-        accountStatus: 3, // Forzar estado 3 = No validado
+        accountStatus: this.requireEmailVerificationPin ? 3 : 1,
         rol: rol || 'client_user', // Por defecto 'client_user' si no se especifica
         verificationToken,
-        verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
-        createdAt: admin.firestore.Timestamp.now(),
+        verificationTokenExpiresAt: this.requireEmailVerificationPin
+          ? nowTs
+          : null,
+        emailVerifiedAt: this.requireEmailVerificationPin ? null : nowTs,
+        createdAt: nowTs,
         trialEndsAt: admin.firestore.Timestamp.fromMillis(
-          admin.firestore.Timestamp.now().toMillis() + 7 * 24 * 60 * 60 * 1000,
+          nowTs.toMillis() + 7 * 24 * 60 * 60 * 1000,
         ),
         plan: DEFAULT_PLAN,
         minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
@@ -142,24 +155,26 @@ export class AuthService {
       // 🔄 Sincronizar con MailerLite
       this.mailerLiteService.syncUser(firebaseResponse.localId).catch(() => {});
 
-      // 5️⃣ Enviar email de verificación
+      // 5️⃣ Enviar email de verificación solo si aplica PIN
       let verificationEmailSent = false;
-      try {
-        await this.emailService.sendVerificationEmail(email, verificationToken);
-        verificationEmailSent = true;
-        console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
-      } catch (emailError) {
-        console.error(
-          `❌ [Auth] Error al enviar email de verificación:`,
-          emailError,
-        );
-        // No fallamos el registro si el email no se envía, pero lo registramos
+      if (this.requireEmailVerificationPin && verificationToken) {
+        try {
+          await this.emailService.sendVerificationEmail(email, verificationToken);
+          verificationEmailSent = true;
+          console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
+        } catch (emailError) {
+          console.error(
+            `❌ [Auth] Error al enviar email de verificación:`,
+            emailError,
+          );
+        }
       }
 
       return {
         token: firebaseResponse.idToken,
         userId: firebaseResponse.localId,
         verificationEmailSent,
+        emailVerificationRequired: this.requireEmailVerificationPin,
         refreshToken: firebaseResponse.refreshToken,
       };
     } catch (error: any) {
@@ -202,13 +217,27 @@ export class AuthService {
 
         const userData = userDoc.data();
 
-        // 🚫 Bloquear login si accountStatus es 3 (No validado)
+        // 🚫 Bloquear login si accountStatus es 3 (No validado), salvo si el PIN está desactivado
         if (userData?.accountStatus === 3) {
-          console.warn(
-            `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
-          );
-          throw new UnauthorizedException(
-            'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
+          if (this.requireEmailVerificationPin) {
+            console.warn(
+              `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
+            );
+            throw new UnauthorizedException(
+              'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
+            );
+          }
+          await this.firestore
+            .collection('users')
+            .doc(data.localId as string)
+            .update({
+              accountStatus: 1,
+              verificationToken: null,
+              verificationTokenExpiresAt: null,
+              emailVerifiedAt: admin.firestore.Timestamp.now(),
+            });
+          console.log(
+            `✅ [Auth] Cuenta ${email} activada al iniciar sesión (PIN por correo desactivado en servidor)`,
           );
         }
 
