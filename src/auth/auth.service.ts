@@ -23,11 +23,6 @@ export class AuthService {
   private firestore = getFirestore();
   private readonly logger = new Logger(AuthService.name);
 
-  /** Si es true, no se exige código por correo: registro como activo y login sin bloqueo por estado 3. */
-  private isEmailVerificationSkipped(): boolean {
-    return process.env.SKIP_EMAIL_VERIFICATION === 'true';
-  }
-
   constructor(
     private readonly emailService: EmailService,
     private readonly mailerLiteService: MailerLiteService,
@@ -98,13 +93,10 @@ export class AuthService {
     // 2️⃣ Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3️⃣ Token de verificación (omitido si SKIP_EMAIL_VERIFICATION)
-    const skipVerify = this.isEmailVerificationSkipped();
-    const verificationToken = skipVerify
-      ? null
-      : this.generateVerificationToken();
+    // 3️⃣ Generar token de verificación
+    const verificationToken = this.generateVerificationToken();
 
-    // 4️⃣ Guardar usuario en Firestore (3 = no validado, 1 = activo si omitimos verificación)
+    // 4️⃣ Guardar usuario en Firestore con estado 3 (No validado) y token
     try {
       const userRef = this.firestore
         .collection('users')
@@ -122,15 +114,10 @@ export class AuthService {
         password: hashedPassword,
         country,
         marketingConsent,
-        accountStatus: skipVerify ? 1 : 3,
+        accountStatus: 3, // Forzar estado 3 = No validado
         rol: rol || 'client_user', // Por defecto 'client_user' si no se especifica
         verificationToken,
-        verificationTokenExpiresAt: skipVerify
-          ? null
-          : admin.firestore.Timestamp.now(),
-        ...(skipVerify
-          ? { emailVerifiedAt: admin.firestore.Timestamp.now() }
-          : {}),
+        verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
         createdAt: admin.firestore.Timestamp.now(),
         trialEndsAt: admin.firestore.Timestamp.fromMillis(
           admin.firestore.Timestamp.now().toMillis() + 7 * 24 * 60 * 60 * 1000,
@@ -155,27 +142,24 @@ export class AuthService {
       // 🔄 Sincronizar con MailerLite
       this.mailerLiteService.syncUser(firebaseResponse.localId).catch(() => {});
 
-      // 5️⃣ Enviar email de verificación (omitido si SKIP_EMAIL_VERIFICATION)
+      // 5️⃣ Enviar email de verificación
       let verificationEmailSent = false;
-      if (!skipVerify && verificationToken) {
-        try {
-          await this.emailService.sendVerificationEmail(email, verificationToken);
-          verificationEmailSent = true;
-          console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
-        } catch (emailError) {
-          console.error(
-            `❌ [Auth] Error al enviar email de verificación:`,
-            emailError,
-          );
-          // No fallamos el registro si el email no se envía, pero lo registramos
-        }
+      try {
+        await this.emailService.sendVerificationEmail(email, verificationToken);
+        verificationEmailSent = true;
+        console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
+      } catch (emailError) {
+        console.error(
+          `❌ [Auth] Error al enviar email de verificación:`,
+          emailError,
+        );
+        // No fallamos el registro si el email no se envía, pero lo registramos
       }
 
       return {
         token: firebaseResponse.idToken,
         userId: firebaseResponse.localId,
         verificationEmailSent,
-        emailVerificationRequired: !skipVerify,
         refreshToken: firebaseResponse.refreshToken,
       };
     } catch (error: any) {
@@ -218,25 +202,14 @@ export class AuthService {
 
         const userData = userDoc.data();
 
-        // 🚫 Bloquear login si accountStatus es 3 (No validado), salvo modo sin verificación por correo
+        // 🚫 Bloquear login si accountStatus es 3 (No validado)
         if (userData?.accountStatus === 3) {
-          if (this.isEmailVerificationSkipped()) {
-            await userDoc.ref.update({
-              accountStatus: 1,
-              verificationToken: null,
-              emailVerifiedAt: admin.firestore.Timestamp.now(),
-            });
-            console.warn(
-              `⚠️ [Auth] SKIP_EMAIL_VERIFICATION: activando cuenta ${email} (era estado 3)`,
-            );
-          } else {
-            console.warn(
-              `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
-            );
-            throw new UnauthorizedException(
-              'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
-            );
-          }
+          console.warn(
+            `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
+          );
+          throw new UnauthorizedException(
+            'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
+          );
         }
 
         // 🚫 Bloquear login si accountStatus es 2 (Eliminado)
