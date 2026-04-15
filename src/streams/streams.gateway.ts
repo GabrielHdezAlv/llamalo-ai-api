@@ -24,6 +24,12 @@ import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
 import { EmailService } from '../auth/email.service'; // Importar EmailService
 import { SystemLogsService, LogType } from '../system-logs/system-logs.service';
 import { UsersService } from '../users/users.service';
+import { PlanLimitsService } from '../plan-limits/plan-limits.service';
+import {
+  MAKE_WEBHOOK_TOOL_PREFIX,
+  WebhookActionRecord,
+  WebhookActionsService,
+} from '../webhook-actions/webhook-actions.service';
 
 type TwilioMediaIn = {
   event: 'media';
@@ -136,6 +142,13 @@ interface CallSession {
   // Conversation Manager
   conversationState?: 'GREETING' | 'DISCOVERY' | 'SUPPORT' | 'CLOSING';
   silenceInterventions?: number;
+  /** Acciones Make/webhook cargadas al inicio de la llamada (por agente). */
+  webhookActions?: WebhookActionRecord[];
+  /** IDs de acciones webhook ya ejecutadas en esta llamada (anti-duplicado). */
+  webhookActionIdsExecuted?: Set<string>;
+  /** Número de ejecuciones webhook en esta llamada (límite por plan). */
+  webhookExecutionsThisCall?: number;
+  webhookExecLimitPerCall?: number;
 }
 
 @Injectable()
@@ -236,6 +249,8 @@ export class StreamsGateway {
     private readonly emailService: EmailService,
     private readonly systemLogsService: SystemLogsService,
     private readonly usersService: UsersService,
+    private readonly webhookActionsService: WebhookActionsService,
+    private readonly planLimitsService: PlanLimitsService,
   ) {
     if (!this.elevenLabsApiKey) {
       console.warn('⚠️ ELEVENLABS_API_KEY no configurado en el entorno.');
@@ -506,6 +521,14 @@ export class StreamsGateway {
     }
 
     this.sessions.set(callSid, session);
+
+    if (userId && customParameters?.agentId) {
+      await this.loadWebhookActionsForSession(
+        session,
+        Number(customParameters.agentId),
+      );
+    }
+
     if (session.pendingGreeting) {
       this.maybeSendPendingGreeting(session);
     }
@@ -552,6 +575,260 @@ export class StreamsGateway {
         err,
       );
     }
+  }
+
+  /** Carga acciones Make/webhook antes del primer turno LLM (misma llamada). */
+  private async loadWebhookActionsForSession(
+    session: CallSession,
+    agentId: number,
+  ): Promise<void> {
+    if (!session.userId) return;
+    try {
+      const actions = await this.webhookActionsService.listForCallSession(
+        session.userId,
+        agentId,
+      );
+      session.webhookActions = actions;
+      session.webhookActionIdsExecuted = new Set();
+      session.webhookExecutionsThisCall = 0;
+      const ud = session.userDocument;
+      if (ud) {
+        const lim = this.planLimitsService.getEffectiveTechLimits(ud);
+        session.webhookExecLimitPerCall = lim.makeWebhookExecutionsPerCallMax;
+      } else {
+        session.webhookExecLimitPerCall = 3;
+      }
+      if (actions.length > 0) {
+        console.log(
+          `🔗 [${session.callSid}] Webhooks Make cargados: ${actions.length}`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `⚠️ [${session.callSid}] loadWebhookActionsForSession:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  private async runMakeWebhookHttp(
+    session: CallSession,
+    action: WebhookActionRecord,
+    argsFromModel: Record<string, unknown>,
+  ): Promise<{ httpSuccess: boolean; bodyForModel: string }> {
+    const timeoutMs = Number(
+      process.env.MAKE_WEBHOOK_HTTP_TIMEOUT_MS ?? 15000,
+    );
+    const maxChars = Number(
+      process.env.MAKE_WEBHOOK_MAX_RESPONSE_CHARS ?? 8000,
+    );
+
+    const recentMessages = session.history.slice(-14).map((m) => {
+      if (m.role === 'user') {
+        return { role: 'user' as const, content: String(m.content ?? '') };
+      }
+      if (m.role === 'assistant') {
+        const c = (m as { content?: string | null }).content;
+        return {
+          role: 'assistant' as const,
+          content: typeof c === 'string' ? c : '',
+        };
+      }
+      return { role: 'system' as const, content: '' };
+    });
+
+    const payload = {
+      event: 'llamalo.webhook_action',
+      callSid: session.callSid,
+      userId: session.userId ?? null,
+      agentId: session.customParameters?.agentId
+        ? Number(session.customParameters.agentId)
+        : null,
+      actionId: action.id,
+      actionName: action.name,
+      callerPhone: session.customParameters?.callerPhone ?? null,
+      callerDirection: session.callDirection ?? null,
+      language: session.language ?? null,
+      conversationState: session.conversationState ?? null,
+      recentMessages,
+      argsFromModel,
+    };
+
+    try {
+      const res = await axios.post(action.webhookUrl, payload, {
+        timeout: timeoutMs,
+        maxContentLength: 500_000,
+        maxBodyLength: 500_000,
+        validateStatus: () => true,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const status = res.status;
+      let text: string;
+      if (res.data == null) {
+        text = '';
+      } else if (typeof res.data === 'string') {
+        text = res.data;
+      } else {
+        try {
+          text = JSON.stringify(res.data);
+        } catch {
+          text = String(res.data);
+        }
+      }
+      if (text.length > maxChars) {
+        text = text.slice(0, maxChars) + '… [truncado]';
+      }
+      const httpSuccess = status >= 200 && status < 300;
+      if (!httpSuccess) {
+        return {
+          httpSuccess: false,
+          bodyForModel: JSON.stringify({
+            success: false,
+            httpStatus: status,
+            message:
+              'El escenario no respondió con éxito. No inventes datos; explica con naturalidad que hubo un problema.',
+            responseBody: text || undefined,
+          }),
+        };
+      }
+      return {
+        httpSuccess: true,
+        bodyForModel: JSON.stringify({
+          success: true,
+          httpStatus: status,
+          responseBody: text,
+        }),
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = axios.isAxiosError(err) ? err.code : undefined;
+      return {
+        httpSuccess: false,
+        bodyForModel: JSON.stringify({
+          success: false,
+          error: msg,
+          code: code ?? undefined,
+          message:
+            'No se pudo conectar con el escenario. Indica al usuario de forma breve que hubo un fallo temporal.',
+        }),
+      };
+    }
+  }
+
+  private async finishAfterWebhookTool(
+    session: CallSession,
+    fullResponse: string,
+  ): Promise<boolean> {
+    if (!this.isCallSessionLive(session)) {
+      return true;
+    }
+    if (!fullResponse.trim() && !session.interrupted) {
+      await this.handleFinalTranscript(
+        session,
+        '(SISTEMA: Continúa la conversación usando el resultado de la herramienta anterior. Si hubo error, explícalo con naturalidad y sin inventar datos.)',
+      );
+    } else if (!session.interrupted) {
+      await this.handleFinalTranscript(
+        session,
+        '(SISTEMA: Incorpora el resultado de la herramienta a tu respuesta al usuario de forma natural.)',
+      );
+    }
+    return true;
+  }
+
+  private async handleMakeWebhookToolCall(
+    session: CallSession,
+    functionCallName: string,
+    functionCallArgs: string,
+    fullResponse: string,
+  ): Promise<boolean> {
+    if (session.interrupted) return false;
+    const action = this.webhookActionsService.findByToolNameInList(
+      session.webhookActions ?? [],
+      functionCallName,
+    );
+    if (!action) {
+      return false;
+    }
+
+    let parsedArgs: Record<string, unknown> = {};
+    try {
+      if (functionCallArgs && functionCallArgs.trim()) {
+        parsedArgs = JSON.parse(functionCallArgs) as Record<string, unknown>;
+      }
+    } catch {
+      parsedArgs = {};
+    }
+
+    const execLimit = session.webhookExecLimitPerCall ?? 0;
+    const executedCount = session.webhookExecutionsThisCall ?? 0;
+
+    const toolCallId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+    const pushPair = (content: string) => {
+      session.history.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: toolCallId,
+            type: 'function',
+            function: {
+              name: functionCallName,
+              arguments: functionCallArgs || '{}',
+            },
+          },
+        ],
+      } as any);
+      session.history.push({
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content,
+      } as any);
+    };
+
+    console.log(
+      `🔗 [${session.callSid}] Ejecutando webhook Make: ${action.name} (${action.id})`,
+    );
+
+    if (session.webhookActionIdsExecuted?.has(action.id)) {
+      pushPair(
+        JSON.stringify({
+          success: false,
+          skipped: true,
+          reason: 'duplicate',
+          message:
+            'Esta acción ya se ejecutó con éxito en esta llamada. No vuelvas a llamar al escenario.',
+        }),
+      );
+      return await this.finishAfterWebhookTool(session, fullResponse);
+    }
+
+    if (execLimit > 0 && executedCount >= execLimit) {
+      pushPair(
+        JSON.stringify({
+          success: false,
+          reason: 'limit',
+          message:
+            'Se alcanzó el límite de ejecuciones de acciones en esta llamada para tu plan.',
+        }),
+      );
+      return await this.finishAfterWebhookTool(session, fullResponse);
+    }
+
+    if (!session.webhookActionIdsExecuted) {
+      session.webhookActionIdsExecuted = new Set();
+    }
+
+    session.webhookExecutionsThisCall = executedCount + 1;
+
+    const run = await this.runMakeWebhookHttp(session, action, parsedArgs);
+    if (run.httpSuccess) {
+      session.webhookActionIdsExecuted.add(action.id);
+    }
+
+    pushPair(run.bodyForModel);
+    return await this.finishAfterWebhookTool(session, fullResponse);
   }
 
   /**
@@ -1431,8 +1708,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
       const agentResponseStart = Date.now(); // Marcar inicio de respuesta del agente
 
-      // Definir la herramienta de escalado a soporte
-      const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+      // Herramientas Xenon (escalado + estado de conversación)
+      const xenonTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         {
           type: 'function',
           function: {
@@ -1478,14 +1755,35 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         },
       ];
 
-      // Detectar si el agente actual es Xenon (para decidir si pasarle la Tool o no)
+      const makeWebhookTools: OpenAI.Chat.Completions.ChatCompletionTool[] = (
+        session.webhookActions ?? []
+      ).map((a) => ({
+        type: 'function' as const,
+        function: {
+          name: this.webhookActionsService.getToolNameForDocId(a.id),
+          description: a.description,
+          parameters: {
+            type: 'object',
+            properties: {
+              detalle_contexto: {
+                type: 'string',
+                description:
+                  'Opcional. Resumen breve de por qué disparas esta acción (qué pidió el usuario).',
+              },
+            },
+          },
+        },
+      }));
+
+      // Detectar si el agente actual es Xenon (escalado + estado)
       const agentName = session.customParameters?.agentName?.toLowerCase() || '';
       const isXenon =
         agentName.includes('xenon') ||
         session.instructions.toLowerCase().includes('xenon');
 
-      // Solo pasar la tool de escalar a soporte si el agente es Xenon
-      const safeTools = isXenon ? tools : undefined;
+      const baseTools = isXenon ? xenonTools : [];
+      const mergedTools = [...baseTools, ...makeWebhookTools];
+      const safeTools = mergedTools.length ? mergedTools : undefined;
 
       // Implementar Sliding Window: Retener solo los últimos N mensajes para no agotar tokens de OpenAI
       const maxHistory = 10; // Últimos 5 turnos (usuario + asistente)
@@ -1854,6 +2152,26 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           console.error(
             `❌ [${session.callSid}] Error procesando tool call:`,
             e,
+          );
+        }
+      } else if (
+        functionCallName.startsWith(MAKE_WEBHOOK_TOOL_PREFIX) &&
+        !session.interrupted
+      ) {
+        try {
+          const handled = await this.handleMakeWebhookToolCall(
+            session,
+            functionCallName,
+            functionCallArgs,
+            fullResponse,
+          );
+          if (handled) {
+            return;
+          }
+        } catch (whErr) {
+          console.error(
+            `❌ [${session.callSid}] Error en webhook Make:`,
+            whErr,
           );
         }
       }

@@ -21,6 +21,7 @@ import { SystemLogsModule } from './system-logs/system-logs.module';
 import { ProfileEventsModule } from './profile-events/profile-events.module';
 import { PlanLimitsModule } from './plan-limits/plan-limits.module';
 import { StripeModule } from './stripe/stripe.module';
+import { WebhookActionsModule } from './webhook-actions/webhook-actions.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { StripeModule } from './stripe/stripe.module';
     ProfileEventsModule,
     PlanLimitsModule,
     StripeModule,
+    WebhookActionsModule,
   ],
   controllers: [],
   providers: [],

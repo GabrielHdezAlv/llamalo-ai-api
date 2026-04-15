@@ -285,6 +285,61 @@ export class PlanLimitsService {
     }
   }
 
+  /**
+   * Integración Make / webhooks: el plan debe permitir al menos una acción.
+   */
+  async assertMakeWebhookFeatureAllowed(userId: string): Promise<void> {
+    const userData = await this.getUserData(userId);
+    if (!userData) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const plan = normalizePlanSlug(userData.plan as string | undefined);
+    if (plan === 'gratis' && !this.isTrialActive(userData)) {
+      throw new ForbiddenException(
+        'Tu periodo de prueba ha terminado. Mejora tu plan para usar acciones Make (webhooks).',
+      );
+    }
+    const limits = this.getEffectiveTechLimits(userData);
+    if (limits.makeWebhookActionsMax <= 0) {
+      throw new ForbiddenException(
+        'Las acciones Make (webhooks) no están incluidas en tu plan actual. Mejora el plan para activarlas.',
+      );
+    }
+  }
+
+  /**
+   * Cuenta acciones webhook existentes para un agente (tope de creación).
+   */
+  async countWebhookActionsForAgent(
+    userId: string,
+    agentId: number,
+  ): Promise<number> {
+    const snap = await this.firestore
+      .collection('webhookActions')
+      .where('userId', '==', userId)
+      .where('agentId', '==', agentId)
+      .get();
+    return snap.size;
+  }
+
+  async assertCanCreateWebhookAction(
+    userId: string,
+    agentId: number,
+  ): Promise<void> {
+    await this.assertMakeWebhookFeatureAllowed(userId);
+    const userData = await this.getUserData(userId);
+    if (!userData) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const limits = this.getEffectiveTechLimits(userData);
+    const count = await this.countWebhookActionsForAgent(userId, agentId);
+    if (count >= limits.makeWebhookActionsMax) {
+      throw new ForbiddenException(
+        `Has alcanzado el máximo de acciones Make para este agente en tu plan (${limits.makeWebhookActionsMax}). Mejora el plan para añadir más.`,
+      );
+    }
+  }
+
   async assertCanAddAgent(
     userId: string,
     currentAgentCount: number,
