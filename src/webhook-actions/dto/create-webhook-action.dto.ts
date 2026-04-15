@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateWebhookActionDto {
   @ApiProperty({ example: 'Crear ticket en CRM' })
@@ -8,14 +8,15 @@ export class CreateWebhookActionDto {
   @MaxLength(120)
   name: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example:
       'Úsalo cuando el usuario quiera dejar constancia o abrir un caso en soporte.',
+    description: 'Opcional. Si está vacío, la IA usará sobre todo el nombre de la acción.',
   })
+  @IsOptional()
   @IsString()
-  @MinLength(8)
   @MaxLength(2000)
-  description: string;
+  description?: string;
 
   @ApiProperty({
     example: 'https://hook.eu2.make.com/xxxxxxxx',

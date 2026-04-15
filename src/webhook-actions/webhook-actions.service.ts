@@ -152,7 +152,7 @@ export class WebhookActionsService {
       userId,
       agentId,
       name: dto.name.trim(),
-      description: dto.description.trim(),
+      description: (dto.description ?? '').trim(),
       webhookUrl: dto.webhookUrl.trim(),
       createdAt: now,
       updatedAt: now,

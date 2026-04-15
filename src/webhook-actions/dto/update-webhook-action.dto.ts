@@ -12,7 +12,6 @@ export class UpdateWebhookActionDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @MinLength(8)
   @MaxLength(2000)
   description?: string;
 

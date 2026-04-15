@@ -1761,7 +1761,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         type: 'function' as const,
         function: {
           name: this.webhookActionsService.getToolNameForDocId(a.id),
-          description: a.description,
+          description:
+            (a.description && a.description.trim()) || a.name || 'Acción webhook',
           parameters: {
             type: 'object',
             properties: {
