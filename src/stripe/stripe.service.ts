@@ -10,6 +10,7 @@ import {
   PLAN_LIMITS,
   PlanType,
 } from '../common/constants/plans.constants';
+import { EmailService } from '../auth/email.service';
 
 const PAID_PLANS: PlanType[] = ['starter', 'growth', 'scale'];
 
@@ -42,6 +43,8 @@ export class StripeService {
   private readonly logger = new Logger(StripeService.name);
   private readonly firestore = getFirestore();
   private client: InstanceType<typeof Stripe> | null = null;
+
+  constructor(private readonly emailService: EmailService) {}
 
   private getStripe(): InstanceType<typeof Stripe> {
     if (!this.client) {
@@ -202,8 +205,83 @@ export class StripeService {
         );
         break;
       }
+      case 'invoice.paid': {
+        await this.sendInvoiceReceiptToCustomer(
+          event.data.object as { id: string; subscription?: string | null },
+        );
+        break;
+      }
       default:
         break;
+    }
+  }
+
+  /**
+   * Tras invoice.paid: envía por Resend el enlace a la factura y PDF (Stripe no siempre notifica al cliente).
+   */
+  private async sendInvoiceReceiptToCustomer(invoicePayload: {
+    id: string;
+    subscription?: string | null;
+  }): Promise<void> {
+    if (!invoicePayload.subscription) {
+      return;
+    }
+
+    const stripe = this.getStripe();
+    let invoice: Awaited<
+      ReturnType<InstanceType<typeof Stripe>['invoices']['retrieve']>
+    >;
+    try {
+      invoice = await stripe.invoices.retrieve(invoicePayload.id, {
+        expand: ['customer'],
+      });
+    } catch (e) {
+      this.logger.warn(
+        `No se pudo recuperar factura ${invoicePayload.id}: ${(e as Error).message}`,
+      );
+      return;
+    }
+
+    let to = invoice.customer_email ?? null;
+    if (!to && invoice.customer && typeof invoice.customer === 'object') {
+      const c = invoice.customer as { deleted?: boolean; email?: string | null };
+      if (!c.deleted && c.email) {
+        to = c.email;
+      }
+    }
+    if (!to?.trim()) {
+      this.logger.warn(
+        `invoice.paid ${invoice.id}: sin email de cliente; no se envía recibo`,
+      );
+      return;
+    }
+
+    const currency = (invoice.currency || 'eur').toUpperCase();
+    const amountCents = invoice.amount_paid ?? 0;
+    let amountFormatted: string;
+    try {
+      amountFormatted = new Intl.NumberFormat('es-ES', {
+        style: 'currency',
+        currency: currency.length === 3 ? currency : 'EUR',
+      }).format(amountCents / 100);
+    } catch {
+      amountFormatted = `${(amountCents / 100).toFixed(2)} ${currency}`;
+    }
+
+    try {
+      await this.emailService.sendStripeInvoiceReceiptEmail({
+        to: to.trim(),
+        invoiceNumber: invoice.number,
+        amountPaidFormatted: amountFormatted,
+        currency,
+        hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+        invoicePdfUrl: invoice.invoice_pdf ?? null,
+      });
+      this.logger.log(`Recibo factura ${invoice.id} enviado a ${to.trim()}`);
+    } catch (e) {
+      this.logger.error(
+        `Error enviando recibo de factura ${invoice.id}: ${(e as Error).message}`,
+      );
     }
   }
 

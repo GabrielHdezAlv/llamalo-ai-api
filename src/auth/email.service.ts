@@ -222,6 +222,70 @@ export class EmailService {
   }
 
   /**
+   * Envía al usuario el enlace a la factura pagada en Stripe (vía Resend).
+   */
+  async sendStripeInvoiceReceiptEmail(params: {
+    to: string;
+    invoiceNumber: string | null;
+    amountPaidFormatted: string;
+    currency: string;
+    hostedInvoiceUrl: string | null;
+    invoicePdfUrl: string | null;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    const {
+      to,
+      invoiceNumber,
+      amountPaidFormatted,
+      hostedInvoiceUrl,
+      invoicePdfUrl,
+    } = params;
+    const subject = `Factura Llamalo AI${invoiceNumber ? ` ${invoiceNumber}` : ''}`;
+    const lines: string[] = [
+      `Importe pagado: ${amountPaidFormatted} ${params.currency.toUpperCase()}`,
+    ];
+    if (hostedInvoiceUrl) {
+      lines.push(`Ver factura: ${hostedInvoiceUrl}`);
+    }
+    if (invoicePdfUrl) {
+      lines.push(`PDF: ${invoicePdfUrl}`);
+    }
+    const text = lines.join('\n');
+
+    const safeNum = invoiceNumber
+      ? String(invoiceNumber).replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      : '';
+    const links: string[] = [];
+    if (hostedInvoiceUrl) {
+      links.push(
+        `<p><a href="${hostedInvoiceUrl}" style="display:inline-block;background:#111;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Ver factura</a></p>`,
+      );
+    }
+    if (invoicePdfUrl) {
+      links.push(
+        `<p><a href="${invoicePdfUrl}" style="color:#2563eb;">Descargar PDF</a></p>`,
+      );
+    }
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #111; font-size: 20px;">Factura pagada</h1>
+        <p style="color: #444; line-height: 1.6;">
+          Gracias por tu pago. Resumen de tu factura${safeNum ? ` <strong>${safeNum}</strong>` : ''}.
+        </p>
+        <p style="font-size: 18px; color: #111;"><strong>${amountPaidFormatted}</strong>
+          <span style="color:#666;">${params.currency.toUpperCase()}</span></p>
+        ${links.join('\n')}
+        <p style="color: #999; font-size: 12px; margin-top: 24px;">
+          Dudas sobre el cobro: team@llamalo.ai
+        </p>
+      </div>
+    `;
+
+    this.logger.log(`Recibo de factura Stripe → ${to}`);
+    return this.sendEmail(to, subject, html, text);
+  }
+
+  /**
    * Verificar conexión (Resend con API key o SMTP verify)
    */
   async verifyConnection(): Promise<boolean> {
