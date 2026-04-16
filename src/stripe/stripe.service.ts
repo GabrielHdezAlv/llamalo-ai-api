@@ -175,6 +175,70 @@ export class StripeService {
     });
   }
 
+  /**
+   * Última factura con PDF (o página alojada) para descarga desde la cuenta.
+   */
+  async getLatestInvoiceDownloadForUser(userId: string): Promise<{
+    pdfUrl: string | null;
+    hostedInvoiceUrl: string | null;
+    invoiceNumber: string | null;
+    invoiceId: string | null;
+  }> {
+    const snap = await this.firestore.collection('users').doc(userId).get();
+    if (!snap.exists) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+    const custId = (snap.data() as { stripeCustomerId?: string | null })
+      ?.stripeCustomerId;
+    if (!custId || typeof custId !== 'string' || !custId.trim()) {
+      throw new BadRequestException(
+        'No hay facturación asociada. Suscríbete primero desde la página de planes.',
+      );
+    }
+
+    const stripe = this.getStripe();
+    const list = await stripe.invoices.list({
+      customer: custId.trim(),
+      limit: 20,
+    });
+
+    const candidates = list.data.filter((inv) => inv.status === 'paid');
+    const pick =
+      candidates.find((inv) => Boolean(inv.invoice_pdf)) ??
+      candidates[0] ??
+      list.data[0];
+
+    if (!pick) {
+      throw new BadRequestException('No hay facturas disponibles todavía.');
+    }
+
+    let invoice = pick;
+    if (!invoice.invoice_pdf && !invoice.hosted_invoice_url) {
+      try {
+        invoice = await stripe.invoices.retrieve(invoice.id);
+      } catch (e) {
+        this.logger.warn(
+          `No se pudo refrescar factura ${invoice.id}: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    const pdfUrl = invoice.invoice_pdf ?? null;
+    const hostedInvoiceUrl = invoice.hosted_invoice_url ?? null;
+    if (!pdfUrl && !hostedInvoiceUrl) {
+      throw new BadRequestException(
+        'La última factura aún no tiene PDF disponible. Inténtalo más tarde o usa el portal de facturación.',
+      );
+    }
+
+    return {
+      pdfUrl,
+      hostedInvoiceUrl,
+      invoiceNumber: invoice.number ?? null,
+      invoiceId: invoice.id ?? null,
+    };
+  }
+
   async handleWebhook(rawBody: Buffer, signature: string | undefined): Promise<void> {
     const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
     if (!secret) {

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   HttpStatus,
@@ -77,5 +78,17 @@ export class StripeController {
       userId,
       returnUrl: body.returnUrl,
     });
+  }
+
+  @Get('latest-invoice')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Última factura (enlaces PDF / página alojada)',
+    description:
+      'Devuelve URLs de Stripe para la factura pagada más reciente del cliente asociado al usuario.',
+  })
+  async latestInvoice(@GetUser('uid') userId: string) {
+    return this.stripeService.getLatestInvoiceDownloadForUser(userId);
   }
 }
