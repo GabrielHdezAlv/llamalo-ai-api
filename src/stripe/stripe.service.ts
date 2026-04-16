@@ -38,6 +38,13 @@ type SubscriptionLike = {
   items?: { data?: Array<{ price?: { id?: string } }> };
 };
 
+type StripeInvoiceRetrieved = Awaited<
+  ReturnType<InstanceType<typeof Stripe>['invoices']['retrieve']>
+> & {
+  /** Presente en facturas de suscripción (Stripe typings a veces omiten el campo). */
+  subscription?: string | { id?: string; metadata?: { userId?: string } } | null;
+};
+
 @Injectable()
 export class StripeService {
   private readonly logger = new Logger(StripeService.name);
@@ -205,9 +212,10 @@ export class StripeService {
         );
         break;
       }
-      case 'invoice.paid': {
+      case 'invoice.paid':
+      case 'invoice.payment_succeeded': {
         await this.sendInvoiceReceiptToCustomer(
-          event.data.object as { id: string; subscription?: string | null },
+          event.data.object as { id: string },
         );
         break;
       }
@@ -217,27 +225,31 @@ export class StripeService {
   }
 
   /**
-   * Tras invoice.paid: envía por Resend el enlace a la factura y PDF (Stripe no siempre notifica al cliente).
+   * Tras invoice.paid / invoice.payment_succeeded: envía por Resend enlace a factura y PDF.
+   * No fiarse del payload del webhook: a veces viene sin `subscription`; se consulta la factura en la API.
    */
   private async sendInvoiceReceiptToCustomer(invoicePayload: {
     id: string;
-    subscription?: string | null;
   }): Promise<void> {
-    if (!invoicePayload.subscription) {
-      return;
-    }
-
     const stripe = this.getStripe();
     let invoice: Awaited<
       ReturnType<InstanceType<typeof Stripe>['invoices']['retrieve']>
     >;
     try {
       invoice = await stripe.invoices.retrieve(invoicePayload.id, {
-        expand: ['customer'],
+        expand: ['customer', 'subscription'],
       });
     } catch (e) {
       this.logger.warn(
         `No se pudo recuperar factura ${invoicePayload.id}: ${(e as Error).message}`,
+      );
+      return;
+    }
+
+    const subId = this.subscriptionIdFromInvoice(invoice);
+    if (!subId) {
+      this.logger.log(
+        `Factura ${invoice.id} sin suscripción asociada; no se envía recibo (solo facturas de plan).`,
       );
       return;
     }
@@ -249,11 +261,37 @@ export class StripeService {
         to = c.email;
       }
     }
+
+    if (!to?.trim()) {
+      to = await this.emailFromSubscriptionUserMetadata(
+        stripe,
+        invoice,
+        subId,
+      );
+    }
+
     if (!to?.trim()) {
       this.logger.warn(
-        `invoice.paid ${invoice.id}: sin email de cliente; no se envía recibo`,
+        `Factura ${invoice.id}: sin email en Stripe ni en usuario Firestore; no se envía recibo`,
       );
       return;
+    }
+
+    const lockRef = this.firestore
+      .collection('stripeInvoiceReceiptEmails')
+      .doc(invoice.id);
+    try {
+      await lockRef.create({
+        startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      if (this.isFirestoreAlreadyExists(e)) {
+        this.logger.log(
+          `Recibo de factura ${invoice.id} ya enviado o en proceso; omitiendo`,
+        );
+        return;
+      }
+      throw e;
     }
 
     const currency = (invoice.currency || 'eur').toUpperCase();
@@ -277,11 +315,81 @@ export class StripeService {
         hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
         invoicePdfUrl: invoice.invoice_pdf ?? null,
       });
+      await lockRef.set(
+        {
+          sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          to: to.trim(),
+        },
+        { merge: true },
+      );
       this.logger.log(`Recibo factura ${invoice.id} enviado a ${to.trim()}`);
     } catch (e) {
+      try {
+        await lockRef.delete();
+      } catch {
+        /* ignore */
+      }
       this.logger.error(
         `Error enviando recibo de factura ${invoice.id}: ${(e as Error).message}`,
       );
+    }
+  }
+
+  private subscriptionIdFromInvoice(invoice: StripeInvoiceRetrieved): string | null {
+    const sub = invoice.subscription;
+    if (sub == null) return null;
+    if (typeof sub === 'string') return sub;
+    if (typeof sub === 'object' && 'id' in sub && typeof (sub as { id: string }).id === 'string') {
+      return (sub as { id: string }).id;
+    }
+    return null;
+  }
+
+  private isFirestoreAlreadyExists(err: unknown): boolean {
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? (err as { code: number | string }).code
+        : undefined;
+    return code === 6 || code === 'already-exists' || code === 'ALREADY_EXISTS';
+  }
+
+  /** Email del usuario Llamalo si la suscripción tiene metadata.userId. */
+  private async emailFromSubscriptionUserMetadata(
+    stripe: InstanceType<typeof Stripe>,
+    invoice: StripeInvoiceRetrieved,
+    subId: string,
+  ): Promise<string | null> {
+    let userId: string | undefined;
+    const subField = invoice.subscription;
+    const subWithMeta = subField as { metadata?: { userId?: string } } | null;
+    if (
+      typeof subField === 'object' &&
+      subField &&
+      'metadata' in subField &&
+      subWithMeta?.metadata?.userId
+    ) {
+      userId = subWithMeta.metadata.userId;
+    } else {
+      try {
+        const sub = await stripe.subscriptions.retrieve(subId);
+        userId = sub.metadata?.userId;
+      } catch (e) {
+        this.logger.warn(
+          `No se pudo leer suscripción ${subId} para email de recibo: ${(e as Error).message}`,
+        );
+        return null;
+      }
+    }
+    if (!userId?.trim()) return null;
+    try {
+      const snap = await this.firestore.collection('users').doc(userId.trim()).get();
+      const em = (snap.data() as { email?: string } | undefined)?.email;
+      return em?.trim() || null;
+    } catch (e) {
+      this.logger.warn(
+        `No se pudo leer email de usuario ${userId}: ${(e as Error).message}`,
+      );
+      return null;
     }
   }
 
