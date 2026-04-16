@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Headers,
   HttpCode,
   HttpStatus,
@@ -515,6 +516,42 @@ export class ShopifyController {
     }
 
     return this.shopifyService.getMasterData(userId, shop);
+  }
+
+  @Delete('connection')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Desvincular tienda Shopify',
+    description:
+      'Revoca la tienda para el usuario autenticado: elimina el token en Firestore, quita la entrada en integrations.shopify y limpia shopifyDomain en agentes que usaran esa tienda.',
+  })
+  @ApiQuery({
+    name: 'shop',
+    type: String,
+    example: 'mi-tienda.myshopify.com',
+    description: 'Dominio de la tienda (sin https://)',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Tienda desvinculada',
+    schema: {
+      type: 'object',
+      properties: { message: { type: 'string' } },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Parámetro shop faltante o tienda no encontrada' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  async disconnectConnection(
+    @GetUser('uid') userId: string,
+    @Query('shop') shop: string,
+  ): Promise<{ message: string }> {
+    if (!shop?.trim()) {
+      throw new BadRequestException('El parámetro shop es obligatorio');
+    }
+    await this.shopifyService.revokeStore(userId, shop.trim());
+    return { message: 'Tienda Shopify desvinculada correctamente.' };
   }
 
   @Post('webhooks')
