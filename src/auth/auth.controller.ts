@@ -6,6 +6,7 @@ import { RecoverDto } from './dto/recover.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { VerifyDeviceLoginDto } from './dto/verify-device-login.dto';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -67,6 +68,15 @@ export class AuthController {
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
+  }
+
+  @Post('verify-device-login')
+  @ApiOperation({
+    summary:
+      'Completar login tras código enviado al correo (nuevo dispositivo/navegador)',
+  })
+  async verifyDeviceLogin(@Body() dto: VerifyDeviceLoginDto) {
+    return this.authService.verifyDeviceLogin(dto);
   }
 
   @Post('recover')
