@@ -28,6 +28,18 @@ import {
   CallMetricsDto,
   DailyPeakHour,
 } from './dto/twilio-detailed-metrics.dto';
+import { DateTime } from 'luxon';
+import {
+  getCalendarMonthKey,
+  getCurrentMonthRange001,
+  getCurrentWeekRange001,
+  getMonday001ForWeekContaining,
+  getPreviousWeekRange001,
+  getTwoWeekFetchRangeInclusive,
+  inRangeHalfOpen,
+  isInInclusiveRange,
+  resolveMetricsTimezoneFromUser,
+} from './metrics-calendar.util';
 
 interface TwilioCall {
   sid: string;
@@ -231,42 +243,60 @@ export class MetricsService {
       }
 
       const twilioAccounts = await this.getTwilioAccountsOptional(userId);
-
-      const { startDate: startDate7Days } = this.getLast7DaysRange();
-      const { startDate: startDate14Days, endDate: endDate14Days } =
-        this.getLast14DaysRange();
-      const { startDate: startDateMonth, endDate: endDateMonth } =
-        this.getLastMonthRange();
-
-      const start7DaysIso = startDate7Days.toISOString();
+      const userData = userSnapshot.data() as Record<string, unknown>;
+      const tz = resolveMetricsTimezoneFromUser(userData);
+      const twoWeek = getTwoWeekFetchRangeInclusive(tz);
+      const monthRange = getCurrentMonthRange001(tz);
+      const currentWeek = getCurrentWeekRange001(tz);
 
       const earliestFetch = new Date(
-        Math.min(startDate14Days.getTime(), startDateMonth.getTime()),
+        Math.min(
+          twoWeek.startInclusive.getTime(),
+          monthRange.startInclusive.getTime(),
+        ),
+      );
+      const fetchEnd = new Date(
+        Math.max(
+          twoWeek.endInclusive.getTime(),
+          monthRange.endInclusive.getTime(),
+        ),
       );
 
       const allCallsFetched = await this.fetchRegisteredCallsFromFirestore(
         userId,
         earliestFetch,
-        endDate14Days,
+        fetchEnd,
       );
 
       const allCalls14Days = allCallsFetched.filter((call) => {
         const t = new Date(call.start_time || call.date_created).getTime();
-        return t >= startDate14Days.getTime() && t <= endDate14Days.getTime();
+        return isInInclusiveRange(
+          t,
+          twoWeek.startInclusive,
+          twoWeek.endInclusive,
+        );
       });
 
       const allCallsMonth = allCallsFetched.filter((call) => {
         const t = new Date(call.start_time || call.date_created).getTime();
-        return t >= startDateMonth.getTime() && t <= endDateMonth.getTime();
+        return isInInclusiveRange(
+          t,
+          monthRange.startInclusive,
+          monthRange.endInclusive,
+        );
       });
 
-      const allCalls7Days = allCalls14Days.filter((call) => {
-        const callDate = call.start_time || call.date_created || '';
-        return callDate >= start7DaysIso;
+      const allCalls7Days = allCallsFetched.filter((call) => {
+        const t = new Date(call.start_time || call.date_created).getTime();
+        return inRangeHalfOpen(
+          t,
+          currentWeek.startInclusive,
+          currentWeek.endExclusive,
+        );
       });
 
       console.log(
-        `[Metrics] Llamadas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — cuentas Twilio en perfil: ${twilioAccounts.length}; 14d: ${allCalls14Days.length}, 7d filtrados: ${allCalls7Days.length}, mes: ${allCallsMonth.length}`,
+        `[Metrics] Llamadas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — cuentas Twilio en perfil: ${twilioAccounts.length}; 2 sem cal (${tz}): ${allCalls14Days.length}, semana actual: ${allCalls7Days.length}, mes: ${allCallsMonth.length}`,
       );
 
       const accountIdsForTerms =
@@ -286,7 +316,7 @@ export class MetricsService {
           : (
               await Promise.all(
                 accountIdsForTerms.map((id) =>
-                  this.getCallTerminations(userId, id, 14),
+                  this.getCallTerminations(userId, id, 21),
                 ),
               )
             ).flat();
@@ -296,6 +326,7 @@ export class MetricsService {
       await this.syncUserMinutesByMonthFromRegisteredCalls(
         userId,
         allCallsMonth,
+        tz,
       );
 
       // 5. Calcular métricas con comparación semanal
@@ -304,6 +335,7 @@ export class MetricsService {
         allCalls14Days,
         allCallsMonth,
         terminacionesDashboard,
+        tz,
       );
 
       // 6. Obtener agentes
@@ -313,10 +345,12 @@ export class MetricsService {
       );
 
       // 7. Calcular llamadas exitosas de los últimos 7 días por día (cruzando con Firestore)
-      const llamadasExitosasUltimos7Dias =
-        this.calculateLlamadasExitosasPorDia(allCalls7Days, terminacionesDashboard);
+      const llamadasExitosasUltimos7Dias = this.calculateLlamadasExitosasPorDia(
+        allCalls7Days,
+        terminacionesDashboard,
+        tz,
+      );
 
-      const userData = userSnapshot.data() as Record<string, unknown>;
       const panel = this.resolvePanelAnalyticsTierFromUserData(userData);
 
       return {
@@ -339,95 +373,10 @@ export class MetricsService {
   }
 
   /**
-   * Devuelve la clave del mes actual en formato "YYYY-MM".
+   * Devuelve la clave del mes actual en formato "YYYY-MM" (calendario de negocio).
    */
-  private getCurrentMonthKey(): string {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-    return `${year}-${month}`;
-  }
-
-  /**
-   * Obtiene el rango de fechas de los últimos 7 días
-   */
-  private getLast7DaysRange(): {
-    startDate: Date;
-    endDate: Date;
-  } {
-    const now = new Date();
-
-    // EndDate: fin del día actual (23:59:59.999)
-    const endDate = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    );
-
-    // StartDate: inicio del día hace 6 días (00:00:00.000)
-    // Restamos 6 días para obtener exactamente 7 días incluyendo hoy
-    const weekAgo = new Date(now);
-    weekAgo.setUTCDate(weekAgo.getUTCDate() - 6);
-    const startDate = new Date(
-      Date.UTC(
-        weekAgo.getUTCFullYear(),
-        weekAgo.getUTCMonth(),
-        weekAgo.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-
-    return { startDate, endDate };
-  }
-
-  /**
-   * Obtiene el rango de fechas de los últimos 14 días (para comparación semanal)
-   */
-  private getLast14DaysRange(): {
-    startDate: Date;
-    endDate: Date;
-  } {
-    const now = new Date();
-
-    // EndDate: fin del día actual (23:59:59.999)
-    const endDate = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    );
-
-    // StartDate: inicio del día hace 13 días (00:00:00.000)
-    // Restamos 13 días para obtener exactamente 14 días incluyendo hoy
-    const twoWeeksAgo = new Date(now);
-    twoWeeksAgo.setUTCDate(twoWeeksAgo.getUTCDate() - 13);
-    const startDate = new Date(
-      Date.UTC(
-        twoWeeksAgo.getUTCFullYear(),
-        twoWeeksAgo.getUTCMonth(),
-        twoWeeksAgo.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-
-    return { startDate, endDate };
+  private getCurrentMonthKey(tz: string): string {
+    return getCalendarMonthKey(tz);
   }
 
   /**
@@ -438,10 +387,12 @@ export class MetricsService {
     calls14Days: TwilioCall[],
     callsMonth: TwilioCall[],
     terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
+    tz: string,
   ): SummaryDto {
     // 1. Total de llamadas (últimos 7 días vs semana anterior) — cualquier status
     const totalLlamadasActual = calls7Days.length;
     const totalLlamadasAnterior = this.calculateCallsForPeriod(
+      tz,
       calls14Days,
       'semana_anterior',
     );
@@ -455,13 +406,14 @@ export class MetricsService {
     const motivoMap7Days = new Map<string, string>(
       terminaciones.map((t) => [t.callSid, t.motivo]),
     );
-    const { startDate: start7Days } = this.getLast7DaysRange();
-    const start7DaysStr = start7Days.toISOString().split('T')[0];
+    const weekNow = getCurrentWeekRange001(tz);
 
     const llamadasExitosasActual = calls7Days.filter((call) => {
       if (call.status !== 'completed') return false;
-      const fecha = (call.start_time || call.date_created || '').substring(0, 10);
-      if (fecha < start7DaysStr) return false;
+      const t = new Date(call.start_time || call.date_created || '').getTime();
+      if (!inRangeHalfOpen(t, weekNow.startInclusive, weekNow.endExclusive)) {
+        return false;
+      }
       const motivo = motivoMap7Days.get(call.sid);
       // Sin registro en Firestore o motivo='agente' → exitosa
       return motivo !== 'cliente' && motivo !== 'silencio';
@@ -470,6 +422,7 @@ export class MetricsService {
     // Para la semana anterior se usa el mismo motivoMap: las terminaciones de los últimos
     // 14 días ya incluyen registros de ambas semanas, por lo que el criterio es consistente
     const llamadasExitosasAnterior = this.calculateCallsForPeriod(
+      tz,
       calls14Days,
       'semana_anterior',
       true,
@@ -483,6 +436,7 @@ export class MetricsService {
     // 3. Total de minutos del último mes vs semana anterior
     const minutosMesActual = this.totalMinutesIntegerFromCalls(callsMonth);
     const minutosMesAnterior = this.calculateMinutesForPeriod(
+      tz,
       calls14Days,
       'semana_anterior',
     );
@@ -546,27 +500,21 @@ export class MetricsService {
    * Calcula el total de llamadas para un período específico
    */
   private calculateCallsForPeriod(
+    tz: string,
     calls: TwilioCall[],
     period: 'semana_actual' | 'semana_anterior',
     soloExitosas: boolean = false,
     motivoMap: Map<string, string> = new Map(),
   ): number {
-    const now = new Date();
-    const diasRestar = period === 'semana_actual' ? 6 : 13;
-
-    const startDate = new Date(now);
-    startDate.setUTCDate(startDate.getUTCDate() - diasRestar);
-    startDate.setUTCHours(0, 0, 0, 0);
-
-    const endDate = new Date(now);
-    if (period === 'semana_anterior') {
-      endDate.setUTCDate(endDate.getUTCDate() - 7);
-    }
-    endDate.setUTCHours(23, 59, 59, 999);
+    const { startInclusive, endExclusive } =
+      period === 'semana_actual'
+        ? getCurrentWeekRange001(tz)
+        : getPreviousWeekRange001(tz);
 
     return calls.filter((call) => {
       const callDate = new Date(call.start_time || call.date_created || '');
-      if (callDate < startDate || callDate > endDate) return false;
+      const ms = callDate.getTime();
+      if (!inRangeHalfOpen(ms, startInclusive, endExclusive)) return false;
 
       if (soloExitosas) {
         if (call.status !== 'completed') return false;
@@ -586,26 +534,20 @@ export class MetricsService {
    * Calcula los total de minutos para un período específico
    */
   private calculateMinutesForPeriod(
+    tz: string,
     calls: TwilioCall[],
     period: 'semana_actual' | 'semana_anterior',
   ): number {
-    const now = new Date();
-    const diasRestar = period === 'semana_actual' ? 6 : 13;
-
-    const startDate = new Date(now);
-    startDate.setUTCDate(startDate.getUTCDate() - diasRestar);
-    startDate.setUTCHours(0, 0, 0, 0);
-
-    const endDate = new Date(now);
-    if (period === 'semana_anterior') {
-      endDate.setUTCDate(endDate.getUTCDate() - 7);
-    }
-    endDate.setUTCHours(23, 59, 59, 999);
+    const { startInclusive, endExclusive } =
+      period === 'semana_actual'
+        ? getCurrentWeekRange001(tz)
+        : getPreviousWeekRange001(tz);
 
     const totalSegundos = calls
       .filter((call) => {
         const callDate = new Date(call.start_time || call.date_created || '');
-        return callDate >= startDate && callDate <= endDate;
+        const ms = callDate.getTime();
+        return inRangeHalfOpen(ms, startInclusive, endExclusive);
       })
       .reduce((total, call) => total + parseInt(call.duration || '0', 10), 0);
 
@@ -618,24 +560,20 @@ export class MetricsService {
   private calculateLlamadasExitosasPorDia(
     calls: TwilioCall[],
     terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
+    tz: string,
   ): LlamadaExitosaPorDiaDto[] {
     const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
     const hoy = new Date();
+    const monday = getMonday001ForWeekContaining(hoy, tz);
 
     // Mapa callSid → motivo para clasificación precisa
     const motivoMap = new Map<string, string>(
       terminaciones.map((t) => [t.callSid, t.motivo]),
     );
 
-    for (let i = 6; i >= 0; i--) {
-      const fecha = new Date(hoy);
-      fecha.setUTCDate(fecha.getUTCDate() - i);
-      fecha.setUTCHours(0, 0, 0, 0);
-
-      const year = fecha.getUTCFullYear();
-      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(fecha.getUTCDate()).padStart(2, '0');
-      const fechaStr = `${year}-${month}-${day}`;
+    for (let i = 0; i < 7; i++) {
+      const day = monday.plus({ days: i });
+      const fechaStr = day.toFormat('yyyy-MM-dd');
 
       // Contar llamadas exitosas del día: completed donde el agente cerró correctamente
       const llamadasExitosasDelDia = calls.filter((call) => {
@@ -644,8 +582,11 @@ export class MetricsService {
         const fechaLlamada = call.start_time || call.date_created;
         if (!fechaLlamada) return false;
 
-        const callDate = new Date(fechaLlamada);
-        const callDateStr = `${callDate.getUTCFullYear()}-${String(callDate.getUTCMonth() + 1).padStart(2, '0')}-${String(callDate.getUTCDate()).padStart(2, '0')}`;
+        const callDateStr = DateTime.fromJSDate(new Date(fechaLlamada), {
+          zone: 'utc',
+        })
+          .setZone(tz)
+          .toFormat('yyyy-MM-dd');
         if (callDateStr !== fechaStr) return false;
 
         // Si hay datos de Firestore, excluir las cortadas por cliente o silencio
@@ -683,21 +624,24 @@ export class MetricsService {
       const tieneTwilioConfig = !!userData?.twilio;
 
       // Nueva estructura: agents[] (array de agentes)
-      const agentsArray = (userData?.agents as Array<Record<string, unknown>>) || [];
+      const agentsArray =
+        (userData?.agents as Array<Record<string, unknown>>) || [];
 
       if (agentsArray.length > 0) {
         return agentsArray
           .filter((a) => a.name)
           .map((a) => ({
             nombre: a.name as string,
-            tipo: (a.direction === 'outbound' ? 'outbound' : 'inbound') as 'inbound' | 'outbound',
+            tipo: a.direction === 'outbound' ? 'outbound' : 'inbound',
             minutos_totales: minutosTotales,
             estado: tieneTwilioConfig ? 'activo' : 'inactivo',
           }));
       }
 
       // Estructura antigua: agent (objeto único)
-      const agentConfig = userData?.agent as Record<string, unknown> | undefined;
+      const agentConfig = userData?.agent as
+        | Record<string, unknown>
+        | undefined;
       if (agentConfig?.name) {
         return [
           {
@@ -716,9 +660,6 @@ export class MetricsService {
     }
   }
 
-  /**
-   * Calcula las llamadas de los últimos 7 días
-   */
   /**
    * Obtiene métricas detalladas de Twilio
    * Incluye todas las métricas solicitadas para análisis avanzado
@@ -758,9 +699,7 @@ export class MetricsService {
           throw new BadRequestException('twilioAccountId inválido.');
         }
         if (twilioArray.length > 0) {
-          const account = twilioArray.find(
-            (acc) => acc.twilioAccountId === n,
-          );
+          const account = twilioArray.find((acc) => acc.twilioAccountId === n);
           if (!account) {
             throw new NotFoundException(
               `Cuenta de Twilio con ID ${twilioAccountId} no encontrada.`,
@@ -770,34 +709,57 @@ export class MetricsService {
         filterByAccountId = n;
       }
 
-      const { startDate: startDate14Days, endDate: endDate14Days } =
-        this.getLast14DaysRange();
-      const { startDate: startDateMonth, endDate: endDateMonth } =
-        this.getLastMonthRange();
+      const tz = resolveMetricsTimezoneFromUser(userData);
+      const twoWeek = getTwoWeekFetchRangeInclusive(tz);
+      const monthRange = getCurrentMonthRange001(tz);
 
-      const [callsLast14Days, callsLastMonth] = await Promise.all([
-        this.fetchRegisteredCallsFromFirestore(
-          userId,
-          startDate14Days,
-          endDate14Days,
-          filterByAccountId,
+      const earliestFetch = new Date(
+        Math.min(
+          twoWeek.startInclusive.getTime(),
+          monthRange.startInclusive.getTime(),
         ),
-        this.fetchRegisteredCallsFromFirestore(
-          userId,
-          startDateMonth,
-          endDateMonth,
-          filterByAccountId,
+      );
+      const fetchEnd = new Date(
+        Math.max(
+          twoWeek.endInclusive.getTime(),
+          monthRange.endInclusive.getTime(),
         ),
-      ]);
+      );
+
+      const allFetched = await this.fetchRegisteredCallsFromFirestore(
+        userId,
+        earliestFetch,
+        fetchEnd,
+        filterByAccountId,
+      );
+
+      const callsLast14Days = allFetched.filter((call) => {
+        const t = new Date(call.start_time || call.date_created).getTime();
+        return isInInclusiveRange(
+          t,
+          twoWeek.startInclusive,
+          twoWeek.endInclusive,
+        );
+      });
+
+      const callsLastMonth = allFetched.filter((call) => {
+        const t = new Date(call.start_time || call.date_created).getTime();
+        return isInInclusiveRange(
+          t,
+          monthRange.startInclusive,
+          monthRange.endInclusive,
+        );
+      });
 
       console.log(
-        `[Metrics] Métricas detalladas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — 14d: ${callsLast14Days.length}, mes: ${callsLastMonth.length}`,
+        `[Metrics] Métricas detalladas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — 2 sem (${tz}): ${callsLast14Days.length}, mes: ${callsLastMonth.length}`,
       );
 
       if (filterByAccountId === undefined) {
         await this.syncUserMinutesByMonthFromRegisteredCalls(
           userId,
           callsLastMonth,
+          tz,
         );
       }
 
@@ -833,6 +795,7 @@ export class MetricsService {
         this.calculateLlamadasExitosasPorDiaConComparacion(
           callsLast14Days,
           terminacionesFirestore,
+          tz,
         );
       const resumenComparativoSemanal = this.calculateResumenComparativoSemanal(
         llamadasExitosasUltimos7Dias,
@@ -876,7 +839,7 @@ export class MetricsService {
         filterByAccountId,
       );
       const callMetricsByHour =
-        this.calculateCallMetricsByHour(callsLast14Days);
+        this.calculateCallMetricsByHour(callsLast14Days, tz);
 
       const panel = this.resolvePanelAnalyticsTierFromUserData(userData);
 
@@ -908,62 +871,27 @@ export class MetricsService {
   }
 
   /**
-   * Obtiene el rango de fechas del último mes (día 1 al último día)
-   */
-  private getLastMonthRange(): {
-    startDate: Date;
-    endDate: Date;
-  } {
-    const now = new Date();
-
-    // StartDate: primer día del mes actual a las 00:00:00.000 UTC
-    const startDate = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
-    );
-
-    // EndDate: último día del mes actual a las 23:59:59.999 UTC
-    const lastDayOfMonth = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth() + 1,
-        0, // Día 0 del siguiente mes = último día del mes actual
-        23,
-        59,
-        59,
-        999,
-      ),
-    );
-
-    return { startDate, endDate: lastDayOfMonth };
-  }
-
-  /**
-   * Obtiene todas las llamadas para análisis (sin límite de tiempo)
-   */
-
-  /**
    * Calcula las llamadas exitosas de los últimos 7 días con comparación semanal
    */
   private calculateLlamadasExitosasPorDiaConComparacion(
     calls: TwilioCall[],
     terminaciones: { motivo: string; fecha: string; callSid: string }[] = [],
+    tz: string,
   ): LlamadaExitosaPorDiaDto[] {
     const ultimos7Dias: LlamadaExitosaPorDiaDto[] = [];
     const hoy = new Date();
+    const monday = getMonday001ForWeekContaining(hoy, tz);
 
     // Mapa callSid → motivo para clasificación precisa desde Firestore
     const motivoMap = new Map<string, string>(
       terminaciones.map((t) => [t.callSid, t.motivo]),
     );
 
-    // Obtener datos de los últimos 14 días para comparación
     const datosPorFecha = new Map<string, number>();
 
-    // Procesar llamadas para tener un mapa de fechas con criterio consistente
     calls.forEach((call) => {
       if (call.status !== 'completed') return;
 
-      // Si hay datos de Firestore, excluir las cortadas por el cliente o silencio
       if (motivoMap.size > 0) {
         const motivo = motivoMap.get(call.sid);
         if (motivo === 'cliente' || motivo === 'silencio') return;
@@ -972,45 +900,25 @@ export class MetricsService {
       const fechaLlamada = call.start_time || call.date_created;
       if (!fechaLlamada) return;
 
-      const callDate = new Date(fechaLlamada);
-      const year = callDate.getUTCFullYear();
-      const month = String(callDate.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(callDate.getUTCDate()).padStart(2, '0');
-      const fechaStr = `${year}-${month}-${day}`;
+      const fechaStr = DateTime.fromJSDate(new Date(fechaLlamada), {
+        zone: 'utc',
+      })
+        .setZone(tz)
+        .toFormat('yyyy-MM-dd');
 
       datosPorFecha.set(fechaStr, (datosPorFecha.get(fechaStr) || 0) + 1);
     });
 
-    // Generar los últimos 7 días con comparación
-    for (let i = 6; i >= 0; i--) {
-      const fecha = new Date(hoy);
-      fecha.setUTCDate(fecha.getUTCDate() - i);
-      fecha.setUTCHours(0, 0, 0, 0);
-
-      const year = fecha.getUTCFullYear();
-      const month = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(fecha.getUTCDate()).padStart(2, '0');
-      const fechaStr = `${year}-${month}-${day}`;
+    for (let i = 0; i < 7; i++) {
+      const day = monday.plus({ days: i });
+      const fechaStr = day.toFormat('yyyy-MM-dd');
 
       const totalActual = datosPorFecha.get(fechaStr) || 0;
 
-      // Calcular comparación con la semana anterior (mismo día de la semana - 7 días)
-      const fechaSemanaAnterior = new Date(fecha);
-      fechaSemanaAnterior.setUTCDate(fechaSemanaAnterior.getUTCDate() - 7);
-
-      const yearAnterior = fechaSemanaAnterior.getUTCFullYear();
-      const monthAnterior = String(
-        fechaSemanaAnterior.getUTCMonth() + 1,
-      ).padStart(2, '0');
-      const dayAnterior = String(fechaSemanaAnterior.getUTCDate()).padStart(
-        2,
-        '0',
-      );
-      const fechaStrAnterior = `${yearAnterior}-${monthAnterior}-${dayAnterior}`;
+      const fechaStrAnterior = day.minus({ weeks: 1 }).toFormat('yyyy-MM-dd');
 
       const totalAnterior = datosPorFecha.get(fechaStrAnterior) || 0;
 
-      // Calcular variación porcentual
       let variacionPorcentual = 0;
       if (totalAnterior > 0) {
         variacionPorcentual =
@@ -1018,7 +926,6 @@ export class MetricsService {
             ((totalActual - totalAnterior) / totalAnterior) * 100 * 10,
           ) / 10;
       } else if (totalActual > 0) {
-        // Si no había datos la semana anterior pero sí ahora, es un incremento infinito
         variacionPorcentual = 100;
       }
 
@@ -1082,14 +989,15 @@ export class MetricsService {
   }
 
   /**
-   * Iguala `minutesByMonth[YYYY-MM]` (UTC) al consumo real del mes según `llamadas_registradas`.
+   * Iguala `minutesByMonth[YYYY-MM]` (calendario de negocio, ver `METRICS_CALENDAR_TIMEZONE`) al consumo real del mes según `llamadas_registradas`.
    * Sustituye el conteo del webhook de Twilio (todas las llamadas de la cuenta) para que coincida con el dashboard.
    */
   private async syncUserMinutesByMonthFromRegisteredCalls(
     userId: string,
     callsMonth: TwilioCall[],
+    tz: string,
   ): Promise<void> {
-    const monthKey = this.getCurrentMonthKey();
+    const monthKey = this.getCurrentMonthKey(tz);
     const totalSegundos = callsMonth.reduce(
       (t, c) => t + parseInt(c.duration || '0', 10),
       0,
@@ -1180,8 +1088,7 @@ export class MetricsService {
       const docsOrdenados = snapshot.docs
         .map((doc) => ({
           periodo: String((doc.data() as { periodo?: string }).periodo ?? ''),
-          latencias: ((doc.data() as { latencias?: number[] }).latencias ||
-            []) as number[],
+          latencias: (doc.data() as { latencias?: number[] }).latencias || [],
         }))
         .filter((d) => d.periodo.length > 0)
         .sort((a, b) => a.periodo.localeCompare(b.periodo));
@@ -1230,7 +1137,9 @@ export class MetricsService {
     try {
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       const docId = `${userId}_${twilioAccountId}_${today}`;
-      const docRef = this.firestore.collection('latencias_agregadas').doc(docId);
+      const docRef = this.firestore
+        .collection('latencias_agregadas')
+        .doc(docId);
 
       // Operación atómica: set con merge evita la race condition del patrón read-then-write.
       // arrayUnion añade el valor al array existente sin sobrescribir otras escrituras concurrentes.
@@ -1268,7 +1177,9 @@ export class MetricsService {
     paisPrefijo: string | null,
   ): Promise<void> {
     try {
-      const docRef = this.firestore.collection('metricas_historicas').doc(userId);
+      const docRef = this.firestore
+        .collection('metricas_historicas')
+        .doc(userId);
 
       const increment = admin.firestore.FieldValue.increment;
 
@@ -1313,7 +1224,10 @@ export class MetricsService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Error desconocido';
-      console.error('[Metrics] Error guardando métricas históricas:', errorMessage);
+      console.error(
+        '[Metrics] Error guardando métricas históricas:',
+        errorMessage,
+      );
     }
   }
 
@@ -1405,7 +1319,10 @@ export class MetricsService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Error desconocido';
-      console.error('[Metrics] Error guardando finalización de llamada:', errorMessage);
+      console.error(
+        '[Metrics] Error guardando finalización de llamada:',
+        errorMessage,
+      );
     }
   }
 
@@ -1440,7 +1357,8 @@ export class MetricsService {
         ),
       );
 
-      const registros: { motivo: string; fecha: string; callSid: string }[] = [];
+      const registros: { motivo: string; fecha: string; callSid: string }[] =
+        [];
 
       for (const docSnap of docSnapshots) {
         if (!docSnap.exists) continue;
@@ -1537,10 +1455,7 @@ export class MetricsService {
     historicalMetrics?: Awaited<ReturnType<typeof this.getHistoricalMetrics>>,
   ): PaisOrigenDto[] {
     // Prioridad: datos acumulados en Firestore (histórico completo)
-    if (
-      historicalMetrics &&
-      Object.keys(historicalMetrics.paises).length > 0
-    ) {
+    if (historicalMetrics && Object.keys(historicalMetrics.paises).length > 0) {
       const paisesCount = historicalMetrics.paises;
       const totalLlamadas = Object.values(paisesCount).reduce(
         (sum, v) => sum + v,
@@ -2033,31 +1948,34 @@ export class MetricsService {
   /**
    * Calcula las métricas de llamadas por hora para análisis de hora pico
    */
-  private calculateCallMetricsByHour(calls: TwilioCall[]): CallMetricsDto {
-    const { startDate: startDate7Days, endDate: endDate7Days } =
-      this.getLast7DaysRange();
+  private calculateCallMetricsByHour(
+    calls: TwilioCall[],
+    tz: string,
+  ): CallMetricsDto {
+    const week = getCurrentWeekRange001(tz);
+    const startDate7Days = week.startInclusive;
+    const endDate7Days = new Date(week.endExclusive.getTime() - 1);
 
-    // Pre-agrupar todas las llamadas por fecha en una sola pasada O(N)
-    // evitando el doble bucle O(7×N) anterior
     const callsByDate = new Map<string, { hour: number }[]>();
     for (const call of calls) {
       const fechaLlamada = call.start_time || call.date_created;
       if (!fechaLlamada) continue;
       const d = new Date(fechaLlamada);
-      const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-      const hour = d.getUTCHours();
+      const dt = DateTime.fromJSDate(d, { zone: 'utc' }).setZone(tz);
+      const dateStr = dt.toFormat('yyyy-MM-dd');
+      const hour = dt.hour;
       if (!callsByDate.has(dateStr)) callsByDate.set(dateStr, []);
       callsByDate.get(dateStr)!.push({ hour });
     }
 
     const dailyPeakHours: DailyPeakHour[] = [];
     const hoy = new Date();
+    const monday = getMonday001ForWeekContaining(hoy, tz);
     let totalCalls = 0;
 
-    for (let i = 6; i >= 0; i--) {
-      const fecha = new Date(hoy);
-      fecha.setUTCDate(fecha.getUTCDate() - i);
-      const fechaStr = `${fecha.getUTCFullYear()}-${String(fecha.getUTCMonth() + 1).padStart(2, '0')}-${String(fecha.getUTCDate()).padStart(2, '0')}`;
+    for (let i = 0; i < 7; i++) {
+      const day = monday.plus({ days: i });
+      const fechaStr = day.toFormat('yyyy-MM-dd');
 
       const hourlyCalls = new Array(24).fill(0);
       const callsDelDia = callsByDate.get(fechaStr) || [];
@@ -2093,7 +2011,9 @@ export class MetricsService {
    * Ya no incrementa `minutesByMonth`: el consumo mensual se deriva de `llamadas_registradas`
    * y se sincroniza en `getDashboardMetrics` / `getTwilioDetailedMetrics` (evita divergencia con el dashboard).
    */
-  async handleTwilioCallWebhook(payload: Record<string, string>): Promise<void> {
+  async handleTwilioCallWebhook(
+    payload: Record<string, string>,
+  ): Promise<void> {
     const { AccountSid, CallStatus, CallDuration } = payload;
 
     if (CallStatus !== 'completed') {
@@ -2127,13 +2047,17 @@ export class MetricsService {
       const allUsersSnapshot = await this.firestore.collection('users').get();
       for (const doc of allUsersSnapshot.docs) {
         const data = doc.data() as Record<string, unknown>;
-        const twilioAccounts = (data.twilio as Array<{ twilioSid: string }>) || [];
+        const twilioAccounts =
+          (data.twilio as Array<{ twilioSid: string }>) || [];
         if (twilioAccounts.some((acc) => acc.twilioSid === AccountSid)) {
           userDocRef = doc.ref;
           this.firestore
             .collection('twilio_index')
             .doc(AccountSid)
-            .set({ userId: doc.id, updatedAt: new Date().toISOString() }, { merge: true })
+            .set(
+              { userId: doc.id, updatedAt: new Date().toISOString() },
+              { merge: true },
+            )
             .catch(() => {});
           break;
         }
@@ -2141,7 +2065,9 @@ export class MetricsService {
     }
 
     if (!userDocRef) {
-      console.warn(`[Webhook] No se encontró usuario para AccountSid: ${AccountSid}`);
+      console.warn(
+        `[Webhook] No se encontró usuario para AccountSid: ${AccountSid}`,
+      );
       return;
     }
 

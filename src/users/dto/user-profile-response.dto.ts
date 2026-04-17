@@ -195,4 +195,11 @@ export class UserProfileResponseDto {
       'false si aún debe elegir plan o prueba tras registro; true si ya eligió o es cuenta antigua',
   })
   planSelectionCompleted?: boolean;
+
+  @ApiProperty({
+    example: 'Europe/Madrid',
+    description:
+      'Zona horaria IANA para métricas (semanas/meses de negocio en el panel); por defecto Europe/Madrid.',
+  })
+  metricsCalendarTimezone?: string;
 }

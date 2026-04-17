@@ -7,6 +7,10 @@ import {
 import * as admin from 'firebase-admin';
 import { v4 as uuidv4 } from 'uuid';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import {
+  getMetricsCalendarTimezone,
+  isValidIanaTimezone,
+} from '../metrics/metrics-calendar.util';
 import { PLAN_LIMITS, PlanType } from '../common/constants/plans.constants';
 import { computeMinuteQuotaFromUserData } from '../common/utils/minute-quota.util';
 import { getFirestore } from '../firebase/firebase.config';
@@ -92,6 +96,8 @@ interface UserData {
     discoveryChannels?: string[];
     updatedAt?: admin.firestore.Timestamp;
   };
+  /** IANA: semanas/meses de negocio en métricas del panel */
+  metricsCalendarTimezone?: string;
 }
 
 export type UserProfileResponse = {
@@ -166,6 +172,8 @@ export type UserProfileResponse = {
   stripeSubscriptionStatus?: string | null;
   /** false = pendiente elegir plan o prueba tras registro; ausente/true = ya elegido (legacy = completado) */
   planSelectionCompleted?: boolean;
+  /** Resuelta: perfil o `METRICS_CALENDAR_TIMEZONE` / Europe/Madrid */
+  metricsCalendarTimezone?: string;
 };
 
 export interface UploadFile {
@@ -185,6 +193,19 @@ export class UsersService {
     private readonly profileEventsService: ProfileEventsService,
     private readonly planLimitsService: PlanLimitsService,
   ) {}
+
+  /** Zona mostrada en API: Firestore válida o fallback del servidor (Europe/Madrid). */
+  private resolveDisplayMetricsTimezone(userData: UserData): string {
+    const raw = userData.metricsCalendarTimezone;
+    if (
+      typeof raw === 'string' &&
+      raw.trim() &&
+      isValidIanaTimezone(raw.trim())
+    ) {
+      return raw.trim();
+    }
+    return getMetricsCalendarTimezone();
+  }
 
   private filterPhoneNumbers(phoneNumbers: PhoneNumber[], query?: string) {
     if (!query || !query.trim()) {
@@ -305,6 +326,7 @@ export class UsersService {
         stripeSubscriptionId: userData?.stripeSubscriptionId ?? null,
         stripeSubscriptionStatus: userData?.stripeSubscriptionStatus ?? null,
         planSelectionCompleted: userData?.planSelectionCompleted !== false,
+        metricsCalendarTimezone: this.resolveDisplayMetricsTimezone(userData),
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -429,6 +451,20 @@ export class UsersService {
         };
       }
 
+      if (updateDto.metricsCalendarTimezone !== undefined) {
+        const s = String(updateDto.metricsCalendarTimezone).trim();
+        if (s && !isValidIanaTimezone(s)) {
+          throw new BadRequestException(
+            'Zona horaria de métricas no válida (use un identificador IANA, p. ej. Europe/Madrid).',
+          );
+        }
+        if (s) {
+          updates.metricsCalendarTimezone = s;
+        } else {
+          updates.metricsCalendarTimezone = admin.firestore.FieldValue.delete();
+        }
+      }
+
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
       }
@@ -474,6 +510,8 @@ export class UsersService {
         minutesByMonth: updatedData?.minutesByMonth ?? {},
         redeemedRewards: updatedData?.redeemedRewards ?? [],
         createdAt: updatedData?.createdAt,
+        metricsCalendarTimezone:
+          this.resolveDisplayMetricsTimezone(updatedData),
       };
     } catch (error) {
       if (

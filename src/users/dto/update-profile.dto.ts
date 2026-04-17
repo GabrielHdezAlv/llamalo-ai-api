@@ -137,4 +137,15 @@ export class UpdateProfileDto {
   @MaxLength(64, { each: true })
   onboardingDiscoveryChannels?: string[];
 
+  @ApiProperty({
+    example: 'Europe/Madrid',
+    description:
+      'Zona horaria IANA para períodos de métricas (semana/mes en el panel). Vacío = valor por defecto del servidor (Europe/Madrid).',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  metricsCalendarTimezone?: string;
+
 }
