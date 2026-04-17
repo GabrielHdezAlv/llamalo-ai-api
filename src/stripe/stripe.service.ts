@@ -295,6 +295,15 @@ export class StripeService {
         );
         break;
       }
+      /** Portal con «cambio al final del periodo»: Stripe adjunta Subscription Schedule. */
+      case 'subscription_schedule.updated':
+      case 'subscription_schedule.completed':
+      case 'subscription_schedule.released': {
+        await this.syncSubscriptionFromScheduleWebhookPayload(
+          event.data.object,
+        );
+        break;
+      }
       case 'invoice.paid':
       case 'invoice.payment_succeeded': {
         await this.sendInvoiceReceiptToCustomer(
@@ -527,6 +536,45 @@ export class StripeService {
       .doc(userId)
       .set(payload, { merge: true });
     this.logger.log(`Plan ${plan} aplicado a usuario ${userId} tras checkout.`);
+  }
+
+  /**
+   * Cuando el Customer Portal programa un cambio (p. ej. downgrade al fin de periodo), Stripe
+   * gestiona un Subscription Schedule. Re-lee la suscripción por API y sincroniza plan en Firestore.
+   * Incluir estos eventos en el endpoint del webhook en el Dashboard de Stripe.
+   */
+  private async syncSubscriptionFromScheduleWebhookPayload(
+    schedulePayload: unknown,
+  ): Promise<void> {
+    const schedule = schedulePayload as {
+      subscription?: string | { id?: string } | null;
+    };
+    const raw = schedule.subscription;
+    const subId =
+      typeof raw === 'string'
+        ? raw
+        : raw && typeof raw === 'object' && raw.id
+          ? raw.id
+          : null;
+    if (!subId?.trim()) {
+      this.logger.log(
+        'subscription_schedule: sin subscription asociada; omitiendo sync.',
+      );
+      return;
+    }
+    const stripe = this.getStripe();
+    let full: Awaited<
+      ReturnType<InstanceType<typeof Stripe>['subscriptions']['retrieve']>
+    >;
+    try {
+      full = await stripe.subscriptions.retrieve(subId.trim());
+    } catch (e) {
+      this.logger.warn(
+        `subscription_schedule: no se pudo cargar suscripción ${subId}: ${(e as Error).message}`,
+      );
+      return;
+    }
+    await this.syncSubscriptionToUser(full as unknown as SubscriptionLike);
   }
 
   private async syncSubscriptionToUser(sub: SubscriptionLike): Promise<void> {
