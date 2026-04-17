@@ -1,5 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsBoolean, IsIn } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsBoolean,
+  IsIn,
+  IsArray,
+  ArrayMaxSize,
+  MaxLength,
+} from 'class-validator';
 
 export class UpdateProfileDto {
   @ApiProperty({
@@ -100,5 +108,33 @@ export class UpdateProfileDto {
   })
   @IsOptional()
   extraMinutes?: number;
+
+  @ApiProperty({
+    example: ['customer-service', 'phone-sales'],
+    description:
+      'IDs de objetivos elegidos en onboarding (paso «Qué quieres conseguir»)',
+    required: false,
+    isArray: true,
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(32)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  onboardingGoals?: string[];
+
+  @ApiProperty({
+    example: ['google', 'friend'],
+    description:
+      'IDs de canales de descubrimiento en onboarding (paso «Cómo nos conociste»)',
+    required: false,
+    isArray: true,
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(32)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  onboardingDiscoveryChannels?: string[];
 
 }

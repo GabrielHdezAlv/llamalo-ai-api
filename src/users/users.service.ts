@@ -86,6 +86,12 @@ interface UserData {
   stripeSubscriptionId?: string | null;
   stripeSubscriptionStatus?: string | null;
   planSelectionCompleted?: boolean;
+  /** Respuestas registro onboarding (pasos 1–2) */
+  onboardingRegistration?: {
+    goals?: string[];
+    discoveryChannels?: string[];
+    updatedAt?: admin.firestore.Timestamp;
+  };
 }
 
 export type UserProfileResponse = {
@@ -399,6 +405,28 @@ export class UsersService {
 
       if (updateDto.extraMinutes !== undefined) {
         updates.extraMinutes = Number(updateDto.extraMinutes);
+      }
+
+      if (
+        updateDto.onboardingGoals !== undefined ||
+        updateDto.onboardingDiscoveryChannels !== undefined
+      ) {
+        const prev = (snapshot.data() as UserData)?.onboardingRegistration;
+        const prevGoals = Array.isArray(prev?.goals) ? prev.goals : [];
+        const prevDiscovery = Array.isArray(prev?.discoveryChannels)
+          ? prev.discoveryChannels
+          : [];
+        updates.onboardingRegistration = {
+          goals:
+            updateDto.onboardingGoals !== undefined
+              ? updateDto.onboardingGoals
+              : prevGoals,
+          discoveryChannels:
+            updateDto.onboardingDiscoveryChannels !== undefined
+              ? updateDto.onboardingDiscoveryChannels
+              : prevDiscovery,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
       }
 
       if (Object.keys(updates).length === 0) {
