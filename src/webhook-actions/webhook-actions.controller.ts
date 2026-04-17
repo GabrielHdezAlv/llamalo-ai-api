@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   UseGuards,
@@ -57,7 +58,9 @@ export class WebhookActionsController {
     return { action };
   }
 
+  /** PUT es el verbo canónico; PATCH se acepta por compatibilidad con clientes antiguos. */
   @Put('agents/:agentId/webhook-actions/:actionId')
+  @Patch('agents/:agentId/webhook-actions/:actionId')
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Actualizar acción webhook' })
   @ApiParam({ name: 'agentId', type: Number })
