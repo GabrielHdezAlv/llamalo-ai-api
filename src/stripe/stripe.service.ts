@@ -14,6 +14,8 @@ import { EmailService } from '../auth/email.service';
 
 const PAID_PLANS: PlanType[] = ['starter', 'growth', 'scale'];
 
+type BillingInterval = 'month' | 'year';
+
 /** Cobro pendiente: mantenemos plan e id de suscripción para que el usuario pague vía portal. */
 const STRIPE_BLOCKED_SUB_STATUSES = new Set([
   'past_due',
@@ -66,17 +68,23 @@ export class StripeService {
     return this.client;
   }
 
-  private priceIdForPlan(plan: PlanType): string {
-    const envMap: Record<PlanType, string | undefined> = {
-      gratis: undefined,
+  private priceIdForPlan(plan: PlanType, interval: BillingInterval): string {
+    const monthly: Record<Exclude<PlanType, 'gratis'>, string | undefined> = {
       starter: process.env.STRIPE_PRICE_STARTER,
       growth: process.env.STRIPE_PRICE_GROWTH,
       scale: process.env.STRIPE_PRICE_SCALE,
     };
-    const id = envMap[plan];
+    const annual: Record<Exclude<PlanType, 'gratis'>, string | undefined> = {
+      starter: process.env.STRIPE_PRICE_STARTER_ANNUAL,
+      growth: process.env.STRIPE_PRICE_GROWTH_ANNUAL,
+      scale: process.env.STRIPE_PRICE_SCALE_ANNUAL,
+    };
+    const id =
+      interval === 'year' ? annual[plan as keyof typeof annual] : monthly[plan as keyof typeof monthly];
     if (!id?.trim()) {
+      const suffix = interval === 'year' ? '_ANNUAL' : '';
       throw new BadRequestException(
-        `No hay STRIPE_PRICE configurado para el plan: ${plan}`,
+        `No hay STRIPE_PRICE${suffix} configurado para el plan: ${plan}`,
       );
     }
     return id.trim();
@@ -93,6 +101,8 @@ export class StripeService {
     successUrl: string;
     cancelUrl: string;
     starterMode?: 'trial' | 'pay';
+    /** Por defecto mensual; `year` usa STRIPE_PRICE_*_ANNUAL. */
+    billingInterval?: BillingInterval;
   }): Promise<{ url: string | null; sessionId: string }> {
     if (!PAID_PLANS.includes(params.plan)) {
       throw new BadRequestException('Plan no válido para checkout');
@@ -106,7 +116,16 @@ export class StripeService {
       );
     }
 
-    const priceId = this.priceIdForPlan(params.plan);
+    let billingInterval: BillingInterval = 'month';
+    if (params.billingInterval != null) {
+      if (params.billingInterval !== 'month' && params.billingInterval !== 'year') {
+        throw new BadRequestException(
+          'billingInterval debe ser month o year',
+        );
+      }
+      billingInterval = params.billingInterval;
+    }
+    const priceId = this.priceIdForPlan(params.plan, billingInterval);
     const stripe = this.getStripe();
 
     const starterTrial =
@@ -610,9 +629,17 @@ export class StripeService {
 
   private planFromPriceId(priceId: string): PlanType | undefined {
     const p = priceId.trim();
-    if (p === process.env.STRIPE_PRICE_STARTER?.trim()) return 'starter';
-    if (p === process.env.STRIPE_PRICE_GROWTH?.trim()) return 'growth';
-    if (p === process.env.STRIPE_PRICE_SCALE?.trim()) return 'scale';
+    const ids: Array<{ id: string | undefined; plan: PlanType }> = [
+      { id: process.env.STRIPE_PRICE_STARTER, plan: 'starter' },
+      { id: process.env.STRIPE_PRICE_GROWTH, plan: 'growth' },
+      { id: process.env.STRIPE_PRICE_SCALE, plan: 'scale' },
+      { id: process.env.STRIPE_PRICE_STARTER_ANNUAL, plan: 'starter' },
+      { id: process.env.STRIPE_PRICE_GROWTH_ANNUAL, plan: 'growth' },
+      { id: process.env.STRIPE_PRICE_SCALE_ANNUAL, plan: 'scale' },
+    ];
+    for (const row of ids) {
+      if (row.id?.trim() === p) return row.plan;
+    }
     return undefined;
   }
 }

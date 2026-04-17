@@ -55,6 +55,8 @@ export class StripeController {
       cancelUrl: string;
       /** Solo plan `starter`: `trial` (7 días, tarjeta obligatoria; cobro al acabar si no cancelan) o `pay`. */
       starterMode?: 'trial' | 'pay';
+      /** `year` usa precios anuales (`STRIPE_PRICE_*_ANNUAL`). Por defecto mensual. */
+      billingInterval?: 'month' | 'year';
     },
   ) {
     return this.stripeService.createCheckoutSession({
@@ -63,6 +65,7 @@ export class StripeController {
       successUrl: body.successUrl,
       cancelUrl: body.cancelUrl,
       starterMode: body.starterMode,
+      billingInterval: body.billingInterval,
     });
   }
 
