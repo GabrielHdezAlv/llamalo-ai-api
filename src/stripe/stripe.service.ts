@@ -619,12 +619,24 @@ export class StripeService {
       return;
     }
 
+    /**
+     * El plan debe inferirse del precio activo de la suscripción. `metadata.plan` solo se fija en
+     * Checkout y no lo actualiza el Customer Portal al cambiar de plan, así que priorizar metadata
+     * dejaba Firestore en starter tras upgrade a Growth vía portal.
+     */
     const planFromSub = (): PlanType | undefined => {
-      let plan = sub.metadata?.plan as PlanType | undefined;
-      if (!plan && sub.items?.data?.[0]?.price?.id) {
-        plan = this.planFromPriceId(sub.items.data[0].price.id);
+      const priceId = sub.items?.data?.[0]?.price?.id;
+      if (priceId) {
+        const fromPrice = this.planFromPriceId(priceId);
+        if (fromPrice && PLAN_LIMITS[fromPrice]) {
+          return fromPrice;
+        }
       }
-      return plan;
+      const fromMeta = sub.metadata?.plan as PlanType | undefined;
+      if (fromMeta && PLAN_LIMITS[fromMeta]) {
+        return fromMeta;
+      }
+      return undefined;
     };
 
     if (STRIPE_BLOCKED_SUB_STATUSES.has(status)) {
