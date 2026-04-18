@@ -94,6 +94,41 @@ export class StripeService {
   }
 
   /**
+   * Precio metered (minutos extra) alineado con el plan base y el periodo de facturación.
+   * Requiere STRIPE_PRICE_{PLAN}_METERED y STRIPE_PRICE_{PLAN}_METERED_ANNUAL en env.
+   */
+  private meteredPriceIdForPlan(
+    plan: PlanType,
+    interval: BillingInterval,
+  ): string {
+    type PaidCatalog = Exclude<PlanType, 'gratis' | 'sin_plan'>;
+    const monthly: Record<PaidCatalog, string | undefined> = {
+      starter: process.env.STRIPE_PRICE_STARTER_METERED,
+      growth: process.env.STRIPE_PRICE_GROWTH_METERED,
+      scale: process.env.STRIPE_PRICE_SCALE_METERED,
+    };
+    const annual: Record<PaidCatalog, string | undefined> = {
+      starter: process.env.STRIPE_PRICE_STARTER_METERED_ANNUAL,
+      growth: process.env.STRIPE_PRICE_GROWTH_METERED_ANNUAL,
+      scale: process.env.STRIPE_PRICE_SCALE_METERED_ANNUAL,
+    };
+    const id =
+      interval === 'year'
+        ? annual[plan as PaidCatalog]
+        : monthly[plan as PaidCatalog];
+    if (!id?.trim()) {
+      const hint =
+        interval === 'year'
+          ? 'STRIPE_PRICE_*_METERED_ANNUAL'
+          : 'STRIPE_PRICE_*_METERED';
+      throw new BadRequestException(
+        `No hay precio metered (${hint}) configurado para el plan: ${plan}`,
+      );
+    }
+    return id.trim();
+  }
+
+  /**
    * Starter: `starterMode: 'trial'` → 7 días en Stripe con tarjeta obligatoria en Checkout para poder
    * cobrar al finalizar la prueba si el usuario no cancela. `pay` → suscripción sin trial.
    * Siempre `payment_method_collection: 'always'`.
@@ -129,6 +164,10 @@ export class StripeService {
       billingInterval = params.billingInterval;
     }
     const priceId = this.priceIdForPlan(params.plan, billingInterval);
+    const meteredPriceId = this.meteredPriceIdForPlan(
+      params.plan,
+      billingInterval,
+    );
     const stripe = this.getStripe();
 
     const userSnap = await this.firestore
@@ -163,7 +202,10 @@ export class StripeService {
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [
+        { price: priceId, quantity: 1 },
+        { price: meteredPriceId, quantity: 1 },
+      ],
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
       client_reference_id: params.userId,
@@ -648,11 +690,16 @@ export class StripeService {
      * dejaba Firestore en starter tras upgrade a Growth vía portal.
      */
     const planFromSub = (): PlanType | undefined => {
-      const priceId = sub.items?.data?.[0]?.price?.id;
-      if (priceId) {
-        const fromPrice = this.planFromPriceId(priceId);
-        if (fromPrice && PLAN_LIMITS[fromPrice]) {
-          return fromPrice;
+      const items = sub.items?.data;
+      if (items?.length) {
+        for (const item of items) {
+          const priceId = item.price?.id;
+          if (priceId) {
+            const fromPrice = this.planFromPriceId(priceId);
+            if (fromPrice && PLAN_LIMITS[fromPrice]) {
+              return fromPrice;
+            }
+          }
         }
       }
       const fromMeta = sub.metadata?.plan as PlanType | undefined;
