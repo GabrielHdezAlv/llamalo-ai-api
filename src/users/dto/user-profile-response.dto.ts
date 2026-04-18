@@ -192,6 +192,20 @@ export class UserProfileResponseDto {
   @ApiProperty({
     required: false,
     description:
+      'true si la suscripción terminó (cancelación): el cliente debe volver a contratar (pantalla dedicada).',
+  })
+  billingChurnLocked?: boolean;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'false = no ofrecer trial Starter de 7 días (ya pagó o churn). Ausente/true = elegible.',
+  })
+  stripeStarterTrialEligible?: boolean;
+
+  @ApiProperty({
+    required: false,
+    description:
       'false si aún debe elegir plan o prueba tras registro; true si ya eligió o es cuenta antigua',
   })
   planSelectionCompleted?: boolean;

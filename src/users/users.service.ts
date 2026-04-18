@@ -89,6 +89,10 @@ interface UserData {
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
   stripeSubscriptionStatus?: string | null;
+  /** Suscripción cancelada: debe re-suscribirse (pantalla dedicada, sin trial Starter). */
+  billingChurnLocked?: boolean;
+  /** false = no ofrecer 7 días Starter (ya pagó o churn). Ausente/true = elegible trial. */
+  stripeStarterTrialEligible?: boolean;
   planSelectionCompleted?: boolean;
   /** Respuestas registro onboarding (pasos 1–2) */
   onboardingRegistration?: {
@@ -170,6 +174,8 @@ export type UserProfileResponse = {
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
   stripeSubscriptionStatus?: string | null;
+  billingChurnLocked?: boolean;
+  stripeStarterTrialEligible?: boolean;
   /** false = pendiente elegir plan o prueba tras registro; ausente/true = ya elegido (legacy = completado) */
   planSelectionCompleted?: boolean;
   /** Resuelta: perfil o `METRICS_CALENDAR_TIMEZONE` / Europe/Madrid */
@@ -325,6 +331,8 @@ export class UsersService {
         stripeCustomerId: userData?.stripeCustomerId ?? null,
         stripeSubscriptionId: userData?.stripeSubscriptionId ?? null,
         stripeSubscriptionStatus: userData?.stripeSubscriptionStatus ?? null,
+        billingChurnLocked: userData?.billingChurnLocked === true,
+        stripeStarterTrialEligible: userData?.stripeStarterTrialEligible !== false,
         planSelectionCompleted: userData?.planSelectionCompleted !== false,
         metricsCalendarTimezone: this.resolveDisplayMetricsTimezone(userData),
       };

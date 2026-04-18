@@ -128,9 +128,24 @@ export class StripeService {
     const priceId = this.priceIdForPlan(params.plan, billingInterval);
     const stripe = this.getStripe();
 
+    const userSnap = await this.firestore
+      .collection('users')
+      .doc(params.userId)
+      .get();
+    const fd = userSnap.exists
+      ? (userSnap.data() as {
+          stripeCustomerId?: string | null;
+          stripeStarterTrialEligible?: boolean;
+        })
+      : null;
+    const existingCustomerId = fd?.stripeCustomerId?.trim();
+    /** `false` si ya pagó o churn; ausente/true = puede trial Starter (solo cuentas nuevas). */
+    const starterTrialEligible = fd?.stripeStarterTrialEligible !== false;
+
     const starterTrial =
       params.plan === 'starter' &&
-      (params.starterMode ?? 'pay') === 'trial';
+      (params.starterMode ?? 'pay') === 'trial' &&
+      starterTrialEligible;
 
     const subscriptionData: {
       metadata: { userId: string; plan: string };
@@ -156,6 +171,7 @@ export class StripeService {
       subscription_data: subscriptionData,
       /** Trial €0 primero: igual exigir tarjeta para cargar al día 7 si siguen suscritos. */
       payment_method_collection: 'always',
+      ...(existingCustomerId ? { customer: existingCustomerId } : {}),
     });
     return { url: session.url, sessionId: session.id };
   }
@@ -529,6 +545,8 @@ export class StripeService {
       planSelectionCompleted: true,
       updatedAt: new Date(),
       trialEndsAt: admin.firestore.FieldValue.delete(),
+      billingChurnLocked: false,
+      stripeStarterTrialEligible: false,
     };
 
     await this.firestore
@@ -612,6 +630,8 @@ export class StripeService {
             minutesLimit: PLAN_LIMITS.gratis.minutesLimit,
             stripeSubscriptionId: null,
             stripeSubscriptionStatus: null,
+            billingChurnLocked: true,
+            stripeStarterTrialEligible: false,
             updatedAt: new Date(),
           },
           { merge: true },
@@ -658,6 +678,8 @@ export class StripeService {
             stripeSubscriptionId: sub.id,
             stripeSubscriptionStatus: status,
             planSelectionCompleted: true,
+            billingChurnLocked: false,
+            stripeStarterTrialEligible: false,
             updatedAt: new Date(),
           },
           { merge: true },
@@ -681,6 +703,8 @@ export class StripeService {
           stripeSubscriptionId: sub.id,
           stripeSubscriptionStatus: status,
           planSelectionCompleted: true,
+          billingChurnLocked: false,
+          stripeStarterTrialEligible: false,
           updatedAt: new Date(),
         },
         { merge: true },
