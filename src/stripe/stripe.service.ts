@@ -204,7 +204,8 @@ export class StripeService {
       mode: 'subscription',
       line_items: [
         { price: priceId, quantity: 1 },
-        { price: meteredPriceId, quantity: 1 },
+        /** Metered: Stripe rechaza `quantity` en Checkout (usage_type metered). */
+        { price: meteredPriceId },
       ],
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
