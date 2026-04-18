@@ -69,18 +69,21 @@ export class StripeService {
   }
 
   private priceIdForPlan(plan: PlanType, interval: BillingInterval): string {
-    const monthly: Record<Exclude<PlanType, 'gratis'>, string | undefined> = {
+    type PaidCatalog = Exclude<PlanType, 'gratis' | 'sin_plan'>;
+    const monthly: Record<PaidCatalog, string | undefined> = {
       starter: process.env.STRIPE_PRICE_STARTER,
       growth: process.env.STRIPE_PRICE_GROWTH,
       scale: process.env.STRIPE_PRICE_SCALE,
     };
-    const annual: Record<Exclude<PlanType, 'gratis'>, string | undefined> = {
+    const annual: Record<PaidCatalog, string | undefined> = {
       starter: process.env.STRIPE_PRICE_STARTER_ANNUAL,
       growth: process.env.STRIPE_PRICE_GROWTH_ANNUAL,
       scale: process.env.STRIPE_PRICE_SCALE_ANNUAL,
     };
     const id =
-      interval === 'year' ? annual[plan as keyof typeof annual] : monthly[plan as keyof typeof monthly];
+      interval === 'year'
+        ? annual[plan as PaidCatalog]
+        : monthly[plan as PaidCatalog];
     if (!id?.trim()) {
       const suffix = interval === 'year' ? '_ANNUAL' : '';
       throw new BadRequestException(
@@ -626,8 +629,8 @@ export class StripeService {
         .doc(userId)
         .set(
           {
-            plan: 'gratis',
-            minutesLimit: PLAN_LIMITS.gratis.minutesLimit,
+            plan: 'sin_plan',
+            minutesLimit: PLAN_LIMITS.sin_plan.minutesLimit,
             stripeSubscriptionId: null,
             stripeSubscriptionStatus: null,
             billingChurnLocked: true,

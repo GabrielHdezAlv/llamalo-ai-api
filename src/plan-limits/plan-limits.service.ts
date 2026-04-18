@@ -82,6 +82,9 @@ export class PlanLimitsService {
       return { ...EXPIRED_TRIAL_TECH_LIMITS };
     }
     const plan = normalizePlanSlug(userData?.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      return { ...PLAN_LIMITS.sin_plan };
+    }
     if (plan !== 'gratis') {
       return { ...PLAN_LIMITS[plan] };
     }
@@ -107,6 +110,9 @@ export class PlanLimitsService {
       return 0;
     }
     const plan = normalizePlanSlug(userData?.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      return PLAN_LIMITS.sin_plan.minutesLimit;
+    }
     if (plan !== 'gratis') {
       const m = userData?.minutesLimit;
       if (typeof m === 'number' && !Number.isNaN(m)) return m;
@@ -189,6 +195,11 @@ export class PlanLimitsService {
       throw new NotFoundException('Usuario no encontrado');
     }
     const plan = normalizePlanSlug(userData.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
     if (plan === 'gratis' && !this.isTrialActive(userData)) {
       throw new ForbiddenException(
         'Tu periodo de prueba ha terminado. Mejora tu plan para continuar.',
@@ -258,7 +269,13 @@ export class PlanLimitsService {
     if (!userData) {
       throw new NotFoundException('Usuario no encontrado');
     }
-    if (normalizePlanSlug(userData.plan as string | undefined) === 'gratis' && !this.isTrialActive(userData)) {
+    const p = normalizePlanSlug(userData.plan as string | undefined);
+    if (p === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
+    if (p === 'gratis' && !this.isTrialActive(userData)) {
       throw new ForbiddenException(
         'Tu periodo de prueba ha terminado. Mejora tu plan para continuar.',
       );
@@ -294,6 +311,11 @@ export class PlanLimitsService {
       throw new NotFoundException('Usuario no encontrado');
     }
     const plan = normalizePlanSlug(userData.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
     if (plan === 'gratis' && !this.isTrialActive(userData)) {
       throw new ForbiddenException(
         'Tu periodo de prueba ha terminado. Mejora tu plan para usar acciones Make (webhooks).',
@@ -349,6 +371,11 @@ export class PlanLimitsService {
       throw new NotFoundException('Usuario no encontrado');
     }
     const plan = normalizePlanSlug(userData.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
     if (plan === 'gratis' && !this.isTrialActive(userData)) {
       throw new ForbiddenException(
         'Tu periodo de prueba ha terminado. Mejora tu plan para continuar.',

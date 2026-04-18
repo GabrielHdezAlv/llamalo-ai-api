@@ -127,11 +127,42 @@ export const PLAN_LIMITS = {
     makeWebhookActionsMax: 50,
     makeWebhookExecutionsPerCallMax: 10,
   },
+  /**
+   * Suscripción cancelada / sin plan activo: no es «gratis» con trial; debe re-suscribirse.
+   * Mismos límites técnicos que trial expirado (acceso bloqueado hasta contratar).
+   */
+  sin_plan: {
+    name: 'Sin plan',
+    price: 0,
+    currency: 'EUR',
+    minutesLimit: 0,
+    extraPerMinuteEur: 0,
+    agents: 0,
+    indexedUrls: 0,
+    documentsMax: 0,
+    maxDocSizeMb: 0,
+    storageTotalMb: 0,
+    panelAnalytics: '—',
+    integrations: '—',
+    support: '—',
+    betaAccess: false,
+    makeWebhookActionsMax: 0,
+    makeWebhookExecutionsPerCallMax: 0,
+  },
 } as const satisfies Record<string, PlanLimitsEntry>;
 
 export type PlanType = keyof typeof PLAN_LIMITS;
 
 export const DEFAULT_PLAN: PlanType = 'gratis';
+
+/** Trial gratis agotado o suscripción cancelada (sin plan activo). */
+export function isBlockedWithoutPaidPlan(
+  plan: PlanType,
+  isTrialActive: boolean,
+): boolean {
+  if (plan === 'sin_plan') return true;
+  return plan === 'gratis' && !isTrialActive;
+}
 
 /** Valores antiguos de `user.plan` que equivalen al plan gratuito */
 export const LEGACY_FREE_PLAN_SLUGS = ['basic', 'free'] as const;
