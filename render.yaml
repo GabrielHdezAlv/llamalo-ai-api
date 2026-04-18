@@ -38,6 +38,12 @@ services:
         sync: false
       - key: STRIPE_PRICE_SCALE_METERED_ANNUAL
         sync: false
+      - key: STRIPE_METER_EVENT_NAME_STARTER
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_GROWTH
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_SCALE
+        sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY
@@ -162,6 +168,12 @@ services:
       - key: STRIPE_PRICE_GROWTH_METERED_ANNUAL
         sync: false
       - key: STRIPE_PRICE_SCALE_METERED_ANNUAL
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_STARTER
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_GROWTH
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_SCALE
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false

@@ -9,6 +9,8 @@ import { getFirestore } from '../firebase/firebase.config';
 import {
   PLAN_LIMITS,
   PlanType,
+  isUnlimitedPlan,
+  normalizePlanSlug,
 } from '../common/constants/plans.constants';
 import { EmailService } from '../auth/email.service';
 
@@ -330,13 +332,13 @@ export class StripeService {
       throw new BadRequestException('Falta cabecera stripe-signature');
     }
     const stripe = this.getStripe();
-    let event: { type: string; data: { object: unknown } };
+    let event: { id: string; type: string; data: { object: unknown } };
     try {
       event = stripe.webhooks.constructEvent(
         rawBody,
         signature,
         secret,
-      ) as { type: string; data: { object: unknown } };
+      ) as { id: string; type: string; data: { object: unknown } };
     } catch (err) {
       this.logger.warn(`Webhook Stripe firma inválida: ${(err as Error).message}`);
       throw new BadRequestException('Firma webhook inválida');
@@ -370,6 +372,13 @@ export class StripeService {
       case 'invoice.payment_succeeded': {
         await this.sendInvoiceReceiptToCustomer(
           event.data.object as { id: string },
+        );
+        break;
+      }
+      case 'invoice.payment_failed': {
+        await this.handleInvoicePaymentFailed(
+          event.data.object as { id: string },
+          event.id,
         );
         break;
       }
@@ -485,6 +494,129 @@ export class StripeService {
       }
       this.logger.error(
         `Error enviando recibo de factura ${invoice.id}: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Cobro rechazado: sincroniza suscripción (p. ej. past_due) y envía un correo con enlace a la factura.
+   * Idempotencia por `eventId` (Stripe puede reenviar el mismo evento).
+   */
+  private async handleInvoicePaymentFailed(
+    invoicePayload: { id: string },
+    eventId: string,
+  ): Promise<void> {
+    const stripe = this.getStripe();
+    let invoice: Awaited<
+      ReturnType<InstanceType<typeof Stripe>['invoices']['retrieve']>
+    >;
+    try {
+      invoice = await stripe.invoices.retrieve(invoicePayload.id, {
+        expand: ['customer', 'subscription'],
+      });
+    } catch (e) {
+      this.logger.warn(
+        `payment_failed: no se pudo recuperar factura ${invoicePayload.id}: ${(e as Error).message}`,
+      );
+      return;
+    }
+
+    const subId = this.subscriptionIdFromInvoice(invoice);
+    if (subId) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(subId);
+        await this.syncSubscriptionToUser(sub as unknown as SubscriptionLike);
+      } catch (e) {
+        this.logger.warn(
+          `payment_failed: no se pudo sincronizar suscripción ${subId}: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    const lockRef = this.firestore
+      .collection('stripeInvoicePaymentFailedEmails')
+      .doc(eventId);
+    try {
+      await lockRef.create({
+        startedAt: admin.firestore.FieldValue.serverTimestamp(),
+        invoiceId: invoice.id,
+      });
+    } catch (e) {
+      if (this.isFirestoreAlreadyExists(e)) {
+        this.logger.log(
+          `payment_failed: evento ${eventId} ya procesado; omitiendo email`,
+        );
+        return;
+      }
+      throw e;
+    }
+
+    let to = invoice.customer_email ?? null;
+    if (!to && invoice.customer && typeof invoice.customer === 'object') {
+      const c = invoice.customer as { deleted?: boolean; email?: string | null };
+      if (!c.deleted && c.email) {
+        to = c.email;
+      }
+    }
+
+    if (!to?.trim() && subId) {
+      to = await this.emailFromSubscriptionUserMetadata(
+        stripe,
+        invoice,
+        subId,
+      );
+    }
+
+    if (!to?.trim()) {
+      this.logger.warn(
+        `Factura ${invoice.id} payment_failed: sin email; no se envía aviso`,
+      );
+      try {
+        await lockRef.delete();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const currency = (invoice.currency || 'eur').toUpperCase();
+    const amountCents = invoice.amount_due ?? 0;
+    let amountFormatted: string;
+    try {
+      amountFormatted = new Intl.NumberFormat('es-ES', {
+        style: 'currency',
+        currency: currency.length === 3 ? currency : 'EUR',
+      }).format(amountCents / 100);
+    } catch {
+      amountFormatted = `${(amountCents / 100).toFixed(2)} ${currency}`;
+    }
+
+    try {
+      await this.emailService.sendStripePaymentFailedEmail({
+        to: to.trim(),
+        invoiceNumber: invoice.number ?? null,
+        amountDueFormatted: amountFormatted,
+        currency,
+        hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+      });
+      await lockRef.set(
+        {
+          sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          to: to.trim(),
+        },
+        { merge: true },
+      );
+      this.logger.log(
+        `Aviso payment_failed factura ${invoice.id} enviado a ${to.trim()}`,
+      );
+    } catch (e) {
+      try {
+        await lockRef.delete();
+      } catch {
+        /* ignore */
+      }
+      this.logger.error(
+        `Error enviando aviso payment_failed ${invoice.id}: ${(e as Error).message}`,
       );
     }
   }
@@ -776,5 +908,118 @@ export class StripeService {
       if (row.id?.trim() === p) return row.plan;
     }
     return undefined;
+  }
+
+  /**
+   * `event_name` del medidor en Stripe Billing (debe coincidir con el medidor ligado al precio metered).
+   * Si no hay env, no se envía uso (no rompe el sync de métricas).
+   */
+  private meterEventNameForPlan(plan: PlanType): string | null {
+    type Paid = Exclude<PlanType, 'gratis' | 'sin_plan'>;
+    const map: Record<Paid, string | undefined> = {
+      starter: process.env.STRIPE_METER_EVENT_NAME_STARTER?.trim(),
+      growth: process.env.STRIPE_METER_EVENT_NAME_GROWTH?.trim(),
+      scale: process.env.STRIPE_METER_EVENT_NAME_SCALE?.trim(),
+    };
+    const v = map[plan as Paid];
+    return v || null;
+  }
+
+  /**
+   * Tras actualizar consumo mensual en Firestore: informa a Stripe Billing Meters el sobrepaso
+   * de minutos (delta) respecto al límite incluido del plan. Idempotente por mes vía `stripeMeteredReport`.
+   */
+  async reportMeteredOverageAfterUsageSync(params: {
+    userId: string;
+    monthKey: string;
+    usedMinutes: number;
+    plan?: string | null;
+    minutesLimit?: number | null;
+    stripeCustomerId?: string | null;
+  }): Promise<void> {
+    try {
+      if (isUnlimitedPlan(params.plan ?? undefined)) {
+        return;
+      }
+      const planNorm = normalizePlanSlug(params.plan ?? undefined);
+      if (!PAID_PLANS.includes(planNorm as (typeof PAID_PLANS)[number])) {
+        return;
+      }
+      const cust = params.stripeCustomerId?.trim();
+      if (!cust) {
+        return;
+      }
+      const eventName = this.meterEventNameForPlan(planNorm);
+      if (!eventName) {
+        return;
+      }
+      const lim =
+        params.minutesLimit != null &&
+        Number.isFinite(Number(params.minutesLimit))
+          ? Number(params.minutesLimit)
+          : (PLAN_LIMITS[planNorm]?.minutesLimit ?? 0);
+      const overage = Math.max(0, Math.ceil(params.usedMinutes) - lim);
+
+      const ref = this.firestore.collection('users').doc(params.userId);
+      const snap = await ref.get();
+      if (!snap.exists) {
+        return;
+      }
+      const d = snap.data() as {
+        stripeMeteredReport?: { monthKey: string; reportedOverageTotal: number };
+      };
+      let mr = d.stripeMeteredReport;
+      if (!mr || mr.monthKey !== params.monthKey) {
+        mr = { monthKey: params.monthKey, reportedOverageTotal: 0 };
+      }
+      const reported = mr.reportedOverageTotal ?? 0;
+      if (overage < reported) {
+        await ref.set(
+          {
+            stripeMeteredReport: {
+              monthKey: params.monthKey,
+              reportedOverageTotal: overage,
+            },
+            updatedAt: new Date(),
+          },
+          { merge: true },
+        );
+        this.logger.warn(
+          `Sobrepaso minutos bajó (${reported}→${overage}) user=${params.userId}; ajuste local sin evento negativo en Stripe`,
+        );
+        return;
+      }
+      const delta = overage - reported;
+      if (delta <= 0) {
+        return;
+      }
+
+      const stripe = this.getStripe();
+      await stripe.billing.meterEvents.create({
+        event_name: eventName,
+        payload: {
+          stripe_customer_id: cust,
+          value: String(delta),
+        },
+        identifier: `${params.userId}_${params.monthKey}_ov_${overage}`,
+      });
+      await ref.set(
+        {
+          stripeMeteredReport: {
+            monthKey: params.monthKey,
+            reportedOverageTotal: overage,
+          },
+          updatedAt: new Date(),
+        },
+        { merge: true },
+      );
+      this.logger.log(
+        `Meter event ${eventName} +${delta} min (overage=${overage}) user=${params.userId}`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `reportMeteredOverageAfterUsageSync user=${params.userId}: ${(e as Error).message}`,
+      );
+    }
   }
 }

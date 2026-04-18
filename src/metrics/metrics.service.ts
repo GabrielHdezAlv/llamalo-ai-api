@@ -17,6 +17,7 @@ import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import { computeAutoExtraMinutesAfterSync } from '../common/utils/minute-quota.util';
 import { ProfileEventsService } from '../profile-events/profile-events.service';
 import { PlanLimitsService } from '../plan-limits/plan-limits.service';
+import { StripeService } from '../stripe/stripe.service';
 import {
   TwilioDetailedMetricsResponseDto,
   ComparacionDiaAnteriorDto,
@@ -66,6 +67,7 @@ export class MetricsService {
     private readonly mailerLiteService: MailerLiteService,
     private readonly profileEventsService: ProfileEventsService,
     private readonly planLimitsService: PlanLimitsService,
+    private readonly stripeService: StripeService,
   ) {}
 
   /**
@@ -1015,6 +1017,7 @@ export class MetricsService {
       minutesLimit?: number;
       extraMinutes?: number;
       minutesByMonth?: Record<string, number>;
+      stripeCustomerId?: string;
     };
 
     const prevRaw = userData.minutesByMonth?.[monthKey];
@@ -1033,6 +1036,14 @@ export class MetricsService {
     const extraChanged = newExtraMinutes !== currentExtra;
 
     if (!minutesChanged && !extraChanged) {
+      void this.stripeService.reportMeteredOverageAfterUsageSync({
+        userId,
+        monthKey,
+        usedMinutes: totalMinutes,
+        plan: userData.plan,
+        minutesLimit: userData.minutesLimit,
+        stripeCustomerId: userData.stripeCustomerId,
+      });
       return;
     }
 
@@ -1056,6 +1067,15 @@ export class MetricsService {
     if (extraChanged || minutesChanged) {
       this.profileEventsService.notifyProfileUpdated(userId);
     }
+
+    void this.stripeService.reportMeteredOverageAfterUsageSync({
+      userId,
+      monthKey,
+      usedMinutes: totalMinutes,
+      plan: userData.plan,
+      minutesLimit: userData.minutesLimit,
+      stripeCustomerId: userData.stripeCustomerId,
+    });
   }
 
   /**

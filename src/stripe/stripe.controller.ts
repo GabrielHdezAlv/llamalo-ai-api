@@ -26,7 +26,7 @@ export class StripeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Webhook Stripe (firma HMAC). Requiere rawBody en middleware. Eventos: checkout.session.completed, customer.subscription.*, subscription_schedule.updated|completed|released (downgrade programado vía portal), invoice.paid o invoice.payment_succeeded (recibo Resend).',
+      'Webhook Stripe (firma HMAC). Requiere rawBody en middleware. Eventos: checkout.session.completed, customer.subscription.*, subscription_schedule.updated|completed|released (downgrade programado vía portal), invoice.paid o invoice.payment_succeeded (recibo), invoice.payment_failed (aviso cobro + sync suscripción).',
   })
   async webhook(
     @Req() req: Request & { rawBody?: Buffer },

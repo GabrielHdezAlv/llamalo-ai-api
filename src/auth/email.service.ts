@@ -286,6 +286,58 @@ export class EmailService {
   }
 
   /**
+   * Aviso cuando Stripe no puede cobrar una factura (invoice.payment_failed).
+   */
+  async sendStripePaymentFailedEmail(params: {
+    to: string;
+    invoiceNumber: string | null;
+    amountDueFormatted: string;
+    currency: string;
+    hostedInvoiceUrl: string | null;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    const { to, invoiceNumber, amountDueFormatted, hostedInvoiceUrl } = params;
+    const subject = `Problema con el pago — Llamalo AI${invoiceNumber ? ` (${invoiceNumber})` : ''}`;
+    const lines: string[] = [
+      `No se ha podido cobrar el importe pendiente: ${amountDueFormatted} ${params.currency.toUpperCase()}.`,
+      'Actualiza tu método de pago o revisa la factura para seguir usando el servicio sin interrupciones.',
+    ];
+    if (hostedInvoiceUrl) {
+      lines.push(`Gestionar pago: ${hostedInvoiceUrl}`);
+    }
+    lines.push('Si ya regularizaste el pago, ignora este mensaje.');
+    const text = lines.join('\n');
+
+    const safeNum = invoiceNumber
+      ? String(invoiceNumber).replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      : '';
+    const payBlock = hostedInvoiceUrl
+      ? `<p><a href="${hostedInvoiceUrl}" style="display:inline-block;background:#b45309;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Revisar factura y pago</a></p>`
+      : '';
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #92400e; font-size: 20px;">No hemos podido cobrar tu última factura</h1>
+        <p style="color: #444; line-height: 1.6;">
+          El cobro no se ha completado${safeNum ? ` (factura <strong>${safeNum}</strong>)` : ''}.
+          Mientras la factura siga impagada, el acceso a Llamalo AI puede quedar limitado según tu suscripción.
+        </p>
+        <p style="font-size: 18px; color: #111;"><strong>${amountDueFormatted}</strong>
+          <span style="color:#666;">${params.currency.toUpperCase()}</span> pendiente</p>
+        ${payBlock}
+        <p style="color: #666; font-size: 14px;">
+          Actualiza tu tarjeta o método de pago desde el enlace anterior.
+        </p>
+        <p style="color: #999; font-size: 12px; margin-top: 24px;">
+          Dudas: team@llamalo.ai
+        </p>
+      </div>
+    `;
+
+    this.logger.log(`Aviso pago fallido Stripe → ${to}`);
+    return this.sendEmail(to, subject, html, text);
+  }
+
+  /**
    * Verificar conexión (Resend con API key o SMTP verify)
    */
   async verifyConnection(): Promise<boolean> {
