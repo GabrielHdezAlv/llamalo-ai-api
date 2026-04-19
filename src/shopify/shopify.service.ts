@@ -161,6 +161,23 @@ export class ShopifyService {
   constructor(private readonly cryptoService: CryptoService) {}
 
   /**
+   * URL base pública del API (OAuth `redirect_uri`, webhooks). Prioriza `APP_URL` siempre que esté definida,
+   * con o sin NODE_ENV=production (cada despliegue Render dev/preprod/prod debe tener su `APP_URL`).
+   * Debe coincidir carácter a carácter con "Allowed redirection URL(s)" en Shopify Partners.
+   */
+  getPublicApiBaseUrl(): string {
+    const explicit = process.env.APP_URL?.trim();
+    if (explicit) {
+      return explicit.replace(/\/$/, '');
+    }
+    if (process.env.NODE_ENV === 'production') {
+      return 'https://llamaloiabackend-5294.onrender.com';
+    }
+    const devTunnel = (process.env.NGROK_URL || 'http://localhost:3000').trim();
+    return devTunnel.replace(/\/$/, '');
+  }
+
+  /**
    * Scopes de Shopify por defecto (sin read_customers por cumplimiento GDPR)
    * Para agregar read_customers, configurar SHOPIFY_SCOPES en variables de entorno
    *
@@ -1074,11 +1091,7 @@ export class ShopifyService {
     accessToken: string,
   ): Promise<void> {
     try {
-      const baseUrl =
-        process.env.NODE_ENV === 'production'
-          ? process.env.APP_URL || 'https://llamaloiabackend-5294.onrender.com'
-          : process.env.NGROK_URL || 'http://localhost:3000'; // Requiere una URL pública
-
+      const baseUrl = this.getPublicApiBaseUrl();
       const webhookUrl = `${baseUrl}/shopify/webhooks`;
 
       await axios.post(

@@ -123,13 +123,8 @@ export class ShopifyController {
         query.returnTo,
       );
 
-      // Construir la URL de callback
-      const baseUrl =
-        process.env.NODE_ENV === 'production'
-          ? process.env.APP_URL || 'https://llamaloiabackend-5294.onrender.com'
-          : 'http://localhost:3000';
-
-      const redirectUri = `${baseUrl}/shopify/callback`;
+      // Misma URL que en Shopify Partners → Allowed redirection URL(s) (p. ej. …/shopify/callback).
+      const redirectUri = `${this.shopifyService.getPublicApiBaseUrl()}/shopify/callback`;
 
       // Obtener URL de autorización con oauthSessionId como state
       const authUrl = this.shopifyService.getAuthUrl(
