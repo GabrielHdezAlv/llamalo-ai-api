@@ -14,6 +14,7 @@ import {
   normalizePlanSlug,
 } from '../common/constants/plans.constants';
 import { EmailService } from '../auth/email.service';
+import { TwilioService } from '../twilio/twilio.service';
 
 const PAID_PLANS: PlanType[] = ['starter', 'growth', 'scale'];
 
@@ -62,7 +63,10 @@ export class StripeService {
   private readonly firestore = getFirestore();
   private client: InstanceType<typeof Stripe> | null = null;
 
-  constructor(private readonly emailService: EmailService) {}
+  constructor(
+    private readonly emailService: EmailService,
+    private readonly twilioService: TwilioService,
+  ) {}
 
   private getStripe(): InstanceType<typeof Stripe> {
     if (!this.client) {
@@ -192,6 +196,22 @@ export class StripeService {
     const existingCustomerId = fd?.stripeCustomerId?.trim();
     /** `false` si ya pagó o churn; ausente/true = puede trial Starter (solo cuentas nuevas). */
     const starterTrialEligible = fd?.stripeStarterTrialEligible !== false;
+
+    if (
+      this.twilioService.isStarterTrialRegistryEnforced() &&
+      params.plan === 'starter' &&
+      (params.starterMode ?? 'pay') === 'trial'
+    ) {
+      const twilioBlocks =
+        await this.twilioService.userHasTwilioSidBlockingStarterTrial(
+          params.userId,
+        );
+      if (twilioBlocks) {
+        throw new BadRequestException(
+          'Una cuenta de Twilio vinculada a tu perfil ya se utilizó en un periodo de prueba Starter con otra cuenta de Llamalo. Elimina esa cuenta Twilio del perfil o usa otro proyecto de Twilio para poder contratar con periodo de prueba; también puedes contratar Starter sin prueba.',
+        );
+      }
+    }
 
     const starterTrial =
       params.plan === 'starter' &&
@@ -855,6 +875,16 @@ export class StripeService {
         ? `Checkout Starter en trial: usuario ${userId} permanece en plan gratis hasta fin de trial Stripe.`
         : `Plan ${plan} aplicado a usuario ${userId} tras checkout.`,
     );
+
+    if (starterTrialing) {
+      await this.twilioService
+        .registerTwilioSidsAfterTrialOrStarterSubscription(userId)
+        .catch((e) =>
+          this.logger.warn(
+            `Registro Twilio trial registry tras checkout: ${(e as Error).message}`,
+          ),
+        );
+    }
   }
 
   /**
@@ -1018,6 +1048,13 @@ export class StripeService {
       this.logger.log(
         `Suscripción ${sub.id} en trialing (Starter): usuario ${userId} en plan gratis hasta fin de trial.`,
       );
+      await this.twilioService
+        .registerTwilioSidsAfterTrialOrStarterSubscription(userId)
+        .catch((e) =>
+          this.logger.warn(
+            `Registro Twilio trial registry (trialing): ${(e as Error).message}`,
+          ),
+        );
       return;
     }
 
@@ -1046,6 +1083,16 @@ export class StripeService {
         },
         { merge: true },
       );
+
+    if (plan === 'starter' && status === 'active') {
+      await this.twilioService
+        .registerTwilioSidsAfterTrialOrStarterSubscription(userId)
+        .catch((e) =>
+          this.logger.warn(
+            `Registro Twilio trial registry (Starter activo): ${(e as Error).message}`,
+          ),
+        );
+    }
   }
 
   private planFromPriceId(priceId: string): PlanType | undefined {

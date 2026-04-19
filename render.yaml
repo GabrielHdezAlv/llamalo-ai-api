@@ -11,6 +11,7 @@ services:
   - type: web
     name: llamaloiabackend-dev
     branch: dev
+    # ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY: en dev suele ser false o sin definir (pruebas Twilio libres).
     runtime: node
     repo: https://github.com/GabrielHdezAlv/llamalo-ai-api
     plan: starter
@@ -47,6 +48,8 @@ services:
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY
         sync: false
       - key: ALLOW_PLAN_CHANGE_MOCK
         sync: false
@@ -178,6 +181,8 @@ services:
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY
         sync: false
       - key: ALLOW_PLAN_CHANGE_MOCK
         sync: false
