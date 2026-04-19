@@ -1,20 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
-import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
+import { Resend } from 'resend';
 import { SystemLogsService, LogType } from '../system-logs/system-logs.service';
 
-/** MailerSend (gaxios) rechaza con { statusCode, body, headers }, no con Error. */
-function formatOutgoingEmailError(error: unknown): string {
-  if (error && typeof error === 'object' && 'statusCode' in error) {
-    const e = error as { statusCode?: number; body?: unknown };
-    const body = e.body;
-    if (body && typeof body === 'object' && body !== null && 'message' in body) {
-      return `HTTP ${e.statusCode}: ${String((body as { message: string }).message)}`;
-    }
-    try {
-      return `HTTP ${e.statusCode}: ${JSON.stringify(body)}`;
-    } catch {
-      return `HTTP ${e.statusCode}`;
+function formatOutboundEmailError(error: unknown): string {
+  if (error && typeof error === 'object' && error !== null) {
+    const e = error as { message?: string; name?: string };
+    if (typeof e.message === 'string') {
+      return e.name ? `${e.name}: ${e.message}` : e.message;
     }
   }
   if (error instanceof Error) return error.message;
@@ -25,75 +18,100 @@ function formatOutgoingEmailError(error: unknown): string {
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter?: nodemailer.Transporter;
-  private mailerSend?: MailerSend;
-  private useMailerSend = false;
+  private resend?: Resend;
+  private useResend = false;
 
   constructor(private readonly systemLogsService: SystemLogsService) {
-    // 1️⃣ Configurar MailerSend si hay API Key
-    if (process.env.MAILERSEND_API_KEY) {
-      this.logger.log('🚀 Inicializando servicio de email con MailerSend API...');
-      this.mailerSend = new MailerSend({
-        apiKey: process.env.MAILERSEND_API_KEY,
-      });
-      this.useMailerSend = true;
-    } 
-    // 2️⃣ Fallback a SMTP clásico
-    else if (process.env.SMTP_PASS) {
-      this.logger.log('📧 Inicializando servicio de email con Nodemailer (SMTP)...');
+    if (process.env.RESEND_API_KEY) {
+      this.logger.log('Inicializando envío de email con Resend API…');
+      this.resend = new Resend(process.env.RESEND_API_KEY);
+      this.useResend = true;
+    } else if (process.env.SMTP_PASS) {
+      this.logger.log('Inicializando servicio de email con Nodemailer (SMTP)…');
       this.transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: false, // true for 465, false for other ports
+        port: parseInt(process.env.SMTP_PORT || '587', 10),
+        secure: false,
         auth: {
           user: process.env.SMTP_USER || 'team@llamalo.ai',
           pass: process.env.SMTP_PASS,
         },
       });
-      this.logger.log(`SMTP service configurado con host: ${process.env.SMTP_HOST}`);
+      this.logger.log(`SMTP configurado (host: ${process.env.SMTP_HOST})`);
     } else {
-      this.logger.error('❌ Ni MAILERSEND_API_KEY ni SMTP_PASS configuradas - email no funcionará');
+      this.logger.error(
+        'Ni RESEND_API_KEY ni SMTP_PASS configuradas: el envío de email no funcionará',
+      );
     }
+  }
+
+  private getResendFromHeader(): string {
+    const email =
+      process.env.RESEND_FROM_EMAIL ||
+      process.env.SMTP_USER ||
+      'team@llamalo.ai';
+    const name = process.env.RESEND_FROM_NAME || 'Llamalo AI';
+    return `${name} <${email}>`;
   }
 
   /**
    * Helper unificado para enviar emails
    */
-  private async sendEmail(toEmail: string, subject: string, html: string, text: string): Promise<{ success: boolean; messageId?: string }> {
-    if (this.useMailerSend && this.mailerSend) {
+  private async sendEmail(
+    toEmail: string,
+    subject: string,
+    html: string,
+    text: string,
+  ): Promise<{ success: boolean; messageId?: string }> {
+    if (this.useResend && this.resend) {
       try {
-        const fromEmail = process.env.MAILERSEND_FROM_EMAIL || process.env.SMTP_USER || 'team@llamalo.ai';
-        const fromName = process.env.MAILERSEND_FROM_NAME || 'Llamalo AI';
-        
-        const sentFrom = new Sender(fromEmail, fromName);
-        const recipients = [new Recipient(toEmail)];
-        
-        const emailParams = new EmailParams()
-          .setFrom(sentFrom)
-          .setTo(recipients)
-          .setSubject(subject)
-          .setHtml(html)
-          .setText(text);
-
-        await this.mailerSend.email.send(emailParams);
-        return { success: true, messageId: 'enviado-por-mailersend' };
-      } catch (error) {
-        const detail = formatOutgoingEmailError(error);
-        this.logger.error(
-          `❌ Error enviando email vía MailerSend a ${toEmail}: ${detail}`,
-          error,
-        );
-
-        // Log en system_logs
-        await this.systemLogsService.logError({
-          type: LogType.MAILERSEND_ERROR,
-          message: `Error enviando email a ${toEmail}`,
-          reason: detail,
-          metadata: { toEmail, subject },
+        const result = await this.resend.emails.send({
+          from: this.getResendFromHeader(),
+          to: [toEmail],
+          subject,
+          html,
+          text,
         });
 
-        throw new Error(`Error con MailerSend: ${detail}`);
+        if (result.error) {
+          const detail = formatOutboundEmailError(result.error);
+          this.logger.error(
+            `Error enviando email vía Resend a ${toEmail}: ${detail}`,
+            result.error,
+          );
+          await this.systemLogsService.logError({
+            type: LogType.EMAIL_OUTBOUND_ERROR,
+            message: `Error enviando email a ${toEmail}`,
+            reason: detail,
+            metadata: { toEmail, subject, provider: 'resend' },
+          });
+          throw new Error(`Error con Resend: ${detail}`);
+        }
+
+        return {
+          success: true,
+          messageId: result.data?.id,
+        };
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Error con Resend')) {
+          throw error;
+        }
+        const detail = formatOutboundEmailError(error);
+        this.logger.error(
+          `Error enviando email vía Resend a ${toEmail}: ${detail}`,
+          error,
+        );
+        await this.systemLogsService.logError({
+          type: LogType.EMAIL_OUTBOUND_ERROR,
+          message: `Error enviando email a ${toEmail}`,
+          reason: detail,
+          metadata: { toEmail, subject, provider: 'resend' },
+        });
+        throw new Error(`Error con Resend: ${detail}`);
       }
-    } else if (this.transporter) {
+    }
+
+    if (this.transporter) {
       try {
         const mailOptions = {
           from: `"Llamalo AI" <${process.env.SMTP_USER || 'team@llamalo.ai'}>`,
@@ -105,19 +123,21 @@ export class EmailService {
         const info = await this.transporter.sendMail(mailOptions);
         return { success: true, messageId: info.messageId };
       } catch (error) {
-        this.logger.error(`❌ Error enviando email vía SMTP a ${toEmail}:`, error);
+        this.logger.error(`Error enviando email vía SMTP a ${toEmail}:`, error);
         throw new Error(`Error con SMTP: ${(error as Error).message}`);
       }
-    } else {
-      throw new Error('Servicio de email no está configurado (faltan credenciales de MailerSend o SMTP)');
     }
+
+    throw new Error(
+      'Servicio de email no está configurado (faltan RESEND_API_KEY o SMTP_PASS)',
+    );
   }
 
   /**
    * Enviar email de verificación de cuenta
    */
   async sendVerificationEmail(email: string, verificationToken: string) {
-    this.logger.log(`📧 Intentando enviar email de verificación a: ${email}`);
+    this.logger.log(`Intentando enviar email de verificación a: ${email}`);
 
     const subject = 'Tu código de verificación de Llamalo AI';
     const text = `Tu código de verificación es: ${verificationToken}`;
@@ -171,24 +191,171 @@ export class EmailService {
   }
 
   /**
-   * Verificar conexión con el servidor SMTP (o MailerSend)
+   * Código de 6 dígitos al iniciar sesión desde un dispositivo no registrado.
+   */
+  async sendDeviceVerificationEmail(email: string, code: string) {
+    this.logger.log(`Código de nuevo dispositivo para: ${email}`);
+
+    const subject = 'Nuevo dispositivo — código de verificación Llamalo AI';
+    const text = `Tu código para confirmar este dispositivo es: ${code}`;
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #333;">Confirmación de dispositivo</h1>
+        <p style="color: #666; line-height: 1.6;">
+          Alguien ha intentado iniciar sesión en Llamalo AI desde un dispositivo o navegador que aún no habíamos visto.
+          Si fuiste tú, introduce este código en la pantalla de verificación:
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <div style="background-color: #f3f4f6; color: #1f2937; padding: 15px 30px;
+                      border-radius: 8px; display: inline-block;
+                      font-weight: bold; font-size: 32px; letter-spacing: 4px;">
+            ${code}
+          </div>
+        </div>
+        <p style="color: #856404; font-size: 14px;">
+          El código caduca en 15 minutos. Si no has sido tú, cambia tu contraseña.
+        </p>
+      </div>
+    `;
+
+    return this.sendEmail(email, subject, html, text);
+  }
+
+  /**
+   * Envía al usuario el enlace a la factura pagada en Stripe (vía Resend).
+   */
+  async sendStripeInvoiceReceiptEmail(params: {
+    to: string;
+    invoiceNumber: string | null;
+    amountPaidFormatted: string;
+    currency: string;
+    hostedInvoiceUrl: string | null;
+    invoicePdfUrl: string | null;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    const {
+      to,
+      invoiceNumber,
+      amountPaidFormatted,
+      hostedInvoiceUrl,
+      invoicePdfUrl,
+    } = params;
+    const subject = `Factura Llamalo AI${invoiceNumber ? ` ${invoiceNumber}` : ''}`;
+    const lines: string[] = [
+      `Importe pagado: ${amountPaidFormatted} ${params.currency.toUpperCase()}`,
+    ];
+    if (hostedInvoiceUrl) {
+      lines.push(`Ver factura: ${hostedInvoiceUrl}`);
+    }
+    if (invoicePdfUrl) {
+      lines.push(`PDF: ${invoicePdfUrl}`);
+    }
+    const text = lines.join('\n');
+
+    const safeNum = invoiceNumber
+      ? String(invoiceNumber).replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      : '';
+    const links: string[] = [];
+    if (hostedInvoiceUrl) {
+      links.push(
+        `<p><a href="${hostedInvoiceUrl}" style="display:inline-block;background:#111;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Ver factura</a></p>`,
+      );
+    }
+    if (invoicePdfUrl) {
+      links.push(
+        `<p><a href="${invoicePdfUrl}" style="color:#2563eb;">Descargar PDF</a></p>`,
+      );
+    }
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #111; font-size: 20px;">Factura pagada</h1>
+        <p style="color: #444; line-height: 1.6;">
+          Gracias por tu pago. Resumen de tu factura${safeNum ? ` <strong>${safeNum}</strong>` : ''}.
+        </p>
+        <p style="font-size: 18px; color: #111;"><strong>${amountPaidFormatted}</strong>
+          <span style="color:#666;">${params.currency.toUpperCase()}</span></p>
+        ${links.join('\n')}
+        <p style="color: #999; font-size: 12px; margin-top: 24px;">
+          Dudas sobre el cobro: team@llamalo.ai
+        </p>
+      </div>
+    `;
+
+    this.logger.log(`Recibo de factura Stripe → ${to}`);
+    return this.sendEmail(to, subject, html, text);
+  }
+
+  /**
+   * Aviso cuando Stripe no puede cobrar una factura (invoice.payment_failed).
+   */
+  async sendStripePaymentFailedEmail(params: {
+    to: string;
+    invoiceNumber: string | null;
+    amountDueFormatted: string;
+    currency: string;
+    hostedInvoiceUrl: string | null;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    const { to, invoiceNumber, amountDueFormatted, hostedInvoiceUrl } = params;
+    const subject = `Problema con el pago — Llamalo AI${invoiceNumber ? ` (${invoiceNumber})` : ''}`;
+    const lines: string[] = [
+      `No se ha podido cobrar el importe pendiente: ${amountDueFormatted} ${params.currency.toUpperCase()}.`,
+      'Actualiza tu método de pago o revisa la factura para seguir usando el servicio sin interrupciones.',
+    ];
+    if (hostedInvoiceUrl) {
+      lines.push(`Gestionar pago: ${hostedInvoiceUrl}`);
+    }
+    lines.push('Si ya regularizaste el pago, ignora este mensaje.');
+    const text = lines.join('\n');
+
+    const safeNum = invoiceNumber
+      ? String(invoiceNumber).replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      : '';
+    const payBlock = hostedInvoiceUrl
+      ? `<p><a href="${hostedInvoiceUrl}" style="display:inline-block;background:#b45309;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Revisar factura y pago</a></p>`
+      : '';
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #92400e; font-size: 20px;">No hemos podido cobrar tu última factura</h1>
+        <p style="color: #444; line-height: 1.6;">
+          El cobro no se ha completado${safeNum ? ` (factura <strong>${safeNum}</strong>)` : ''}.
+          Mientras la factura siga impagada, el acceso a Llamalo AI puede quedar limitado según tu suscripción.
+        </p>
+        <p style="font-size: 18px; color: #111;"><strong>${amountDueFormatted}</strong>
+          <span style="color:#666;">${params.currency.toUpperCase()}</span> pendiente</p>
+        ${payBlock}
+        <p style="color: #666; font-size: 14px;">
+          Actualiza tu tarjeta o método de pago desde el enlace anterior.
+        </p>
+        <p style="color: #999; font-size: 12px; margin-top: 24px;">
+          Dudas: team@llamalo.ai
+        </p>
+      </div>
+    `;
+
+    this.logger.log(`Aviso pago fallido Stripe → ${to}`);
+    return this.sendEmail(to, subject, html, text);
+  }
+
+  /**
+   * Verificar conexión (Resend con API key o SMTP verify)
    */
   async verifyConnection(): Promise<boolean> {
-    if (this.useMailerSend && this.mailerSend) {
+    if (this.useResend && this.resend) {
       return true;
     }
-    
+
     if (this.transporter) {
       try {
         await this.transporter.verify();
-        this.logger.log('Conexión SMTP verificada exitosamente');
+        this.logger.log('Conexión SMTP verificada correctamente');
         return true;
       } catch (error) {
         this.logger.error('Error al verificar conexión SMTP:', error);
         return false;
       }
     }
-    
+
     return false;
   }
 
@@ -203,7 +370,7 @@ export class EmailService {
   ): Promise<{ success: boolean; messageId?: string }> {
     const emailTo = process.env.SUPPORT_EMAIL || 'team@llamalo.ai';
 
-    this.logger.log(`📧 Xenon enviando ticket de soporte a: ${emailTo}`);
+    this.logger.log(`Xenon enviando ticket de soporte a: ${emailTo}`);
 
     const subject = `🚨 [ESCALADO] Soporte requerido por usuario ${userId}`;
     const text = `

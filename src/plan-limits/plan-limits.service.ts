@@ -27,9 +27,27 @@ export type PlanUsageSnapshot = {
   storageUsedBytes: number;
 };
 
+/** Suscripción Stripe con cobro pendiente o pausada: bloqueo total hasta regularizar pago. */
+const STRIPE_BILLING_BLOCKED_STATUSES = new Set([
+  'past_due',
+  'unpaid',
+  'paused',
+  'incomplete',
+]);
+
 @Injectable()
 export class PlanLimitsService {
   private readonly firestore = getFirestore();
+
+  /** True si Stripe indica que no hay acceso hasta pagar (p. ej. trial terminó sin tarjeta). */
+  isStripeBillingBlocked(
+    userData: admin.firestore.DocumentData | undefined,
+  ): boolean {
+    if (!userData) return false;
+    const s = userData.stripeSubscriptionStatus as string | undefined;
+    if (!s || typeof s !== 'string') return false;
+    return STRIPE_BILLING_BLOCKED_STATUSES.has(s.trim());
+  }
 
   /** Resuelve fin de trial en ms; si falta `trialEndsAt`, deriva de `createdAt` + 7 días. */
   resolveTrialEndsAtMs(userData: admin.firestore.DocumentData | undefined): number | null {
@@ -60,7 +78,13 @@ export class PlanLimitsService {
   getEffectiveTechLimits(
     userData: admin.firestore.DocumentData | undefined,
   ): PlanLimitsEntry {
+    if (this.isStripeBillingBlocked(userData)) {
+      return { ...EXPIRED_TRIAL_TECH_LIMITS };
+    }
     const plan = normalizePlanSlug(userData?.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      return { ...PLAN_LIMITS.sin_plan };
+    }
     if (plan !== 'gratis') {
       return { ...PLAN_LIMITS[plan] };
     }
@@ -82,7 +106,13 @@ export class PlanLimitsService {
   getEffectiveVoiceMinutesLimit(
     userData: admin.firestore.DocumentData | undefined,
   ): number {
+    if (this.isStripeBillingBlocked(userData)) {
+      return 0;
+    }
     const plan = normalizePlanSlug(userData?.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      return PLAN_LIMITS.sin_plan.minutesLimit;
+    }
     if (plan !== 'gratis') {
       const m = userData?.minutesLimit;
       if (typeof m === 'number' && !Number.isNaN(m)) return m;
@@ -165,6 +195,11 @@ export class PlanLimitsService {
       throw new NotFoundException('Usuario no encontrado');
     }
     const plan = normalizePlanSlug(userData.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
     if (plan === 'gratis' && !this.isTrialActive(userData)) {
       throw new ForbiddenException(
         'Tu periodo de prueba ha terminado. Mejora tu plan para continuar.',
@@ -234,7 +269,13 @@ export class PlanLimitsService {
     if (!userData) {
       throw new NotFoundException('Usuario no encontrado');
     }
-    if (normalizePlanSlug(userData.plan as string | undefined) === 'gratis' && !this.isTrialActive(userData)) {
+    const p = normalizePlanSlug(userData.plan as string | undefined);
+    if (p === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
+    if (p === 'gratis' && !this.isTrialActive(userData)) {
       throw new ForbiddenException(
         'Tu periodo de prueba ha terminado. Mejora tu plan para continuar.',
       );
@@ -261,6 +302,66 @@ export class PlanLimitsService {
     }
   }
 
+  /**
+   * Integración Make / webhooks: el plan debe permitir al menos una acción.
+   */
+  async assertMakeWebhookFeatureAllowed(userId: string): Promise<void> {
+    const userData = await this.getUserData(userId);
+    if (!userData) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const plan = normalizePlanSlug(userData.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
+    if (plan === 'gratis' && !this.isTrialActive(userData)) {
+      throw new ForbiddenException(
+        'Tu periodo de prueba ha terminado. Mejora tu plan para usar acciones Make (webhooks).',
+      );
+    }
+    const limits = this.getEffectiveTechLimits(userData);
+    if (limits.makeWebhookActionsMax <= 0) {
+      throw new ForbiddenException(
+        'Las acciones Make (webhooks) no están incluidas en tu plan actual. Mejora el plan para activarlas.',
+      );
+    }
+  }
+
+  /**
+   * Cuenta acciones webhook existentes para un agente (tope de creación).
+   */
+  async countWebhookActionsForAgent(
+    userId: string,
+    agentId: number,
+  ): Promise<number> {
+    const snap = await this.firestore
+      .collection('webhookActions')
+      .where('userId', '==', userId)
+      .where('agentId', '==', agentId)
+      .get();
+    return snap.size;
+  }
+
+  async assertCanCreateWebhookAction(
+    userId: string,
+    agentId: number,
+  ): Promise<void> {
+    await this.assertMakeWebhookFeatureAllowed(userId);
+    const userData = await this.getUserData(userId);
+    if (!userData) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const limits = this.getEffectiveTechLimits(userData);
+    const count = await this.countWebhookActionsForAgent(userId, agentId);
+    if (count >= limits.makeWebhookActionsMax) {
+      throw new ForbiddenException(
+        `Has alcanzado el máximo de acciones Make para este agente en tu plan (${limits.makeWebhookActionsMax}). Mejora el plan para añadir más.`,
+      );
+    }
+  }
+
   async assertCanAddAgent(
     userId: string,
     currentAgentCount: number,
@@ -270,6 +371,11 @@ export class PlanLimitsService {
       throw new NotFoundException('Usuario no encontrado');
     }
     const plan = normalizePlanSlug(userData.plan as string | undefined);
+    if (plan === 'sin_plan') {
+      throw new ForbiddenException(
+        'No tienes un plan activo. Suscríbete a uno de nuestros planes para continuar.',
+      );
+    }
     if (plan === 'gratis' && !this.isTrialActive(userData)) {
       throw new ForbiddenException(
         'Tu periodo de prueba ha terminado. Mejora tu plan para continuar.',

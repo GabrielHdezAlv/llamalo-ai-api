@@ -647,6 +647,7 @@ export class SupportChatGateway {
       let sentenceBuffer = '';
       let functionCallName = '';
       let functionCallArgs = '';
+      let shouldHangup = false;
       const sentenceEnders = new Set(['.', '!', '?', '\n']); // Caracteres de fin de frase
       const pauseEnders = new Set([',', ':', ';']); // Pausas menores
 
@@ -679,6 +680,14 @@ export class SupportChatGateway {
           fullResponse += token;
           sentenceBuffer += token;
 
+          // Detectar señal técnica de colgado en el buffer acumulado (puede venir partida en varios tokens)
+          if (!shouldHangup && this.containsEndCallSignal(sentenceBuffer)) {
+            shouldHangup = true;
+            this.logger.log(
+              `🔚 [SupportVoice] Señal [END_CALL] detectada en respuesta de Xenon. Se cerrará la sesión tras finalizar el TTS.`,
+            );
+          }
+
           // Enviar el texto completo al frontend progresivamente (para el chat visual)
           if (!firstChunkReceived) {
             firstChunkReceived = true;
@@ -687,10 +696,14 @@ export class SupportChatGateway {
               role: 'assistant',
             });
           }
-          this.sendJson(session.client, {
-            type: 'transcript.delta',
-            text: token,
-          });
+          // Limpiar el token técnico antes de mandarlo al chat visual para que el usuario no lo vea
+          const visibleToken = this.stripEndCallToken(token);
+          if (visibleToken) {
+            this.sendJson(session.client, {
+              type: 'transcript.delta',
+              text: visibleToken,
+            });
+          }
 
           // Lógica de chunking para el TTS
           const lastChar = token.slice(-1);
@@ -699,7 +712,8 @@ export class SupportChatGateway {
             pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8;
 
           if (isSentenceEnd || isPauseEnd) {
-            const sentenceToSend = sentenceBuffer.trim();
+            // Limpiar `[END_CALL]` (y variantes vocales) antes de enviar al TTS
+            const sentenceToSend = this.stripEndCallToken(sentenceBuffer);
             if (sentenceToSend) {
               const currentSentence = sentenceToSend;
               ttsQueue = ttsQueue.then(async () => {
@@ -713,14 +727,19 @@ export class SupportChatGateway {
         }
       }
 
-      // Enviar cualquier texto sobrante al TTS
+      // Enviar cualquier texto sobrante al TTS (sin el token técnico)
       if (!session.interrupted && sentenceBuffer.trim()) {
-        const remainingText = sentenceBuffer.trim();
-        ttsQueue = ttsQueue.then(async () => {
-          if (!session.interrupted) {
-            await this.streamTTSFromText(session, remainingText);
-          }
-        });
+        if (!shouldHangup && this.containsEndCallSignal(sentenceBuffer)) {
+          shouldHangup = true;
+        }
+        const remainingText = this.stripEndCallToken(sentenceBuffer);
+        if (remainingText) {
+          ttsQueue = ttsQueue.then(async () => {
+            if (!session.interrupted) {
+              await this.streamTTSFromText(session, remainingText);
+            }
+          });
+        }
       }
 
       // Esperar a que el audio termine
@@ -813,18 +832,29 @@ export class SupportChatGateway {
         }
       }
 
-      // Finalizar el mensaje en el frontend
-      if (fullResponse.trim()) {
+      // Finalizar el mensaje en el frontend (sin el token técnico [END_CALL])
+      const cleanFullResponse = this.stripEndCallToken(fullResponse);
+      if (cleanFullResponse) {
         session.history.push({
           role: 'assistant',
-          content: fullResponse.trim(),
+          content: cleanFullResponse,
         });
         this.sendJson(session.client, {
           type: 'transcript',
           role: 'assistant',
-          text: fullResponse.trim(),
+          text: cleanFullResponse,
           isFinal: true,
         });
+      }
+
+      // Si Xenon decidió cerrar la conversación, terminamos la sesión limpiamente
+      // (el frontend reacciona ante `session.ended` con reason `agent_hangup`).
+      if (shouldHangup && !session.interrupted) {
+        this.logger.log(
+          `🔚 [SupportVoice] Cerrando sesión ${session.sessionId} por señal del agente (agent_hangup).`,
+        );
+        this.endSession(session.sessionId, 'agent_hangup');
+        return;
       }
     } catch (err) {
       this.logger.error(`❌ [SupportVoice] Error LLM:`, err);
@@ -951,11 +981,35 @@ export class SupportChatGateway {
 
   // ── TTS ────────────────────────────────────────────────────────────────────
 
+  /**
+   * Limpia el token técnico `[END_CALL]` y cualquier variante vocalizable
+   * («End Call», «END CALL», «end_call», «endcall», con o sin corchetes) que
+   * Xenon (u otros agentes) puedan emitir al cerrar la conversación. Evita
+   * que el TTS pronuncie literalmente «end call» y deja sólo la despedida.
+   */
+  private stripEndCallToken(text: string): string {
+    if (!text) return text;
+    return text
+      // Variante con o sin corchetes y con cualquier separador entre END y CALL
+      .replace(/\[?\s*END[\s_\-]*CALL\s*\]?/gi, '')
+      // Restos de un token partido en streaming, p. ej. solo "[" o "]"
+      .replace(/^[\s\[\]]+|[\s\[\]]+$/g, '')
+      .trim();
+  }
+
+  /** Detecta si un fragmento de texto contiene el token `[END_CALL]` o variantes vocales. */
+  private containsEndCallSignal(text: string): boolean {
+    if (!text) return false;
+    return /\[?\s*END[\s_\-]*CALL\s*\]?/i.test(text);
+  }
+
   private async streamTTSFromText(
     session: SupportVoiceSession,
     text: string,
   ): Promise<void> {
-    if (session.interrupted || !text.trim()) return;
+    const sanitized = this.stripEndCallToken(text);
+    if (session.interrupted || !sanitized.trim()) return;
+    text = sanitized;
 
     if (session.currentTTSRequest) {
       try {

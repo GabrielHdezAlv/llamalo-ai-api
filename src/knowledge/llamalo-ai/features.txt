@@ -8,7 +8,7 @@
 
 # PASOS PARA CONFIGURAR TU PRIMER AGENTE (ONBOARDING)
 
-1. **Crear Agente**: Ve a la sección "Agentes" y haz clic en "Crear Nuevo".
+1. **Crear Agente**: Ve a la sección "Agentes" y usa el botón **Crear agente** (asistente paso a paso).
 2. **Personalizar Voz**: Elige un nombre para tu agente y selecciona una voz de ElevenLabs. Puedes ajustar la estabilidad y claridad.
 3. **Conectar Twilio**: 
    - Ve a "Números de Teléfono".

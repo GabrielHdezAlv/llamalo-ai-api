@@ -3,7 +3,9 @@ import * as admin from 'firebase-admin';
 
 export enum LogType {
   CALL_FAILED = 'CALL_FAILED',
+  /** @deprecated Preferir EMAIL_OUTBOUND_ERROR */
   MAILERSEND_ERROR = 'MAILERSEND_ERROR',
+  EMAIL_OUTBOUND_ERROR = 'EMAIL_OUTBOUND_ERROR',
   SYSTEM_ERROR = 'SYSTEM_ERROR',
 }
 

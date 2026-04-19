@@ -1,8 +1,11 @@
 import {
   Injectable,
   BadRequestException,
+  NotFoundException,
   UnauthorizedException,
   Logger,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
@@ -21,6 +24,22 @@ export class AuthService {
   private firebaseApiKey = process.env.FIREBASE_API_KEY;
   private firestore = getFirestore();
   private readonly logger = new Logger(AuthService.name);
+
+  /**
+   * Código de 6 dígitos por correo + bloqueo de login si la cuenta no está verificada.
+   * Activar en producción: REQUIRE_EMAIL_VERIFICATION_PIN=true (Render / .env).
+   */
+  private readonly requireEmailVerificationPin =
+    process.env.REQUIRE_EMAIL_VERIFICATION_PIN === 'true';
+
+  /**
+   * Tras el registro verificado, al iniciar sesión desde un navegador nuevo se exige código al correo.
+   * REQUIRE_NEW_DEVICE_VERIFICATION=true
+   */
+  private readonly requireNewDeviceVerification =
+    process.env.REQUIRE_NEW_DEVICE_VERIFICATION === 'true';
+
+  private static readonly PENDING_REGISTRATIONS = 'pending_registrations';
 
   constructor(
     private readonly emailService: EmailService,
@@ -92,11 +111,59 @@ export class AuthService {
     // 2️⃣ Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3️⃣ Generar token de verificación
-    const verificationToken = this.generateVerificationToken();
+    // 3️⃣ Token de verificación solo si el PIN por correo está activo
+    const verificationToken = this.requireEmailVerificationPin
+      ? this.generateVerificationToken()
+      : null;
 
-    // 4️⃣ Guardar usuario en Firestore con estado 3 (No validado) y token
+    // 4️⃣ Firestore: con PIN solo pending_registrations (no users hasta verificar correo)
     try {
+      const nowTs = admin.firestore.Timestamp.now();
+
+      if (this.requireEmailVerificationPin && verificationToken) {
+        const pendingRef = this.firestore
+          .collection(AuthService.PENDING_REGISTRATIONS)
+          .doc(firebaseResponse.localId);
+        await pendingRef.set({
+          userId: firebaseResponse.localId,
+          profileImage: '',
+          name,
+          lastname,
+          enterprise: { name: '', url: '' },
+          email,
+          password: hashedPassword,
+          country,
+          marketingConsent,
+          rol: rol || 'client_user',
+          verificationToken,
+          verificationTokenExpiresAt: nowTs,
+          createdAt: nowTs,
+        });
+        console.log(
+          `✅ [Auth] Registro pendiente de verificación (sin users/): ${firebaseResponse.localId}`,
+        );
+
+        let verificationEmailSent = false;
+        try {
+          await this.emailService.sendVerificationEmail(email, verificationToken);
+          verificationEmailSent = true;
+          console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
+        } catch (emailError) {
+          console.error(
+            `❌ [Auth] Error al enviar email de verificación:`,
+            emailError,
+          );
+        }
+
+        return {
+          token: firebaseResponse.idToken,
+          userId: firebaseResponse.localId,
+          verificationEmailSent,
+          emailVerificationRequired: true,
+          refreshToken: firebaseResponse.refreshToken,
+        };
+      }
+
       const userRef = this.firestore
         .collection('users')
         .doc(firebaseResponse.localId);
@@ -113,14 +180,14 @@ export class AuthService {
         password: hashedPassword,
         country,
         marketingConsent,
-        accountStatus: 3, // Forzar estado 3 = No validado
-        rol: rol || 'client_user', // Por defecto 'client_user' si no se especifica
-        verificationToken,
-        verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
-        createdAt: admin.firestore.Timestamp.now(),
+        accountStatus: 1,
+        rol: rol || 'client_user',
+        verificationToken: null,
+        verificationTokenExpiresAt: null,
+        emailVerifiedAt: nowTs,
+        createdAt: nowTs,
         trialEndsAt: admin.firestore.Timestamp.fromMillis(
-          admin.firestore.Timestamp.now().toMillis() +
-            7 * 24 * 60 * 60 * 1000,
+          nowTs.toMillis() + 7 * 24 * 60 * 60 * 1000,
         ),
         plan: DEFAULT_PLAN,
         minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
@@ -132,40 +199,28 @@ export class AuthService {
         phoneNumbers: [],
         agents: [],
         hasCompletedSetup: false,
+        planSelectionCompleted: false,
+        trustedDeviceIds: [],
       });
       console.log(
         `✅ [Auth] Usuario guardado en Firestore: ${firebaseResponse.localId}`,
       );
 
-      // 🔄 Sincronizar con MailerLite
       this.mailerLiteService.syncUser(firebaseResponse.localId).catch(() => {});
-
-      // 5️⃣ Enviar email de verificación
-      let verificationEmailSent = false;
-      try {
-        await this.emailService.sendVerificationEmail(email, verificationToken);
-        verificationEmailSent = true;
-        console.log(`✅ [Auth] Email de verificación enviado a: ${email}`);
-      } catch (emailError) {
-        console.error(
-          `❌ [Auth] Error al enviar email de verificación:`,
-          emailError,
-        );
-        // No fallamos el registro si el email no se envía, pero lo registramos
-      }
 
       return {
         token: firebaseResponse.idToken,
         userId: firebaseResponse.localId,
-        verificationEmailSent,
+        verificationEmailSent: false,
+        emailVerificationRequired: false,
         refreshToken: firebaseResponse.refreshToken,
       };
     } catch (error: any) {
       console.error(
-        `❌ [Auth] Error al guardar usuario en Firestore: ${error.message}`,
+        `❌ [Auth] Error al guardar registro en Firestore: ${error.message}`,
       );
       throw new BadRequestException(
-        'Usuario creado en Firebase pero error al guardar en Firestore',
+        'Usuario creado en Firebase pero error al guardar datos',
       );
     }
   }
@@ -185,33 +240,57 @@ export class AuthService {
         { email, password, returnSecureToken: true },
       );
 
-      // 🔍 Verificar accountStatus en Firestore después del login exitoso en Firebase Auth
+      // 🔍 Verificar Firestore después del login exitoso en Firebase Auth
       try {
-        const userDoc = await this.firestore
-          .collection('users')
-          .doc(data.localId as string)
-          .get();
+        const uid = data.localId as string;
+        const userDoc = await this.firestore.collection('users').doc(uid).get();
 
         if (!userDoc.exists) {
+          const pendingSnap = await this.firestore
+            .collection(AuthService.PENDING_REGISTRATIONS)
+            .doc(uid)
+            .get();
+          if (pendingSnap.exists) {
+            console.warn(
+              `⚠️ [Auth] Login bloqueado para ${email} - registro pendiente de verificar correo`,
+            );
+            throw new UnauthorizedException(
+              'Debes verificar tu correo con el código que te enviamos antes de poder acceder.',
+            );
+          }
           throw new UnauthorizedException(
             'Usuario no encontrado en el sistema',
           );
         }
 
         const userData = userDoc.data();
+        if (!userData) {
+          throw new UnauthorizedException('Usuario no encontrado en el sistema');
+        }
 
-        // 🚫 Bloquear login si accountStatus es 3 (No validado)
-        if (userData?.accountStatus === 3) {
-          console.warn(
-            `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
-          );
-          throw new UnauthorizedException(
-            'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
+        // 🚫 Bloquear login si accountStatus es 3 (No validado), salvo si el PIN está desactivado
+        if (userData.accountStatus === 3) {
+          if (this.requireEmailVerificationPin) {
+            console.warn(
+              `⚠️ [Auth] Login bloqueado para ${email} - cuenta no validada (accountStatus: 3)`,
+            );
+            throw new UnauthorizedException(
+              'Debes verificar tu correo electrónico antes de poder iniciar sesión. Por favor, revisa tu email y haz clic en el enlace de verificación.',
+            );
+          }
+          await this.firestore.collection('users').doc(uid).update({
+            accountStatus: 1,
+            verificationToken: null,
+            verificationTokenExpiresAt: null,
+            emailVerifiedAt: admin.firestore.Timestamp.now(),
+          });
+          console.log(
+            `✅ [Auth] Cuenta ${email} activada al iniciar sesión (PIN por correo desactivado en servidor)`,
           );
         }
 
         // 🚫 Bloquear login si accountStatus es 2 (Eliminado)
-        if (userData?.accountStatus === 2) {
+        if (userData.accountStatus === 2) {
           console.warn(
             `⚠️ [Auth] Login bloqueado para ${email} - cuenta eliminada (accountStatus: 2)`,
           );
@@ -219,18 +298,22 @@ export class AuthService {
         }
 
         // 🚫 Bloquear login si accountStatus es 0 (Inactivo)
-        if (userData?.accountStatus === 0) {
+        if (userData.accountStatus === 0) {
           console.warn(
             `⚠️ [Auth] Login bloqueado para ${email} - cuenta inactiva (accountStatus: 0)`,
           );
           throw new UnauthorizedException('Esta cuenta está inactiva');
         }
+
+        await this.maybeRequireNewDeviceVerification(
+          uid,
+          userData,
+          loginDto.deviceId,
+        );
       } catch (firestoreError) {
-        // Si el error es UnauthorizedException ya lo manejamos arriba
-        if (firestoreError instanceof UnauthorizedException) {
+        if (firestoreError instanceof HttpException) {
           throw firestoreError;
         }
-        // Si hay error al leer Firestore, logueamos pero permitimos el login
         console.error(
           `❌ [Auth] Error al verificar accountStatus para ${email}: ${firestoreError}`,
         );
@@ -296,7 +379,9 @@ export class AuthService {
       const name = decodedToken.name || '';
       const picture = decodedToken.picture || '';
 
-      console.log(`🔐 [Auth] Intento de login con Google para: ${email} (uid: ${userId})`);
+      console.log(
+        `🔐 [Auth] Intento de login con Google para: ${email} (uid: ${userId})`,
+      );
 
       // 2. Comprobar si el usuario ya existe en Firestore
       const userRef = this.firestore.collection('users').doc(userId);
@@ -306,7 +391,8 @@ export class AuthService {
         // 3. Es un usuario nuevo: Lo creamos en Firestore
         const nameParts = name.split(' ');
         const firstName = nameParts[0] || '';
-        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+        const lastName =
+          nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
         await userRef.set({
           userId: userId,
@@ -339,10 +425,14 @@ export class AuthService {
           phoneNumbers: [],
           agents: [],
           hasCompletedSetup: false,
+          planSelectionCompleted: false,
+          trustedDeviceIds: [],
         });
 
-        console.log(`✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`);
-        
+        console.log(
+          `✅ [Auth] Nuevo usuario de Google creado en Firestore: ${userId}`,
+        );
+
         // 🔄 Sincronizar con MailerLite
         this.mailerLiteService.syncUser(userId).catch(() => {});
       } else {
@@ -350,23 +440,29 @@ export class AuthService {
 
         // Validar si la cuenta estaba eliminada (status 2) o inactiva (status 0)
         if (userData?.accountStatus === 2) {
-          console.warn(`⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta eliminada (accountStatus: 2)`);
+          console.warn(
+            `⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta eliminada (accountStatus: 2)`,
+          );
           throw new UnauthorizedException('Esta cuenta ha sido eliminada');
         }
 
         if (userData?.accountStatus === 0) {
-          console.warn(`⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta inactiva (accountStatus: 0)`);
+          console.warn(
+            `⚠️ [Auth] Login de Google bloqueado para ${email} - cuenta inactiva (accountStatus: 0)`,
+          );
           throw new UnauthorizedException('Esta cuenta está inactiva');
         }
-        
+
         // Si el estado es 3 (no validado) pero entran con Google, lo pasamos a 1 (activo)
         if (userData?.accountStatus === 3) {
           await userRef.update({
             accountStatus: 1,
             emailVerifiedAt: admin.firestore.Timestamp.now(),
-            verificationToken: null
+            verificationToken: null,
           });
-          console.log(`✅ [Auth] Usuario ${userId} pasó de estado 3 a 1 tras login con Google`);
+          console.log(
+            `✅ [Auth] Usuario ${userId} pasó de estado 3 a 1 tras login con Google`,
+          );
         }
       }
 
@@ -378,7 +474,7 @@ export class AuthService {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      
+
       console.error(`❌ [Auth] Error en login de Google: ${error.message}`);
       throw new UnauthorizedException('Token de Google inválido o expirado');
     }
@@ -476,6 +572,73 @@ export class AuthService {
     }
   }
 
+  /** Tras elegir "prueba gratuita" en el modal de registro. */
+  async completePlanSelection(userId: string): Promise<{ message: string }> {
+    const ref = this.firestore.collection('users').doc(userId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const data = snap.data();
+    if (data?.planSelectionCompleted !== false) {
+      return { message: 'Selección de plan ya registrada' };
+    }
+    await ref.update({
+      planSelectionCompleted: true,
+      updatedAt: admin.firestore.Timestamp.now(),
+    });
+    this.logger.log(`✅ [Auth] planSelectionCompleted para ${userId}`);
+    return { message: 'Selección completada' };
+  }
+
+  /**
+   * Elimina cuenta en Firestore y Firebase Auth si el usuario aún no completó
+   * la elección de plan (solo registro incompleto).
+   */
+  async cancelIncompleteRegistration(
+    userId: string,
+  ): Promise<{ message: string }> {
+    const ref = this.firestore.collection('users').doc(userId);
+    const snap = await ref.get();
+    if (snap.exists) {
+      const data = snap.data();
+      if (data?.planSelectionCompleted !== false) {
+        throw new BadRequestException(
+          'No se puede cancelar: la cuenta ya tiene un plan o prueba confirmados.',
+        );
+      }
+      await ref.delete();
+      try {
+        await admin.auth().deleteUser(userId);
+      } catch (e) {
+        this.logger.warn(
+          `Firestore eliminado pero error borrando Auth ${userId}: ${(e as Error).message}`,
+        );
+      }
+      this.logger.log(`✅ [Auth] Registro cancelado para ${userId}`);
+      return { message: 'Registro cancelado' };
+    }
+
+    const pendingRef = this.firestore
+      .collection(AuthService.PENDING_REGISTRATIONS)
+      .doc(userId);
+    const pendSnap = await pendingRef.get();
+    if (pendSnap.exists) {
+      await pendingRef.delete();
+      try {
+        await admin.auth().deleteUser(userId);
+      } catch (e) {
+        this.logger.warn(
+          `Pending eliminado pero error borrando Auth ${userId}: ${(e as Error).message}`,
+        );
+      }
+      this.logger.log(`✅ [Auth] Registro pendiente cancelado para ${userId}`);
+      return { message: 'Registro cancelado' };
+    }
+
+    throw new NotFoundException('Usuario no encontrado');
+  }
+
   /**
    * Generar token de verificación único
    */
@@ -484,15 +647,224 @@ export class AuthService {
   }
 
   /**
-   * Verificar email del usuario usando token
+   * Si el dispositivo no está en la lista de confianza, envía código y corta el login.
+   */
+  private async maybeRequireNewDeviceVerification(
+    userId: string,
+    userData: Record<string, unknown>,
+    deviceId: string | undefined,
+  ): Promise<void> {
+    if (!this.requireNewDeviceVerification) {
+      return;
+    }
+    if (!deviceId || deviceId.trim() === '') {
+      return;
+    }
+
+    const trusted: string[] = Array.isArray(userData.trustedDeviceIds)
+      ? [...userData.trustedDeviceIds]
+      : [];
+
+    if (trusted.length === 0) {
+      await this.firestore.collection('users').doc(userId).update({
+        trustedDeviceIds: admin.firestore.FieldValue.arrayUnion(deviceId),
+      });
+      this.logger.log(
+        `✅ [Auth] Primer dispositivo registrado para usuario ${userId}`,
+      );
+      return;
+    }
+
+    if (trusted.includes(deviceId)) {
+      return;
+    }
+
+    const code = this.generateVerificationToken();
+    const expiresAt = admin.firestore.Timestamp.fromMillis(
+      Date.now() + 15 * 60 * 1000,
+    );
+
+    await this.firestore.collection('users').doc(userId).update({
+      deviceVerificationPending: {
+        token: code,
+        deviceId,
+        expiresAt,
+      },
+    });
+
+    try {
+      await this.emailService.sendDeviceVerificationEmail(
+        String(userData.email ?? ''),
+        code,
+      );
+    } catch (e) {
+      this.logger.error(
+        `❌ [Auth] Error enviando código de nuevo dispositivo:`,
+        e,
+      );
+      throw new UnauthorizedException(
+        'No pudimos enviar el código al correo. Inténtalo más tarde.',
+      );
+    }
+
+    throw new HttpException(
+      {
+        message:
+          'Hemos enviado un código a tu correo para confirmar este dispositivo.',
+        code: 'DEVICE_VERIFICATION_REQUIRED',
+      },
+      HttpStatus.UNAUTHORIZED,
+    );
+  }
+
+  /**
+   * Tras recibir el código en el correo (nuevo dispositivo), completa el login.
+   */
+  async verifyDeviceLogin(dto: {
+    email: string;
+    password: string;
+    deviceId: string;
+    code: string;
+  }) {
+    const { email, password, deviceId, code } = dto;
+
+    const snapshot = await this.firestore
+      .collection('users')
+      .where('email', '==', email.trim())
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      throw new BadRequestException('No existe una cuenta con este email');
+    }
+
+    const userDoc = snapshot.docs[0];
+    const userData = userDoc.data();
+    const pending = userData?.deviceVerificationPending as
+      | {
+          token: string;
+          deviceId: string;
+          expiresAt: admin.firestore.Timestamp;
+        }
+      | undefined;
+
+    if (
+      !pending ||
+      pending.token !== code.trim() ||
+      pending.deviceId !== deviceId
+    ) {
+      throw new BadRequestException('Código inválido o expirado');
+    }
+
+    if (pending.expiresAt.toMillis() < Date.now()) {
+      throw new BadRequestException('Código expirado. Inicia sesión de nuevo.');
+    }
+
+    let data: {
+      idToken: string;
+      localId: string;
+      refreshToken?: string;
+    };
+    try {
+      const res = await axios.post(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${this.firebaseApiKey}`,
+        { email: email.trim(), password, returnSecureToken: true },
+      );
+      data = res.data;
+    } catch (error: unknown) {
+      const message = this.getFirebaseErrorMessage(error);
+      throw new UnauthorizedException(`Credenciales incorrectas: ${message}`);
+    }
+
+    if (data.localId !== userDoc.id) {
+      throw new BadRequestException('Datos de usuario incoherentes');
+    }
+
+    await userDoc.ref.update({
+      trustedDeviceIds: admin.firestore.FieldValue.arrayUnion(deviceId),
+      deviceVerificationPending: admin.firestore.FieldValue.delete(),
+    });
+
+    this.logger.log(`✅ [Auth] Dispositivo verificado para ${email}`);
+
+    return {
+      token: data.idToken,
+      userId: data.localId,
+      refreshToken: data.refreshToken as string | undefined,
+    };
+  }
+
+  /**
+   * Verificar email del usuario usando token (registro en pending o legacy users status 3)
    */
   async verifyEmail(token: string) {
     try {
-      // Buscar usuario con el token de verificación
+      const pendingSnap = await this.firestore
+        .collection(AuthService.PENDING_REGISTRATIONS)
+        .where('verificationToken', '==', token.trim())
+        .limit(1)
+        .get();
+
+      if (!pendingSnap.empty) {
+        const pendDoc = pendingSnap.docs[0];
+        const userId = pendDoc.id;
+        const d = pendDoc.data();
+
+        const usersRef = this.firestore.collection('users').doc(userId);
+        const existingUser = await usersRef.get();
+        if (existingUser.exists) {
+          await pendDoc.ref.delete();
+          throw new BadRequestException(
+            'Esta cuenta ya está activada. Inicia sesión.',
+          );
+        }
+
+        const nowTs = admin.firestore.Timestamp.now();
+        await usersRef.set({
+          userId,
+          profileImage: d.profileImage ?? '',
+          name: d.name,
+          lastname: d.lastname,
+          enterprise: d.enterprise ?? { name: '', url: '' },
+          email: d.email,
+          password: d.password,
+          country: d.country,
+          marketingConsent: d.marketingConsent,
+          accountStatus: 1,
+          rol: d.rol || 'client_user',
+          verificationToken: null,
+          verificationTokenExpiresAt: null,
+          emailVerifiedAt: nowTs,
+          createdAt: d.createdAt ?? nowTs,
+          trialEndsAt: admin.firestore.Timestamp.fromMillis(
+            nowTs.toMillis() + 7 * 24 * 60 * 60 * 1000,
+          ),
+          plan: DEFAULT_PLAN,
+          minutesLimit: PLAN_LIMITS[DEFAULT_PLAN].minutesLimit,
+          extraMinutes: 0,
+          integrations: { shopify: [] },
+          twilio: [],
+          phoneNumbers: [],
+          agents: [],
+          hasCompletedSetup: false,
+          planSelectionCompleted: false,
+          trustedDeviceIds: [],
+        });
+        await pendDoc.ref.delete();
+
+        this.logger.log(`✅ [Auth] Email verificado y users/ creado: ${userId}`);
+        this.mailerLiteService.syncUser(userId).catch(() => {});
+
+        return {
+          message: 'Email verificado correctamente',
+          accountStatus: 1,
+        };
+      }
+
       const usersRef = this.firestore.collection('users');
       const snapshot = await usersRef
-        .where('verificationToken', '==', token)
-        .where('accountStatus', '==', 3) // Solo usuarios no validados
+        .where('verificationToken', '==', token.trim())
+        .where('accountStatus', '==', 3)
         .get();
 
       if (snapshot.empty) {
@@ -504,16 +876,14 @@ export class AuthService {
       const userDoc = snapshot.docs[0];
       const userId = userDoc.id;
 
-      // Actualizar usuario: cambiar accountStatus a 1 (Activo) y eliminar token
       await userDoc.ref.update({
         accountStatus: 1,
         verificationToken: null,
+        verificationTokenExpiresAt: null,
         emailVerifiedAt: admin.firestore.Timestamp.now(),
       });
 
-      this.logger.log(`✅ [Auth] Email verificado para usuario: ${userId}`);
-
-      // 🔄 Sincronizar con MailerLite (pasará a grupo "Cuenta ACTIVADA")
+      this.logger.log(`✅ [Auth] Email verificado (legacy) para usuario: ${userId}`);
       this.mailerLiteService.syncUser(userId).catch(() => {});
 
       return {
@@ -535,10 +905,28 @@ export class AuthService {
    * Reenviar email de verificación
    */
   async resendVerificationEmail(email: string) {
+    const trimmed = email.trim();
     try {
-      // Buscar usuario por email
+      const pendingSnap = await this.firestore
+        .collection(AuthService.PENDING_REGISTRATIONS)
+        .where('email', '==', trimmed)
+        .limit(1)
+        .get();
+
+      if (!pendingSnap.empty) {
+        const doc = pendingSnap.docs[0];
+        const verificationToken = this.generateVerificationToken();
+        await doc.ref.update({
+          verificationToken,
+          verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
+        });
+        await this.emailService.sendVerificationEmail(trimmed, verificationToken);
+        this.logger.log(`✅ [Auth] Email de verificación reenviado (pending) a: ${trimmed}`);
+        return { message: 'Email de verificación reenviado correctamente' };
+      }
+
       const usersRef = this.firestore.collection('users');
-      const snapshot = await usersRef.where('email', '==', email).get();
+      const snapshot = await usersRef.where('email', '==', trimmed).get();
 
       if (snapshot.empty) {
         throw new BadRequestException('No existe una cuenta con este email');
@@ -547,26 +935,22 @@ export class AuthService {
       const userDoc = snapshot.docs[0];
       const userData = userDoc.data();
 
-      // Solo reenviar si el usuario está en estado 3 (No validado)
       if (userData.accountStatus !== 3) {
         throw new BadRequestException(
           'Esta cuenta ya está verificada o no necesita verificación',
         );
       }
 
-      // Generar nuevo token
       const verificationToken = this.generateVerificationToken();
 
-      // Actualizar token en Firestore
       await userDoc.ref.update({
         verificationToken,
         verificationTokenExpiresAt: admin.firestore.Timestamp.now(),
       });
 
-      // Enviar email
-      await this.emailService.sendVerificationEmail(email, verificationToken);
+      await this.emailService.sendVerificationEmail(trimmed, verificationToken);
 
-      this.logger.log(`✅ [Auth] Email de verificación reenviado a: ${email}`);
+      this.logger.log(`✅ [Auth] Email de verificación reenviado a: ${trimmed}`);
 
       return {
         message: 'Email de verificación reenviado correctamente',

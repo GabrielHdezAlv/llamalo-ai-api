@@ -7,8 +7,15 @@ import {
 import * as admin from 'firebase-admin';
 import { v4 as uuidv4 } from 'uuid';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import {
+  getMetricsCalendarTimezone,
+  isValidIanaTimezone,
+} from '../metrics/metrics-calendar.util';
 import { PLAN_LIMITS, PlanType } from '../common/constants/plans.constants';
-import { computeMinuteQuotaFromUserData } from '../common/utils/minute-quota.util';
+import {
+  computeMinuteQuotaFromUserData,
+  planAllowsExtraMinutesPool,
+} from '../common/utils/minute-quota.util';
 import { getFirestore } from '../firebase/firebase.config';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import { ProfileEventsService } from '../profile-events/profile-events.service';
@@ -84,6 +91,22 @@ interface UserData {
   trialEndsAt?: admin.firestore.Timestamp;
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
+  stripeSubscriptionStatus?: string | null;
+  /** Suscripción cancelada: debe re-suscribirse (pantalla dedicada, sin trial Starter). */
+  billingChurnLocked?: boolean;
+  /** false = no ofrecer 7 días Starter (ya pagó o churn). Ausente/true = elegible trial. */
+  stripeStarterTrialEligible?: boolean;
+  planSelectionCompleted?: boolean;
+  /** Respuestas registro onboarding (pasos 1–2) */
+  onboardingRegistration?: {
+    goals?: string[];
+    discoveryChannels?: string[];
+    updatedAt?: admin.firestore.Timestamp;
+  };
+  /** IANA: semanas/meses de negocio en métricas del panel */
+  metricsCalendarTimezone?: string;
+  /** Tour «primer agente»: usuario pulsó Saltar o cerró; no volver a mostrar (Firestore). */
+  firstAgentTourSkipped?: boolean;
 }
 
 export type UserProfileResponse = {
@@ -155,6 +178,17 @@ export type UserProfileResponse = {
   planUsage?: PlanUsageSnapshot;
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
+  stripeSubscriptionStatus?: string | null;
+  billingChurnLocked?: boolean;
+  stripeStarterTrialEligible?: boolean;
+  /** false = pendiente elegir plan o prueba tras registro; ausente/true = ya elegido (legacy = completado) */
+  planSelectionCompleted?: boolean;
+  /** Resuelta: perfil o `METRICS_CALENDAR_TIMEZONE` / Europe/Madrid */
+  metricsCalendarTimezone?: string;
+  /** Precio EUR por minuto extra según el plan efectivo (catálogo `extraPerMinuteEur`). */
+  extraPerMinuteEur?: number;
+  /** Tour primer agente omitido (persistente en Firestore). */
+  firstAgentTourSkipped?: boolean;
 };
 
 export interface UploadFile {
@@ -174,6 +208,19 @@ export class UsersService {
     private readonly profileEventsService: ProfileEventsService,
     private readonly planLimitsService: PlanLimitsService,
   ) {}
+
+  /** Zona mostrada en API: Firestore válida o fallback del servidor (Europe/Madrid). */
+  private resolveDisplayMetricsTimezone(userData: UserData): string {
+    const raw = userData.metricsCalendarTimezone;
+    if (
+      typeof raw === 'string' &&
+      raw.trim() &&
+      isValidIanaTimezone(raw.trim())
+    ) {
+      return raw.trim();
+    }
+    return getMetricsCalendarTimezone();
+  }
 
   private filterPhoneNumbers(phoneNumbers: PhoneNumber[], query?: string) {
     if (!query || !query.trim()) {
@@ -285,13 +332,25 @@ export class UsersService {
         minutesLimit: this.planLimitsService.getEffectiveVoiceMinutesLimit(
           userData as unknown as admin.firestore.DocumentData,
         ),
-        extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
+        extraMinutes: planAllowsExtraMinutesPool(userData?.plan as string | undefined)
+          ? (userData?.extraMinutes ?? 0)
+          : 0,
         minutesByMonth: userData?.minutesByMonth ?? {}, // Historial de minutos por mes
         redeemedRewards: userData?.redeemedRewards ?? [],
         trialEndsAt: trialEndsAtStr,
         planUsage: planUsage ?? undefined,
         stripeCustomerId: userData?.stripeCustomerId ?? null,
         stripeSubscriptionId: userData?.stripeSubscriptionId ?? null,
+        stripeSubscriptionStatus: userData?.stripeSubscriptionStatus ?? null,
+        billingChurnLocked: userData?.billingChurnLocked === true,
+        stripeStarterTrialEligible: userData?.stripeStarterTrialEligible !== false,
+        planSelectionCompleted: userData?.planSelectionCompleted !== false,
+        metricsCalendarTimezone: this.resolveDisplayMetricsTimezone(userData),
+        extraPerMinuteEur:
+          this.planLimitsService.getEffectiveTechLimits(
+            userData as unknown as admin.firestore.DocumentData,
+          ).extraPerMinuteEur,
+        firstAgentTourSkipped: userData?.firstAgentTourSkipped === true,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -391,7 +450,64 @@ export class UsersService {
       }
 
       if (updateDto.extraMinutes !== undefined) {
-        updates.extraMinutes = Number(updateDto.extraMinutes);
+        const planRaw = (snapshot.data() as UserData)?.plan;
+        const v = Number(updateDto.extraMinutes);
+        if (
+          !planAllowsExtraMinutesPool(planRaw as string | undefined) &&
+          v > 0 &&
+          !Number.isNaN(v)
+        ) {
+          throw new BadRequestException(
+            'Los minutos extra no aplican en el plan gratuito. Solo pueden asignarse en planes de pago.',
+          );
+        }
+        updates.extraMinutes = planAllowsExtraMinutesPool(
+          planRaw as string | undefined,
+        )
+          ? v
+          : 0;
+      }
+
+      if (
+        updateDto.onboardingGoals !== undefined ||
+        updateDto.onboardingDiscoveryChannels !== undefined
+      ) {
+        const prev = (snapshot.data() as UserData)?.onboardingRegistration;
+        const prevGoals = Array.isArray(prev?.goals) ? prev.goals : [];
+        const prevDiscovery = Array.isArray(prev?.discoveryChannels)
+          ? prev.discoveryChannels
+          : [];
+        updates.onboardingRegistration = {
+          goals:
+            updateDto.onboardingGoals !== undefined
+              ? updateDto.onboardingGoals
+              : prevGoals,
+          discoveryChannels:
+            updateDto.onboardingDiscoveryChannels !== undefined
+              ? updateDto.onboardingDiscoveryChannels
+              : prevDiscovery,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+      }
+
+      if (updateDto.metricsCalendarTimezone !== undefined) {
+        const s = String(updateDto.metricsCalendarTimezone).trim();
+        if (s && !isValidIanaTimezone(s)) {
+          throw new BadRequestException(
+            'Zona horaria de métricas no válida (use un identificador IANA, p. ej. Europe/Madrid).',
+          );
+        }
+        if (s) {
+          updates.metricsCalendarTimezone = s;
+        } else {
+          updates.metricsCalendarTimezone = admin.firestore.FieldValue.delete();
+        }
+      }
+
+      if (updateDto.firstAgentTourSkipped !== undefined) {
+        updates.firstAgentTourSkipped =
+          updateDto.firstAgentTourSkipped === true ||
+          updateDto.firstAgentTourSkipped === 'true';
       }
 
       if (Object.keys(updates).length === 0) {
@@ -435,10 +551,17 @@ export class UsersService {
         rol: updatedData?.rol || 'client_user',
         hasCompletedSetup: updatedData?.hasCompletedSetup ?? true,
         minutesLimit: updatedData?.minutesLimit ?? 100,
-        extraMinutes: updatedData?.extraMinutes ?? 0,
+        extraMinutes: planAllowsExtraMinutesPool(
+          updatedData?.plan as string | undefined,
+        )
+          ? (updatedData?.extraMinutes ?? 0)
+          : 0,
         minutesByMonth: updatedData?.minutesByMonth ?? {},
         redeemedRewards: updatedData?.redeemedRewards ?? [],
         createdAt: updatedData?.createdAt,
+        metricsCalendarTimezone:
+          this.resolveDisplayMetricsTimezone(updatedData),
+        firstAgentTourSkipped: updatedData?.firstAgentTourSkipped === true,
       };
     } catch (error) {
       if (
@@ -630,6 +753,12 @@ export class UsersService {
       }
 
       const userData = snapshot.data() as UserData;
+      if (!planAllowsExtraMinutesPool(userData.plan as string | undefined)) {
+        throw new BadRequestException(
+          'Las recompensas de minutos extra solo están disponibles con un plan de pago (Starter, Growth o Scale).',
+        );
+      }
+
       const redeemedRewards = userData.redeemedRewards || [];
 
       // Validar si la recompensa ya fue canjeada
@@ -715,11 +844,15 @@ export class UsersService {
         throw new BadRequestException('Plan inválido');
       }
 
-      // Actualizar el plan y el límite de minutos base
-      await docRef.update({
+      // Actualizar el plan y el límite de minutos base; sin plan de pago no hay pool de extras
+      const updatePayload: Record<string, unknown> = {
         plan: newPlan,
         minutesLimit: planLimit.minutesLimit,
-      });
+      };
+      if (!planAllowsExtraMinutesPool(newPlan)) {
+        updatePayload.extraMinutes = 0;
+      }
+      await docRef.update(updatePayload);
 
       this.profileEventsService.notifyProfileUpdated(userId);
 

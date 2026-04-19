@@ -16,6 +16,10 @@ export type PlanLimitsEntry = {
   integrations: string;
   support: string;
   betaAccess: boolean;
+  /** Máx. acciones webhook (Make) por agente; 0 = sin acceso. */
+  makeWebhookActionsMax: number;
+  /** Máx. ejecuciones de webhooks distintas por llamada (anti-abuso). */
+  makeWebhookExecutionsPerCallMax: number;
 };
 
 /** Duración del trial en cuenta gratuita (mismas capacidades técnicas que Starter). */
@@ -40,6 +44,8 @@ export const EXPIRED_TRIAL_TECH_LIMITS: PlanLimitsEntry = {
   integrations: '—',
   support: '—',
   betaAccess: false,
+  makeWebhookActionsMax: 0,
+  makeWebhookExecutionsPerCallMax: 0,
 };
 
 export const PLAN_LIMITS = {
@@ -59,9 +65,11 @@ export const PLAN_LIMITS = {
     maxDocSizeMb: 10,
     storageTotalMb: 100,
     panelAnalytics: 'Básico',
-    integrations: 'Make (próximamente)',
+    integrations: 'Make (webhooks)',
     support: 'Email',
     betaAccess: false,
+    makeWebhookActionsMax: 3,
+    makeWebhookExecutionsPerCallMax: 3,
   },
   starter: {
     name: 'Starter',
@@ -75,9 +83,11 @@ export const PLAN_LIMITS = {
     maxDocSizeMb: 10,
     storageTotalMb: 100,
     panelAnalytics: 'Básico',
-    integrations: 'Make (próximamente)',
+    integrations: 'Make (webhooks)',
     support: 'Email',
     betaAccess: false,
+    makeWebhookActionsMax: 3,
+    makeWebhookExecutionsPerCallMax: 3,
   },
   growth: {
     name: 'Growth',
@@ -92,9 +102,11 @@ export const PLAN_LIMITS = {
     storageTotalMb: 400,
     panelAnalytics: 'Avanzado',
     integrations:
-      'Shopify / WooCommerce, Make (próximamente)',
+      'Shopify / WooCommerce, Make (webhooks)',
     support: 'Prioritario',
     betaAccess: false,
+    makeWebhookActionsMax: 15,
+    makeWebhookExecutionsPerCallMax: 6,
   },
   scale: {
     name: 'Scale',
@@ -109,15 +121,48 @@ export const PLAN_LIMITS = {
     storageTotalMb: 1536,
     panelAnalytics: 'Completo + exportación',
     integrations:
-      'Shopify / WooCommerce, Make (próximamente), CRM + webhooks',
+      'Shopify / WooCommerce, Make (webhooks), CRM + webhooks',
     support: 'Dedicado',
     betaAccess: true,
+    makeWebhookActionsMax: 50,
+    makeWebhookExecutionsPerCallMax: 10,
+  },
+  /**
+   * Suscripción cancelada / sin plan activo: no es «gratis» con trial; debe re-suscribirse.
+   * Mismos límites técnicos que trial expirado (acceso bloqueado hasta contratar).
+   */
+  sin_plan: {
+    name: 'Sin plan',
+    price: 0,
+    currency: 'EUR',
+    minutesLimit: 0,
+    extraPerMinuteEur: 0,
+    agents: 0,
+    indexedUrls: 0,
+    documentsMax: 0,
+    maxDocSizeMb: 0,
+    storageTotalMb: 0,
+    panelAnalytics: '—',
+    integrations: '—',
+    support: '—',
+    betaAccess: false,
+    makeWebhookActionsMax: 0,
+    makeWebhookExecutionsPerCallMax: 0,
   },
 } as const satisfies Record<string, PlanLimitsEntry>;
 
 export type PlanType = keyof typeof PLAN_LIMITS;
 
 export const DEFAULT_PLAN: PlanType = 'gratis';
+
+/** Trial gratis agotado o suscripción cancelada (sin plan activo). */
+export function isBlockedWithoutPaidPlan(
+  plan: PlanType,
+  isTrialActive: boolean,
+): boolean {
+  if (plan === 'sin_plan') return true;
+  return plan === 'gratis' && !isTrialActive;
+}
 
 /** Valores antiguos de `user.plan` que equivalen al plan gratuito */
 export const LEGACY_FREE_PLAN_SLUGS = ['basic', 'free'] as const;

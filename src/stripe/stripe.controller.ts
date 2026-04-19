@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   HttpStatus,
@@ -15,16 +16,21 @@ import { StripeService } from './stripe.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 import type { PlanType } from '../common/constants/plans.constants';
+import { AuthService } from '../auth/auth.service';
 
 @ApiTags('stripe')
 @Controller('stripe')
 export class StripeController {
-  constructor(private readonly stripeService: StripeService) {}
+  constructor(
+    private readonly stripeService: StripeService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Webhook Stripe (firma HMAC). Requiere rawBody en middleware.',
+    summary:
+      'Webhook Stripe (firma HMAC). Requiere rawBody en middleware. Eventos: checkout.session.completed, customer.subscription.*, subscription_schedule.updated|completed|released (downgrade programado vía portal), invoice.paid o invoice.payment_succeeded (recibo), invoice.payment_failed (aviso cobro + sync suscripción).',
   })
   async webhook(
     @Req() req: Request & { rawBody?: Buffer },
@@ -40,6 +46,18 @@ export class StripeController {
     return { received: true };
   }
 
+  @Post('onboarding-free-trial')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Onboarding: 7 días gratis sin tarjeta — crea Customer en Stripe (y opcionalmente suscripción €0) y marca selección de plan completada',
+  })
+  async onboardingFreeTrial(@GetUser('uid') userId: string) {
+    await this.stripeService.ensureOnboardingFreeCustomer(userId);
+    return this.authService.completePlanSelection(userId);
+  }
+
   @Post('checkout-session')
   @UseGuards(FirebaseAuthGuard)
   @ApiBearerAuth()
@@ -51,6 +69,10 @@ export class StripeController {
       plan: PlanType;
       successUrl: string;
       cancelUrl: string;
+      /** Solo plan `starter`: `trial` (7 días, tarjeta obligatoria; cobro al acabar si no cancelan) o `pay`. */
+      starterMode?: 'trial' | 'pay';
+      /** `year` usa precios anuales (`STRIPE_PRICE_*_ANNUAL`). Por defecto mensual. */
+      billingInterval?: 'month' | 'year';
     },
   ) {
     return this.stripeService.createCheckoutSession({
@@ -58,6 +80,8 @@ export class StripeController {
       plan: body.plan,
       successUrl: body.successUrl,
       cancelUrl: body.cancelUrl,
+      starterMode: body.starterMode,
+      billingInterval: body.billingInterval,
     });
   }
 
@@ -73,5 +97,17 @@ export class StripeController {
       userId,
       returnUrl: body.returnUrl,
     });
+  }
+
+  @Get('latest-invoice')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Última factura (enlaces PDF / página alojada)',
+    description:
+      'Devuelve URLs de Stripe para la factura pagada más reciente del cliente asociado al usuario.',
+  })
+  async latestInvoice(@GetUser('uid') userId: string) {
+    return this.stripeService.getLatestInvoiceDownloadForUser(userId);
   }
 }

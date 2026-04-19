@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, MinLength, IsOptional, IsString } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({
@@ -18,4 +18,13 @@ export class LoginDto {
   @IsNotEmpty()
   @MinLength(8)
   password: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'UUID estable del navegador; si falta no se aplica verificación de dispositivo nuevo',
+  })
+  @IsOptional()
+  @IsString()
+  deviceId?: string;
 }

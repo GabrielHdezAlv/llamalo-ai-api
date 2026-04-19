@@ -86,7 +86,12 @@ async function bootstrap() {
     origin: corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    // Front (agents/knowledge-base): evita snackbar duplicado en 403 de plan; debe figurar en preflight
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Handles-Plan-403',
+    ],
   });
 
   // ✅ Swagger habilitable también en Render

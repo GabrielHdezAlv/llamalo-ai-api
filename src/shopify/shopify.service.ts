@@ -161,6 +161,23 @@ export class ShopifyService {
   constructor(private readonly cryptoService: CryptoService) {}
 
   /**
+   * URL base pública del API (OAuth `redirect_uri`, webhooks). Prioriza `APP_URL` siempre que esté definida,
+   * con o sin NODE_ENV=production (cada despliegue Render dev/preprod/prod debe tener su `APP_URL`).
+   * Debe coincidir carácter a carácter con "Allowed redirection URL(s)" en Shopify Partners.
+   */
+  getPublicApiBaseUrl(): string {
+    const explicit = process.env.APP_URL?.trim();
+    if (explicit) {
+      return explicit.replace(/\/$/, '');
+    }
+    if (process.env.NODE_ENV === 'production') {
+      return 'https://llamaloiabackend-5294.onrender.com';
+    }
+    const devTunnel = (process.env.NGROK_URL || 'http://localhost:3000').trim();
+    return devTunnel.replace(/\/$/, '');
+  }
+
+  /**
    * Scopes de Shopify por defecto (sin read_customers por cumplimiento GDPR)
    * Para agregar read_customers, configurar SHOPIFY_SCOPES en variables de entorno
    *
@@ -1074,11 +1091,7 @@ export class ShopifyService {
     accessToken: string,
   ): Promise<void> {
     try {
-      const baseUrl =
-        process.env.NODE_ENV === 'production'
-          ? process.env.APP_URL || 'https://llamaloiabackend-5294.onrender.com'
-          : process.env.NGROK_URL || 'http://localhost:3000'; // Requiere una URL pública
-
+      const baseUrl = this.getPublicApiBaseUrl();
       const webhookUrl = `${baseUrl}/shopify/webhooks`;
 
       await axios.post(
@@ -1284,13 +1297,12 @@ export class ShopifyService {
       const storeDoc = storeQuery.docs[0];
       const now = admin.firestore.Timestamp.now();
 
-      // Actualizar estado a revoked
       await storeDoc.ref.update({
         status: 'revoked',
+        accessToken: admin.firestore.FieldValue.delete(),
         updatedAt: now,
       });
 
-      // Actualizar referencia en users - eliminar del array
       const userDocRef = this.firestore.collection('users').doc(userId);
       const userSnapshot = await userDocRef.get();
 
@@ -1299,32 +1311,54 @@ export class ShopifyService {
         const integrations =
           (userData?.integrations as Record<string, unknown>) || {};
 
-        // Asegurar que shopify sea un array (manejar formato antiguo o valores inválidos)
         const shopifyArray: Array<{
           connected: boolean;
           shopDomain: string;
         }> = Array.isArray(integrations.shopify) ? integrations.shopify : [];
 
-        // Filtrar la tienda revocada del array
         const updatedShopifyArray = shopifyArray.filter(
           (store) => store.shopDomain !== normalizedShop,
         );
 
-        // Actualizar en users
+        const agentsRaw =
+          (userData?.agents as Array<Record<string, unknown>>) || [];
+        let agentsChanged = false;
+        const updatedAgents = agentsRaw.map((agent) => {
+          const raw = agent.shopifyDomain;
+          const agentShop =
+            typeof raw === 'string'
+              ? raw
+                  .replace(/^https?:\/\//, '')
+                  .replace(/\/$/, '')
+                  .toLowerCase()
+              : '';
+          if (agentShop && agentShop === normalizedShop.toLowerCase()) {
+            agentsChanged = true;
+            const next = { ...agent };
+            delete next.shopifyDomain;
+            return next;
+          }
+          return agent;
+        });
+
+        const patch: Record<string, unknown> = {};
+
         if (updatedShopifyArray.length === 0) {
-          // Si no quedan tiendas, eliminar la propiedad shopify
           delete integrations.shopify;
-          await userDocRef.set({ integrations }, { merge: true });
+          patch.integrations = integrations;
         } else {
-          // Si quedan tiendas, actualizar el array
-          await userDocRef.set(
-            {
-              integrations: {
-                shopify: updatedShopifyArray,
-              },
-            },
-            { merge: true },
-          );
+          patch.integrations = {
+            ...integrations,
+            shopify: updatedShopifyArray,
+          };
+        }
+
+        if (agentsChanged) {
+          patch.agents = updatedAgents;
+        }
+
+        if (Object.keys(patch).length > 0) {
+          await userDocRef.set(patch, { merge: true });
         }
       }
     } catch (error) {
