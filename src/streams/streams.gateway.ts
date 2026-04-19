@@ -1540,6 +1540,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     text: string,
     role: 'user' | 'system' = 'user',
   ) {
+    // Referencia de latencia: instante en que llega el transcript final del usuario (fin de turno hablado).
+    // No usar userSpeakingStartTime (inicio de habla en STT); evitaba inflar la métrica con la duración del discurso.
+    const userLatencyStart: number | undefined =
+      role === 'user' ? Date.now() : undefined;
+
     // 🛑 DETENER TEMPORIZADOR DE SILENCIO: El agente va a procesar y hablar
     this.stopSilenceTimer(session);
 
@@ -1551,12 +1556,6 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     if (role === 'user') {
       session.hangupNonce = (session.hangupNonce ?? 0) + 1;
     }
-
-    // Latencia solo tiene sentido para turnos reales del usuario (no intervención por silencio de sistema)
-    const userStartedAt =
-      role === 'user'
-        ? (session.userSpeakingStartTime ?? undefined)
-        : undefined;
 
     // Resetear estado de interrupción para permitir nueva respuesta
     session.interrupted = false;
@@ -1638,8 +1637,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         });
 
         // Registrar latencia de respuesta rápida
-        if (userStartedAt != null) {
-          const latency = Date.now() - userStartedAt;
+        if (userLatencyStart != null) {
+          const latency = Date.now() - userLatencyStart;
           session.responseLatencies.push(latency);
           if (
             latency >= 0 &&
@@ -1725,7 +1724,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         return;
       }
 
-      const agentResponseStart = Date.now(); // Marcar inicio de respuesta del agente
+      const agentResponseStart = Date.now(); // Justo antes de la petición al LLM (tras prep: Shopify, enrichInstructions, tools)
 
       // Herramientas Xenon (escalado + estado de conversación)
       const xenonTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -1865,9 +1864,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       session.agentSpeaking = false; // Aún no habla
       session.allowInterruptions = true;
 
-      // Calcular y guardar latencia (desde que el usuario empezó a hablar hasta inicio de respuesta)
-      if (userStartedAt != null) {
-        const latency = agentResponseStart - userStartedAt;
+      // Latencia = desde transcript final del usuario hasta inicio de la petición al LLM (sin contar la duración del habla)
+      if (userLatencyStart != null) {
+        const latency = agentResponseStart - userLatencyStart;
         session.responseLatencies.push(latency);
 
         if (latency >= 0) {
@@ -1892,7 +1891,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             console.warn(`[Latency] Error guardando latencia:`, error);
           }
         } else if (latency >= 15000) {
-          console.warn(`⚠️ [${session.callSid}] Latencia ignorada por ser irrealmente alta (${latency}ms). Posible desincronización de userStartedAt.`);
+          console.warn(`⚠️ [${session.callSid}] Latencia ignorada por ser irrealmente alta (${latency}ms). Posible desincronización del reloj o carga extrema antes del LLM.`);
         }
       }
 
