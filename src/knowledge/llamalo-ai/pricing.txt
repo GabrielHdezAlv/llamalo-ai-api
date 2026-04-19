@@ -1,9 +1,40 @@
-# PRECIOS DE LLAMALO AI
+# PRECIOS Y PLANES (EUR) — Catálogo Llamalo AI
 
-Actualmente, nuestro equipo está terminando de definir los detalles exactos de los planes y precios para asegurar que se adapten perfectamente a las necesidades de cada negocio.
+**Normas para Xenon:** Cita solo cifras de este documento. No inventes precios ni promociones. Si falta un dato o el usuario pide algo concreto (descuentos anuales, packs especiales), indícame que pueden variar y ofrece **team@llamalo.ai** o escalar a soporte humano.
 
-Si tienes interés en conocer más sobre el costo o quieres una propuesta personalizada:
-- Escribe a nuestro equipo de soporte a team@llamalo.ai.
-- O solicita que yo mismo envíe un ticket por ti para que te contacten.
+**Moneda:** euros (€). Los precios de suscripción mensual son los del catálogo técnico actual.
 
-Dato clave: Ofrecemos una prueba gratuita para que puedas experimentar la potencia de nuestros agentes sin compromiso.
+## Plan Gratis (`gratis`)
+- **Cuota:** 0 €/mes.
+- **Minutos de voz (referencia catálogo):** 100 minutos en alta; cuenta con **prueba de 7 días** en la que el producto aplica límites técnicos tipo Starter mientras el trial siga activo.
+- **Minutos extra bonificados:** en cuenta gratuita **no** hay minutos extra acumulables en Firestore como en planes de pago; el cupo sigue las reglas del plan/trial en la app.
+
+## Plan Starter (`starter`)
+- **Precio:** 29 €/mes.
+- **Minutos incluidos:** 45 min/mes.
+- **Minuto extra (fuera del cupo incluido):** 0,23 €/min.
+- **Agentes:** 1. Analítica de panel: Básica. Soporte: Email. Integración: Make (webhooks), entre otros límites del plan.
+
+## Plan Growth (`growth`)
+- **Precio:** 79 €/mes.
+- **Minutos incluidos:** 200 min/mes.
+- **Minuto extra:** 0,20 €/min.
+- **Agentes:** 2. Analítica: Avanzada. Soporte: Prioritario. Integraciones: Shopify / WooCommerce, Make (webhooks).
+
+## Plan Scale (`scale`)
+- **Precio:** 169 €/mes.
+- **Minutos incluidos:** 500 min/mes.
+- **Minuto extra:** 0,18 €/min.
+- **Agentes:** 5. Analítica: Completa + exportación CSV. Soporte: Dedicado. Integraciones ampliadas (Shopify, WooCommerce, Make, CRM + webhooks según catálogo).
+
+## Sin plan activo (`sin_plan`)
+- Suscripción cancelada o sin plan: sin minutos incluidos hasta contratar de nuevo. Orienta al usuario a **Inicio** con modal/flujo de precios (`?pricing=1`) o a la pantalla **`/subscribe-required`** si la cuenta lo exige.
+
+## Dónde contratar o mejorar plan en la app
+- Botón tipo **«Mejorar plan»** o **«Planes»** en el dashboard: en la práctica suele abrirse el **Inicio** (`/dashboard` o `/dashboard/home`) con query **`?pricing=1`** (o equivalente en la build) para mostrar precios y checkout.
+- Rutas **`/dashboard/upgrade-plan`** y **`/billing`** (bajo dashboard) **redirigen** a ese flujo de Inicio con `pricing=1`.
+- **Facturación** (Stripe): desde **Cuenta** → pestaña **Facturación**, cuando aplique.
+
+## Notas
+- Cobro de minutos extra por encima del cupo: según plan y facturación (Stripe / términos vigentes).
+- Para condiciones legales, devoluciones o facturas puntuales, no comprometas: escala a humano.
