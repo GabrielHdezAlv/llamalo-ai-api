@@ -413,11 +413,11 @@ export class TwilioService {
   }
 
   /**
-   * URL pública del API (variable BACKEND_URL), sin barra final.
+   * URL pública del API (variable APP_URL), sin barra final.
    * Si no está definida, se usa el despliegue por defecto (solo como respaldo).
    */
   private get publicBackendBase(): string {
-    const raw = process.env.BACKEND_URL?.trim();
+    const raw = process.env.APP_URL?.trim();
     if (raw) {
       return raw.replace(/\/$/, '');
     }
