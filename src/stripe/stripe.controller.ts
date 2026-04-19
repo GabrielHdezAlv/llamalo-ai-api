@@ -16,11 +16,15 @@ import { StripeService } from './stripe.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { GetUser } from '../auth/get-user.decorator';
 import type { PlanType } from '../common/constants/plans.constants';
+import { AuthService } from '../auth/auth.service';
 
 @ApiTags('stripe')
 @Controller('stripe')
 export class StripeController {
-  constructor(private readonly stripeService: StripeService) {}
+  constructor(
+    private readonly stripeService: StripeService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
@@ -40,6 +44,18 @@ export class StripeController {
     }
     await this.stripeService.handleWebhook(raw, signature);
     return { received: true };
+  }
+
+  @Post('onboarding-free-trial')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Onboarding: 7 días gratis sin tarjeta — crea Customer en Stripe (y opcionalmente suscripción €0) y marca selección de plan completada',
+  })
+  async onboardingFreeTrial(@GetUser('uid') userId: string) {
+    await this.stripeService.ensureOnboardingFreeCustomer(userId);
+    return this.authService.completePlanSelection(userId);
   }
 
   @Post('checkout-session')

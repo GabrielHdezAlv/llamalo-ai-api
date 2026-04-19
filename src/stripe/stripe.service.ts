@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
@@ -40,6 +41,8 @@ type SubscriptionLike = {
   metadata?: { userId?: string; plan?: string } | null;
   customer?: string | { id?: string };
   items?: { data?: Array<{ price?: { id?: string } }> };
+  /** Fin de trial en Stripe (segundos UNIX). */
+  trial_end?: number | null;
 };
 
 type StripeInvoiceRetrieved = Awaited<
@@ -48,6 +51,10 @@ type StripeInvoiceRetrieved = Awaited<
   /** Presente en facturas de suscripción (Stripe typings a veces omiten el campo). */
   subscription?: string | { id?: string; metadata?: { userId?: string } } | null;
 };
+
+type StripeSubscriptionRetrieved = Awaited<
+  ReturnType<InstanceType<typeof Stripe>['subscriptions']['retrieve']>
+>;
 
 @Injectable()
 export class StripeService {
@@ -192,12 +199,18 @@ export class StripeService {
       starterTrialEligible;
 
     const subscriptionData: {
-      metadata: { userId: string; plan: string };
+      metadata: {
+        userId: string;
+        plan: string;
+        /** Para informes en Stripe (Sigma / filtros): distingue trial de checkout del plan gratis solo en app. */
+        app_billing_phase?: string;
+      };
       trial_period_days?: number;
     } = {
       metadata: {
         userId: params.userId,
         plan: params.plan,
+        ...(starterTrial ? { app_billing_phase: 'stripe_trial' } : {}),
       },
       ...(starterTrial ? { trial_period_days: 7 } : {}),
     };
@@ -222,6 +235,82 @@ export class StripeService {
       ...(existingCustomerId ? { customer: existingCustomerId } : {}),
     });
     return { url: session.url, sessionId: session.id };
+  }
+
+  /**
+   * Onboarding «7 días gratis» sin tarjeta: crea un **Customer** en Stripe (obligatorio para aparecer en el panel).
+   * Si existe `STRIPE_PRICE_ONBOARDING_FREE` (precio recurrente 0 € creado en el Dashboard), también crea una
+   * **Subscription** a ese precio para que el usuario cuente en informes de suscripciones.
+   */
+  async ensureOnboardingFreeCustomer(userId: string): Promise<{
+    customerId: string;
+    subscriptionId: string | null;
+  }> {
+    const userRef = this.firestore.collection('users').doc(userId);
+    const snap = await userRef.get();
+    if (!snap.exists) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    const data = snap.data() as Record<string, unknown>;
+    const email = (data.email as string | undefined)?.trim();
+    if (!email) {
+      throw new BadRequestException('Usuario sin email');
+    }
+
+    const stripe = this.getStripe();
+    let customerId = (data.stripeCustomerId as string | undefined)?.trim();
+    if (!customerId) {
+      const name =
+        [data.name, data.lastname].filter(Boolean).join(' ').trim() ||
+        undefined;
+      const customer = await stripe.customers.create({
+        email,
+        name,
+        metadata: {
+          userId,
+          app_entry: 'onboarding_7d_gratis',
+        },
+      });
+      customerId = customer.id;
+      await userRef.set(
+        {
+          stripeCustomerId: customerId,
+          updatedAt: new Date(),
+        },
+        { merge: true },
+      );
+      this.logger.log(
+        `Stripe Customer ${customerId} (onboarding 7d gratis, sin tarjeta) → ${userId}`,
+      );
+    }
+
+    let subscriptionId =
+      (data.stripeSubscriptionId as string | undefined)?.trim() || null;
+    const freePriceId = process.env.STRIPE_PRICE_ONBOARDING_FREE?.trim();
+    if (freePriceId && !subscriptionId) {
+      const sub = await stripe.subscriptions.create({
+        customer: customerId,
+        items: [{ price: freePriceId }],
+        metadata: {
+          userId,
+          app_entry: 'onboarding_7d_gratis',
+        },
+      });
+      subscriptionId = sub.id;
+      await userRef.set(
+        {
+          stripeSubscriptionId: sub.id,
+          stripeSubscriptionStatus: sub.status,
+          updatedAt: new Date(),
+        },
+        { merge: true },
+      );
+      this.logger.log(
+        `Stripe Subscription ${sub.id} precio onboarding gratis → ${userId}`,
+      );
+    }
+
+    return { customerId, subscriptionId };
   }
 
   async createBillingPortalSession(params: {
@@ -679,6 +768,23 @@ export class StripeService {
     }
   }
 
+  /**
+   * Durante el trial de Stripe en Starter, el producto muestra «plan gratis» 7 días en la app;
+   * en Firestore debe seguir `plan: gratis` + `trialEndsAt` hasta que la suscripción pase a `active`.
+   */
+  private trialEndFirestoreFromStripeSub(sub: {
+    trial_end?: number | null;
+    status?: string;
+  }): admin.firestore.Timestamp {
+    const raw = sub.trial_end;
+    if (typeof raw === 'number' && raw > 0) {
+      return admin.firestore.Timestamp.fromMillis(raw * 1000);
+    }
+    return admin.firestore.Timestamp.fromMillis(
+      Date.now() + 7 * 24 * 60 * 60 * 1000,
+    );
+  }
+
   private async applyPlanFromSession(session: CheckoutSessionLike): Promise<void> {
     const userId =
       session.metadata?.userId ||
@@ -703,10 +809,11 @@ export class StripeService {
 
     const stripe = this.getStripe();
     let stripeSubscriptionStatus: string | null = null;
+    let retrievedSub: StripeSubscriptionRetrieved | null = null;
     if (subId) {
       try {
-        const sub = await stripe.subscriptions.retrieve(subId);
-        stripeSubscriptionStatus = sub.status;
+        retrievedSub = await stripe.subscriptions.retrieve(subId);
+        stripeSubscriptionStatus = retrievedSub.status;
       } catch (e) {
         this.logger.warn(
           `No se pudo leer suscripción ${subId}: ${(e as Error).message}`,
@@ -714,24 +821,40 @@ export class StripeService {
       }
     }
 
+    const starterTrialing =
+      plan === 'starter' && stripeSubscriptionStatus === 'trialing';
+
     const payload: Record<string, unknown> = {
-      plan,
-      minutesLimit: lim.minutesLimit,
       stripeCustomerId: customerId ?? null,
       stripeSubscriptionId: subId ?? null,
       stripeSubscriptionStatus,
       planSelectionCompleted: true,
       updatedAt: new Date(),
-      trialEndsAt: admin.firestore.FieldValue.delete(),
       billingChurnLocked: false,
       stripeStarterTrialEligible: false,
     };
+
+    if (starterTrialing) {
+      payload.plan = 'gratis';
+      payload.minutesLimit = PLAN_LIMITS.gratis.minutesLimit;
+      payload.trialEndsAt = this.trialEndFirestoreFromStripeSub(
+        retrievedSub ?? { status: stripeSubscriptionStatus ?? undefined },
+      );
+    } else {
+      payload.plan = plan;
+      payload.minutesLimit = lim.minutesLimit;
+      payload.trialEndsAt = admin.firestore.FieldValue.delete();
+    }
 
     await this.firestore
       .collection('users')
       .doc(userId)
       .set(payload, { merge: true });
-    this.logger.log(`Plan ${plan} aplicado a usuario ${userId} tras checkout.`);
+    this.logger.log(
+      starterTrialing
+        ? `Checkout Starter en trial: usuario ${userId} permanece en plan gratis hasta fin de trial Stripe.`
+        : `Plan ${plan} aplicado a usuario ${userId} tras checkout.`,
+    );
   }
 
   /**
@@ -864,13 +987,41 @@ export class StripeService {
             billingChurnLocked: false,
             stripeStarterTrialEligible: false,
             updatedAt: new Date(),
+            ...(plan !== 'gratis'
+              ? { trialEndsAt: admin.firestore.FieldValue.delete() }
+              : {}),
           },
           { merge: true },
         );
       return;
     }
 
-    const plan = planFromSub();
+    const resolvedPlan = planFromSub();
+    if (status === 'trialing' && resolvedPlan === 'starter') {
+      await this.firestore
+        .collection('users')
+        .doc(userId)
+        .set(
+          {
+            plan: 'gratis',
+            minutesLimit: PLAN_LIMITS.gratis.minutesLimit,
+            trialEndsAt: this.trialEndFirestoreFromStripeSub(sub),
+            stripeSubscriptionId: sub.id,
+            stripeSubscriptionStatus: status,
+            planSelectionCompleted: true,
+            billingChurnLocked: false,
+            stripeStarterTrialEligible: false,
+            updatedAt: new Date(),
+          },
+          { merge: true },
+        );
+      this.logger.log(
+        `Suscripción ${sub.id} en trialing (Starter): usuario ${userId} en plan gratis hasta fin de trial.`,
+      );
+      return;
+    }
+
+    const plan = resolvedPlan;
     if (!plan || !PLAN_LIMITS[plan]) {
       this.logger.warn(`No se pudo mapear plan para suscripción ${sub.id}`);
       return;
@@ -889,6 +1040,9 @@ export class StripeService {
           billingChurnLocked: false,
           stripeStarterTrialEligible: false,
           updatedAt: new Date(),
+          ...(plan !== 'gratis'
+            ? { trialEndsAt: admin.firestore.FieldValue.delete() }
+            : {}),
         },
         { merge: true },
       );
