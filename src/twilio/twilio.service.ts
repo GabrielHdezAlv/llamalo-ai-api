@@ -413,17 +413,27 @@ export class TwilioService {
   }
 
   /**
-   * URL del webhook de Twilio. Se lee de variable de entorno para flexibilidad
-   * entre entornos (dev/staging/prod).
+   * URL pública del API (variable BACKEND_URL), sin barra final.
+   * Si no está definida, se usa el despliegue por defecto (solo como respaldo).
    */
+  private get publicBackendBase(): string {
+    const raw = process.env.BACKEND_URL?.trim();
+    if (raw) {
+      return raw.replace(/\/$/, '');
+    }
+    return 'https://llamaloiabackend-5294.onrender.com';
+  }
+
   private get webhookUrl(): string {
-    return process.env.BACKEND_URL
-      ? `${process.env.BACKEND_URL}/metrics/twilio-webhook`
-      : 'https://llamaloiabackend-5294.onrender.com/metrics/twilio-webhook';
+    return `${this.publicBackendBase}/metrics/twilio-webhook`;
+  }
+
+  private get voiceIncomingUrl(): string {
+    return `${this.publicBackendBase}/voice/incoming`;
   }
 
   /**
-   * Registra el webhook de status callback en TODOS los números de una cuenta Twilio.
+   * Registra en cada número: voz entrante POST → /voice/incoming y status callback → /metrics/twilio-webhook.
    * Se llama automáticamente al conectar una cuenta nueva.
    */
   async registerWebhookOnAllNumbers(twilioSid: string, twilioToken: string): Promise<void> {
@@ -454,7 +464,7 @@ export class TwilioService {
         nextPageUri = response.data.next_page_uri;
       } while (nextPageUri);
 
-      // 2. Actualizar cada número con el webhook de status callback
+      // 2. Actualizar cada número con Voice URL + status callback
       await Promise.allSettled(
         allNumbers.map((number) =>
           this.registerWebhookOnNumber(twilioSid, twilioToken, number.sid),
@@ -470,7 +480,7 @@ export class TwilioService {
   }
 
   /**
-   * Registra el webhook de status callback en UN número específico (por su SID de Twilio).
+   * Actualiza un número Twilio: Voice URL (POST) y status callback (POST).
    */
   private async registerWebhookOnNumber(
     twilioSid: string,
@@ -479,6 +489,8 @@ export class TwilioService {
   ): Promise<void> {
     const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
     const params = new URLSearchParams({
+      VoiceUrl: this.voiceIncomingUrl,
+      VoiceMethod: 'POST',
       StatusCallback: this.webhookUrl,
       StatusCallbackMethod: 'POST',
     });
