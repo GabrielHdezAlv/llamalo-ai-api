@@ -12,7 +12,10 @@ import {
   isValidIanaTimezone,
 } from '../metrics/metrics-calendar.util';
 import { PLAN_LIMITS, PlanType } from '../common/constants/plans.constants';
-import { computeMinuteQuotaFromUserData } from '../common/utils/minute-quota.util';
+import {
+  computeMinuteQuotaFromUserData,
+  planAllowsExtraMinutesPool,
+} from '../common/utils/minute-quota.util';
 import { getFirestore } from '../firebase/firebase.config';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
 import { ProfileEventsService } from '../profile-events/profile-events.service';
@@ -325,7 +328,9 @@ export class UsersService {
         minutesLimit: this.planLimitsService.getEffectiveVoiceMinutesLimit(
           userData as unknown as admin.firestore.DocumentData,
         ),
-        extraMinutes: userData?.extraMinutes ?? 0, // Minutos extra por defecto
+        extraMinutes: planAllowsExtraMinutesPool(userData?.plan as string | undefined)
+          ? (userData?.extraMinutes ?? 0)
+          : 0,
         minutesByMonth: userData?.minutesByMonth ?? {}, // Historial de minutos por mes
         redeemedRewards: userData?.redeemedRewards ?? [],
         trialEndsAt: trialEndsAtStr,
@@ -440,7 +445,22 @@ export class UsersService {
       }
 
       if (updateDto.extraMinutes !== undefined) {
-        updates.extraMinutes = Number(updateDto.extraMinutes);
+        const planRaw = (snapshot.data() as UserData)?.plan;
+        const v = Number(updateDto.extraMinutes);
+        if (
+          !planAllowsExtraMinutesPool(planRaw as string | undefined) &&
+          v > 0 &&
+          !Number.isNaN(v)
+        ) {
+          throw new BadRequestException(
+            'Los minutos extra no aplican en el plan gratuito. Solo pueden asignarse en planes de pago.',
+          );
+        }
+        updates.extraMinutes = planAllowsExtraMinutesPool(
+          planRaw as string | undefined,
+        )
+          ? v
+          : 0;
       }
 
       if (
@@ -520,7 +540,11 @@ export class UsersService {
         rol: updatedData?.rol || 'client_user',
         hasCompletedSetup: updatedData?.hasCompletedSetup ?? true,
         minutesLimit: updatedData?.minutesLimit ?? 100,
-        extraMinutes: updatedData?.extraMinutes ?? 0,
+        extraMinutes: planAllowsExtraMinutesPool(
+          updatedData?.plan as string | undefined,
+        )
+          ? (updatedData?.extraMinutes ?? 0)
+          : 0,
         minutesByMonth: updatedData?.minutesByMonth ?? {},
         redeemedRewards: updatedData?.redeemedRewards ?? [],
         createdAt: updatedData?.createdAt,
@@ -717,6 +741,12 @@ export class UsersService {
       }
 
       const userData = snapshot.data() as UserData;
+      if (!planAllowsExtraMinutesPool(userData.plan as string | undefined)) {
+        throw new BadRequestException(
+          'Las recompensas de minutos extra solo están disponibles con un plan de pago (Starter, Growth o Scale).',
+        );
+      }
+
       const redeemedRewards = userData.redeemedRewards || [];
 
       // Validar si la recompensa ya fue canjeada
@@ -802,11 +832,15 @@ export class UsersService {
         throw new BadRequestException('Plan inválido');
       }
 
-      // Actualizar el plan y el límite de minutos base
-      await docRef.update({
+      // Actualizar el plan y el límite de minutos base; sin plan de pago no hay pool de extras
+      const updatePayload: Record<string, unknown> = {
         plan: newPlan,
         minutesLimit: planLimit.minutesLimit,
-      });
+      };
+      if (!planAllowsExtraMinutesPool(newPlan)) {
+        updatePayload.extraMinutes = 0;
+      }
+      await docRef.update(updatePayload);
 
       this.profileEventsService.notifyProfileUpdated(userId);
 

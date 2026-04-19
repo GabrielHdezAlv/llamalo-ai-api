@@ -20,6 +20,11 @@ export type MinuteQuotaSnapshot = {
 
 const PAID_SLUGS = new Set(['starter', 'growth', 'scale']);
 
+/** Solo planes de pago pueden acumular `extraMinutes` en Firestore (bonificación / ajuste por consumo). Plan `gratis`, `sin_plan`, etc.: siempre 0. */
+export function planAllowsExtraMinutesPool(plan?: string): boolean {
+  return PAID_SLUGS.has(normalizePlanSlug(plan));
+}
+
 /**
  * Plan Starter/Growth/Scale con suscripción Stripe activa: el sobrepaso se factura
  * (minutos extra / metered); no bloquear llamadas por cupo agotado.
@@ -76,12 +81,15 @@ export function computeMinuteQuotaFromUserData(
     options?.effectiveMinutesLimit !== undefined
       ? options.effectiveMinutesLimit
       : (userData.minutesLimit ?? 100);
-  const extraMinutes = userData.extraMinutes || 0;
-  /** Alineado con `computeAutoExtraMinutesAfterSync`: el cupo cuenta extras implícitos aunque Firestore aún no haya sincronizado. */
-  const imputedExtra = Math.max(
-    extraMinutes,
-    Math.max(0, Math.ceil(usedMinutes) - planLimit),
-  );
+  const poolOk = planAllowsExtraMinutesPool(userData.plan);
+  const extraMinutes = poolOk ? userData.extraMinutes || 0 : 0;
+  /** Alineado con `computeAutoExtraMinutesAfterSync`; gratis/sin_plan no usan pool de extras. */
+  const imputedExtra = poolOk
+    ? Math.max(
+        extraMinutes,
+        Math.max(0, Math.ceil(usedMinutes) - planLimit),
+      )
+    : 0;
   const totalLimit = planLimit + imputedExtra;
   const availableMinutes = Math.max(0, totalLimit - usedMinutes);
   const metered = allowsMeteredVoiceOverage(userData);
@@ -96,6 +104,7 @@ export function computeMinuteQuotaFromUserData(
 /**
  * Si el consumo supera el límite base del plan, sube `extraMinutes` para cubrir el
  * sobrepaso (sin Stripe). Idempotente: no reduce extras ya concedidos.
+ * Planes sin pool de pago (`gratis`, `sin_plan`, …): `extraMinutes` se fuerza a 0.
  */
 export function computeAutoExtraMinutesAfterSync(params: {
   plan?: string;
@@ -106,6 +115,10 @@ export function computeAutoExtraMinutesAfterSync(params: {
   if (isUnlimitedPlan(params.plan)) {
     const cur = params.extraMinutes ?? 0;
     return { newExtraMinutes: cur, didAdjust: false };
+  }
+  if (!planAllowsExtraMinutesPool(params.plan)) {
+    const cur = params.extraMinutes ?? 0;
+    return { newExtraMinutes: 0, didAdjust: cur !== 0 };
   }
   const planLimit = params.minutesLimit ?? 100;
   const currentExtra = params.extraMinutes ?? 0;
