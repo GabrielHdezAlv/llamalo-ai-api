@@ -3888,6 +3888,14 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         (session.customParameters?.to as string | undefined) ||
         (session.customParameters?.called as string | undefined) ||
         '';
+      const rawAgentId = session.customParameters?.agentId;
+      const parsedAgentId = rawAgentId
+        ? parseInt(String(rawAgentId), 10)
+        : NaN;
+      const agentIdForMetrics =
+        Number.isFinite(parsedAgentId) && parsedAgentId > 0
+          ? parsedAgentId
+          : undefined;
       this.metricsService
         .saveRegisteredCall({
           userId: session.userId,
@@ -3898,6 +3906,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           from: session.callerPhone || '',
           to: toNumber,
           startedAtMs,
+          agentId: agentIdForMetrics,
         })
         .catch((err) =>
           console.error(

@@ -216,4 +216,11 @@ export class UserProfileResponseDto {
       'Zona horaria IANA para métricas (semanas/meses de negocio en el panel); por defecto Europe/Madrid.',
   })
   metricsCalendarTimezone?: string;
+
+  @ApiProperty({
+    example: 0.23,
+    description:
+      'Precio en EUR por minuto extra según el plan efectivo del usuario (catálogo por plan).',
+  })
+  extraPerMinuteEur?: number;
 }

@@ -103,6 +103,8 @@ export class MetricsService {
     from: string;
     to: string;
     startedAtMs: number;
+    /** Si viene de la sesión Twilio (customParameters), acumula minutos en el agente del usuario */
+    agentId?: number;
   }): Promise<void> {
     const {
       userId,
@@ -113,31 +115,75 @@ export class MetricsService {
       from,
       to,
       startedAtMs,
+      agentId,
     } = params;
     try {
       const startedAt = admin.firestore.Timestamp.fromMillis(startedAtMs);
       const endedAt = admin.firestore.Timestamp.fromMillis(
         startedAtMs + Math.max(0, durationSeconds) * 1000,
       );
-      await this.firestore
+      const baseData: Record<string, unknown> = {
+        userId,
+        twilioAccountId,
+        callSid,
+        durationSeconds: Math.max(0, durationSeconds),
+        direction,
+        from: from || '',
+        to: to || '',
+        startedAt,
+        endedAt,
+        status: 'completed',
+        recordedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (agentId != null && Number.isFinite(agentId) && agentId > 0) {
+        baseData.agentId = agentId;
+      }
+
+      const callRef = this.firestore
         .collection(this.REGISTERED_CALLS_COLLECTION)
-        .doc(callSid)
-        .set(
-          {
-            userId,
-            twilioAccountId,
-            callSid,
-            durationSeconds: Math.max(0, durationSeconds),
-            direction,
-            from: from || '',
-            to: to || '',
-            startedAt,
-            endedAt,
-            status: 'completed',
-            recordedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
+        .doc(callSid);
+      const userRef = this.firestore.collection('users').doc(userId);
+
+      const shouldBumpAgent =
+        agentId != null &&
+        Number.isFinite(agentId) &&
+        agentId > 0 &&
+        durationSeconds > 0;
+
+      if (shouldBumpAgent) {
+        // Transacción: lectura del usuario antes de escrituras; suma minutos al agente vinculado
+        await this.firestore.runTransaction(async (tx) => {
+          const userSnap = await tx.get(userRef);
+          tx.set(callRef, baseData, { merge: true });
+
+          if (!userSnap.exists) {
+            return;
+          }
+
+          const userData = userSnap.data() as Record<string, unknown>;
+          const agents = (userData.agents as Array<Record<string, unknown>>) || [];
+          const idx = agents.findIndex((a) => Number(a.agentId) === agentId);
+
+          if (idx < 0) {
+            console.warn(
+              `[Metrics] saveRegisteredCall: agentId ${String(agentId)} no encontrado en user ${userId}; minutos no acumulados en el agente`,
+            );
+            return;
+          }
+
+          const deltaMinutes =
+            Math.round((Math.max(0, durationSeconds) / 60) * 100) / 100;
+          const current = Number(agents[idx].totalMinutes) || 0;
+          const newAgents = [...agents];
+          newAgents[idx] = {
+            ...agents[idx],
+            totalMinutes: Math.round((current + deltaMinutes) * 100) / 100,
+          };
+          tx.update(userRef, { agents: newAgents });
+        });
+      } else {
+        await callRef.set(baseData, { merge: true });
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Error desconocido';

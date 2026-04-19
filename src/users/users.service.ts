@@ -180,6 +180,8 @@ export type UserProfileResponse = {
   planSelectionCompleted?: boolean;
   /** Resuelta: perfil o `METRICS_CALENDAR_TIMEZONE` / Europe/Madrid */
   metricsCalendarTimezone?: string;
+  /** Precio EUR por minuto extra según el plan efectivo (catálogo `extraPerMinuteEur`). */
+  extraPerMinuteEur?: number;
 };
 
 export interface UploadFile {
@@ -335,6 +337,10 @@ export class UsersService {
         stripeStarterTrialEligible: userData?.stripeStarterTrialEligible !== false,
         planSelectionCompleted: userData?.planSelectionCompleted !== false,
         metricsCalendarTimezone: this.resolveDisplayMetricsTimezone(userData),
+        extraPerMinuteEur:
+          this.planLimitsService.getEffectiveTechLimits(
+            userData as unknown as admin.firestore.DocumentData,
+          ).extraPerMinuteEur,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
