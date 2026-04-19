@@ -141,6 +141,14 @@ export class UserProfileResponseDto {
   hasCompletedSetup?: boolean;
 
   @ApiProperty({
+    example: false,
+    description:
+      'Tour «primer agente»: true si el usuario pulsó Saltar o cerró (persistente en Firestore).',
+    required: false,
+  })
+  firstAgentTourSkipped?: boolean;
+
+  @ApiProperty({
     example: 100,
     description: 'Límite de minutos asignados al usuario',
   })

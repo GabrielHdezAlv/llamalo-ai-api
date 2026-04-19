@@ -105,6 +105,8 @@ interface UserData {
   };
   /** IANA: semanas/meses de negocio en métricas del panel */
   metricsCalendarTimezone?: string;
+  /** Tour «primer agente»: usuario pulsó Saltar o cerró; no volver a mostrar (Firestore). */
+  firstAgentTourSkipped?: boolean;
 }
 
 export type UserProfileResponse = {
@@ -185,6 +187,8 @@ export type UserProfileResponse = {
   metricsCalendarTimezone?: string;
   /** Precio EUR por minuto extra según el plan efectivo (catálogo `extraPerMinuteEur`). */
   extraPerMinuteEur?: number;
+  /** Tour primer agente omitido (persistente en Firestore). */
+  firstAgentTourSkipped?: boolean;
 };
 
 export interface UploadFile {
@@ -346,6 +350,7 @@ export class UsersService {
           this.planLimitsService.getEffectiveTechLimits(
             userData as unknown as admin.firestore.DocumentData,
           ).extraPerMinuteEur,
+        firstAgentTourSkipped: userData?.firstAgentTourSkipped === true,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -499,6 +504,12 @@ export class UsersService {
         }
       }
 
+      if (updateDto.firstAgentTourSkipped !== undefined) {
+        updates.firstAgentTourSkipped =
+          updateDto.firstAgentTourSkipped === true ||
+          updateDto.firstAgentTourSkipped === 'true';
+      }
+
       if (Object.keys(updates).length === 0) {
         throw new BadRequestException('No se enviaron datos para actualizar');
       }
@@ -550,6 +561,7 @@ export class UsersService {
         createdAt: updatedData?.createdAt,
         metricsCalendarTimezone:
           this.resolveDisplayMetricsTimezone(updatedData),
+        firstAgentTourSkipped: updatedData?.firstAgentTourSkipped === true,
       };
     } catch (error) {
       if (

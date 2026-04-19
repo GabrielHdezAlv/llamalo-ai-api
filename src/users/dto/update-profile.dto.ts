@@ -148,4 +148,13 @@ export class UpdateProfileDto {
   @MaxLength(100)
   metricsCalendarTimezone?: string;
 
+  @ApiProperty({
+    example: true,
+    description:
+      'Tour «primer agente»: marcado al pulsar Saltar o cerrar; persiste en Firestore.',
+    required: false,
+  })
+  @IsOptional()
+  firstAgentTourSkipped?: boolean | string;
+
 }
