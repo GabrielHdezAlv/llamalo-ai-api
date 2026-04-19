@@ -11,6 +11,7 @@ services:
   - type: web
     name: llamaloiabackend-dev
     branch: dev
+    # ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY: en dev suele ser false o sin definir (pruebas Twilio libres).
     runtime: node
     repo: https://github.com/GabrielHdezAlv/llamalo-ai-api
     plan: starter
@@ -26,9 +27,29 @@ services:
         sync: false
       - key: STRIPE_PRICE_GROWTH
         sync: false
+      - key: STRIPE_PRICE_STARTER_METERED
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_METERED
+        sync: false
+      - key: STRIPE_PRICE_SCALE_METERED
+        sync: false
+      - key: STRIPE_PRICE_STARTER_METERED_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_METERED_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_SCALE_METERED_ANNUAL
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_STARTER
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_GROWTH
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_SCALE
+        sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY
         sync: false
       - key: ALLOW_PLAN_CHANGE_MOCK
         sync: false
@@ -40,7 +61,7 @@ services:
         sync: false
       - key: SILENCE_TIMEOUT_MS
         sync: false
-      - key: MAILERSEND_API_KEY
+      - key: RESEND_API_KEY
         sync: false
       - key: OPENAI_MAX_TOKENS_FIRST_TURN
         sync: false
@@ -139,9 +160,29 @@ services:
         sync: false
       - key: STRIPE_PRICE_GROWTH
         sync: false
+      - key: STRIPE_PRICE_STARTER_METERED
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_METERED
+        sync: false
+      - key: STRIPE_PRICE_SCALE_METERED
+        sync: false
+      - key: STRIPE_PRICE_STARTER_METERED_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_METERED_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_SCALE_METERED_ANNUAL
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_STARTER
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_GROWTH
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME_SCALE
+        sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY
         sync: false
       - key: ALLOW_PLAN_CHANGE_MOCK
         sync: false
@@ -153,7 +194,7 @@ services:
         sync: false
       - key: SILENCE_TIMEOUT_MS
         sync: false
-      - key: MAILERSEND_API_KEY
+      - key: RESEND_API_KEY
         sync: false
       - key: OPENAI_MAX_TOKENS_FIRST_TURN
         sync: false

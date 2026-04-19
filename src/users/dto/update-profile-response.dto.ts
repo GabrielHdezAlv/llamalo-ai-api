@@ -57,4 +57,12 @@ export class UpdateProfileResponseDto {
     description: 'Fecha de creación',
   })
   createdAt?: string;
+
+  @ApiProperty({
+    example: 'Europe/Madrid',
+    description:
+      'Zona horaria IANA usada para períodos de métricas en el panel',
+    required: false,
+  })
+  metricsCalendarTimezone?: string;
 }

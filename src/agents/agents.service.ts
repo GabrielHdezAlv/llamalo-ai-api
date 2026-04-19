@@ -15,6 +15,7 @@ import { GenerateAgentInstructionRequestDto } from './dto/generate-agent-instruc
 import { GenerateAgentInstructionResponseDto } from './dto/generate-agent-instruction-response.dto';
 import { getFirestore } from '../firebase/firebase.config';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
+import { WebhookActionsService } from '../webhook-actions/webhook-actions.service';
 
 @Injectable()
 export class AgentsService {
@@ -28,6 +29,7 @@ export class AgentsService {
     @Inject(forwardRef(() => KnowledgeBaseService))
     private readonly knowledgeBaseService: KnowledgeBaseService,
     private readonly planLimitsService: PlanLimitsService,
+    private readonly webhookActionsService: WebhookActionsService,
   ) {}
 
   private readAgentPromptTemplate(): string {
@@ -874,6 +876,15 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         },
         { merge: true },
       );
+
+      try {
+        await this.webhookActionsService.deleteAllForAgent(userId, agentId);
+      } catch (e) {
+        console.error(
+          `[deleteAgent] No se pudieron eliminar webhook actions para agent ${agentId}:`,
+          e,
+        );
+      }
 
       return {
         message: 'Agente eliminado correctamente.',

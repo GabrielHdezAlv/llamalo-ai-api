@@ -141,6 +141,14 @@ export class UserProfileResponseDto {
   hasCompletedSetup?: boolean;
 
   @ApiProperty({
+    example: false,
+    description:
+      'Tour «primer agente»: true si el usuario pulsó Saltar o cerró (persistente en Firestore).',
+    required: false,
+  })
+  firstAgentTourSkipped?: boolean;
+
+  @ApiProperty({
     example: 100,
     description: 'Límite de minutos asignados al usuario',
   })
@@ -181,4 +189,46 @@ export class UserProfileResponseDto {
     description: 'ID de suscripción Stripe',
   })
   stripeSubscriptionId?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Estado de la suscripción en Stripe (trialing, active, past_due, etc.)',
+  })
+  stripeSubscriptionStatus?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'true si la suscripción terminó (cancelación): el cliente debe volver a contratar (pantalla dedicada).',
+  })
+  billingChurnLocked?: boolean;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'false = no ofrecer trial Starter de 7 días (ya pagó o churn). Ausente/true = elegible.',
+  })
+  stripeStarterTrialEligible?: boolean;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'false si aún debe elegir plan o prueba tras registro; true si ya eligió o es cuenta antigua',
+  })
+  planSelectionCompleted?: boolean;
+
+  @ApiProperty({
+    example: 'Europe/Madrid',
+    description:
+      'Zona horaria IANA para métricas (semanas/meses de negocio en el panel); por defecto Europe/Madrid.',
+  })
+  metricsCalendarTimezone?: string;
+
+  @ApiProperty({
+    example: 0.23,
+    description:
+      'Precio en EUR por minuto extra según el plan efectivo del usuario (catálogo por plan).',
+  })
+  extraPerMinuteEur?: number;
 }

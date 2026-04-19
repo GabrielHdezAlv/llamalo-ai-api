@@ -7,9 +7,19 @@ import { MetricsModule } from '../metrics/metrics.module';
 import { AgentsModule } from '../agents/agents.module';
 import { AuthModule } from '../auth/auth.module'; // Importar AuthModule para usar EmailService
 import { UsersModule } from '../users/users.module';
+import { WebhookActionsModule } from '../webhook-actions/webhook-actions.module';
+import { PlanLimitsModule } from '../plan-limits/plan-limits.module';
 
 @Module({
-  imports: [ShopifyModule, MetricsModule, AgentsModule, AuthModule, UsersModule],
+  imports: [
+    ShopifyModule,
+    MetricsModule,
+    AgentsModule,
+    AuthModule,
+    UsersModule,
+    WebhookActionsModule,
+    PlanLimitsModule,
+  ],
   controllers: [CallsController],
   providers: [TwilioService, StreamsGateway],
   exports: [StreamsGateway],

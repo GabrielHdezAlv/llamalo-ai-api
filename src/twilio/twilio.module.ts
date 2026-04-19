@@ -5,5 +5,6 @@ import { TwilioService } from './twilio.service';
 @Module({
   controllers: [TwilioController],
   providers: [TwilioService],
+  exports: [TwilioService],
 })
 export class TwilioModule {}

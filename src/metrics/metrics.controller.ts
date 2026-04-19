@@ -11,6 +11,7 @@ import { MetricsService } from './metrics.service';
 import { DashboardMetricsResponseDto } from './dto/dashboard-metrics-response.dto';
 import { TwilioDetailedMetricsResponseDto } from './dto/twilio-detailed-metrics.dto';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
+import { OwnerRoleGuard } from '../auth/owner-role.guard';
 import { GetUser } from '../auth/get-user.decorator';
 import { BadRequestException } from '@nestjs/common';
 
@@ -21,9 +22,9 @@ export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}
 
   @Get('test-latency')
-  @UseGuards(FirebaseAuthGuard)
+  @UseGuards(FirebaseAuthGuard, OwnerRoleGuard)
   @ApiOperation({
-    summary: 'Test endpoint para crear datos de latencia de prueba',
+    summary: 'Test endpoint para crear datos de latencia de prueba (solo owner)',
   })
   @ApiResponse({ status: 200, description: 'Datos de latencia creados' })
   async testLatency(@GetUser('uid') userId: string) {

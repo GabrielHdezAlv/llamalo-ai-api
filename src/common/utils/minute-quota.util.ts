@@ -1,4 +1,11 @@
-import { isUnlimitedPlan } from '../constants/plans.constants';
+import {
+  isUnlimitedPlan,
+  normalizePlanSlug,
+} from '../constants/plans.constants';
+import {
+  getCalendarMonthKey,
+  resolveMetricsTimezoneFromUser,
+} from '../../metrics/metrics-calendar.util';
 
 /**
  * Cálculo unificado del cupo mensual de minutos (plan + extras vs consumo del mes).
@@ -11,16 +18,54 @@ export type MinuteQuotaSnapshot = {
   totalLimit: number;
 };
 
+const PAID_SLUGS = new Set(['starter', 'growth', 'scale']);
+
+/** Solo planes de pago pueden acumular `extraMinutes` en Firestore (bonificación / ajuste por consumo). Plan `gratis`, `sin_plan`, etc.: siempre 0. */
+export function planAllowsExtraMinutesPool(plan?: string): boolean {
+  return PAID_SLUGS.has(normalizePlanSlug(plan));
+}
+
+/**
+ * Plan Starter/Growth/Scale con suscripción Stripe activa: el sobrepaso se factura
+ * (minutos extra / metered); no bloquear llamadas por cupo agotado.
+ */
+export function allowsMeteredVoiceOverage(userData: {
+  plan?: string;
+  billingChurnLocked?: boolean;
+  stripeSubscriptionId?: string | null;
+  stripeSubscriptionStatus?: string | null;
+}): boolean {
+  if (userData.billingChurnLocked === true) {
+    return false;
+  }
+  const slug = normalizePlanSlug(userData.plan);
+  if (!PAID_SLUGS.has(slug)) {
+    return false;
+  }
+  if (!userData.stripeSubscriptionId?.trim()) {
+    return false;
+  }
+  const st = (userData.stripeSubscriptionStatus || '').trim().toLowerCase();
+  return st === 'active' || st === 'trialing';
+}
+
 export function computeMinuteQuotaFromUserData(
   userData: {
     plan?: string;
     minutesLimit?: number;
     extraMinutes?: number;
     minutesByMonth?: Record<string, number>;
+    metricsCalendarTimezone?: string;
+    billingChurnLocked?: boolean;
+    stripeSubscriptionId?: string | null;
+    stripeSubscriptionStatus?: string | null;
   },
   options?: { effectiveMinutesLimit?: number },
 ): MinuteQuotaSnapshot {
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const tz = resolveMetricsTimezoneFromUser(
+    userData as Record<string, unknown>,
+  );
+  const currentMonth = getCalendarMonthKey(tz);
   const usedMinutes = userData.minutesByMonth?.[currentMonth] || 0;
 
   if (isUnlimitedPlan(userData.plan)) {
@@ -36,11 +81,20 @@ export function computeMinuteQuotaFromUserData(
     options?.effectiveMinutesLimit !== undefined
       ? options.effectiveMinutesLimit
       : (userData.minutesLimit ?? 100);
-  const extraMinutes = userData.extraMinutes || 0;
-  const totalLimit = planLimit + extraMinutes;
+  const poolOk = planAllowsExtraMinutesPool(userData.plan);
+  const extraMinutes = poolOk ? userData.extraMinutes || 0 : 0;
+  /** Alineado con `computeAutoExtraMinutesAfterSync`; gratis/sin_plan no usan pool de extras. */
+  const imputedExtra = poolOk
+    ? Math.max(
+        extraMinutes,
+        Math.max(0, Math.ceil(usedMinutes) - planLimit),
+      )
+    : 0;
+  const totalLimit = planLimit + imputedExtra;
   const availableMinutes = Math.max(0, totalLimit - usedMinutes);
+  const metered = allowsMeteredVoiceOverage(userData);
   return {
-    hasMinutes: availableMinutes > 0,
+    hasMinutes: availableMinutes > 0 || metered,
     availableMinutes,
     usedMinutes,
     totalLimit,
@@ -50,6 +104,7 @@ export function computeMinuteQuotaFromUserData(
 /**
  * Si el consumo supera el límite base del plan, sube `extraMinutes` para cubrir el
  * sobrepaso (sin Stripe). Idempotente: no reduce extras ya concedidos.
+ * Planes sin pool de pago (`gratis`, `sin_plan`, …): `extraMinutes` se fuerza a 0.
  */
 export function computeAutoExtraMinutesAfterSync(params: {
   plan?: string;
@@ -60,6 +115,10 @@ export function computeAutoExtraMinutesAfterSync(params: {
   if (isUnlimitedPlan(params.plan)) {
     const cur = params.extraMinutes ?? 0;
     return { newExtraMinutes: cur, didAdjust: false };
+  }
+  if (!planAllowsExtraMinutesPool(params.plan)) {
+    const cur = params.extraMinutes ?? 0;
+    return { newExtraMinutes: 0, didAdjust: cur !== 0 };
   }
   const planLimit = params.minutesLimit ?? 100;
   const currentExtra = params.extraMinutes ?? 0;

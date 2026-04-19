@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { TwilioService } from './twilio.service';
+import { getTwilioMediaStreamWebSocketUrl } from './twilio-media-stream-url';
 import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
 import { UsersService } from '../users/users.service';
 import * as admin from 'firebase-admin';
@@ -260,10 +261,8 @@ export class CallsController {
       //   }
       // }
 
-      const wsUrl =
-        process.env.NODE_ENV === 'production'
-          ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
-          : 'ws://localhost:3000/voice/stream';
+      const wsUrl = getTwilioMediaStreamWebSocketUrl();
+      console.log('[Calls] Twilio Media Stream WebSocket:', wsUrl);
 
       const connect = r.connect();
       const stream = connect.stream({
@@ -526,10 +525,8 @@ export class CallsController {
     }
 
     const r = this.twilio.newVoiceResponse();
-    const wsUrl =
-      process.env.NODE_ENV === 'production'
-        ? 'wss://llamaloiabackend-5294.onrender.com/voice/stream'
-        : 'ws://localhost:3000/voice/stream';
+    const wsUrl = getTwilioMediaStreamWebSocketUrl();
+    console.log('[Calls] resume — Twilio Media Stream WebSocket:', wsUrl);
 
     console.log('🔄 Reanudando stream Twilio');
     console.log('🔁 CallSid reanudado:', body?.CallSid || 'desconocido');

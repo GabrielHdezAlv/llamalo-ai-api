@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Post, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
@@ -6,6 +6,7 @@ import { RecoverDto } from './dto/recover.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { VerifyDeviceLoginDto } from './dto/verify-device-login.dto';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -23,6 +24,28 @@ export class AuthController {
   @Post('register')
   async register(@Body() createUserDto: CreateUserDto) {
     return this.authService.registerUser(createUserDto);
+  }
+
+  @Post('register/complete-plan-selection')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Marca como completada la elección de plan o prueba gratuita tras el registro',
+  })
+  async completePlanSelection(@GetUser('uid') userId: string) {
+    return this.authService.completePlanSelection(userId);
+  }
+
+  @Delete('register/cancel')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Cancela el registro si aún no se eligió plan ni prueba (borra usuario)',
+  })
+  async cancelIncompleteRegistration(@GetUser('uid') userId: string) {
+    return this.authService.cancelIncompleteRegistration(userId);
   }
 
   @Post('google')
@@ -45,6 +68,15 @@ export class AuthController {
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
+  }
+
+  @Post('verify-device-login')
+  @ApiOperation({
+    summary:
+      'Completar login tras código enviado al correo (nuevo dispositivo/navegador)',
+  })
+  async verifyDeviceLogin(@Body() dto: VerifyDeviceLoginDto) {
+    return this.authService.verifyDeviceLogin(dto);
   }
 
   @Post('recover')

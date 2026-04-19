@@ -22,7 +22,9 @@
     "migrate:legacy-plan-slugs": "node scripts/migrate-legacy-paid-plan-slugs.js",
     "migrate:trial-ends": "node scripts/migrate-trial-ends-at.js",
     "sync:user-minutes": "node scripts/sync-user-minutes-from-catalog.js",
-    "seed:plans": "node scripts/seed-plans-collection.js"
+    "seed:plans": "node scripts/seed-plans-collection.js",
+    "migrate:stripe-metered": "node scripts/add-metered-to-stripe-subscriptions.js",
+    "migrate:stripe-metered:verify": "node scripts/add-metered-to-stripe-subscriptions.js --verify"
   },
   "dependencies": {
     "@langchain/openai": "^1.2.5",
@@ -51,7 +53,7 @@
     "form-data": "^4.0.4",
     "jsdom": "^29.0.1",
     "langchain": "^1.2.18",
-    "mailersend": "^2.7.0",
+    "luxon": "^3.7.2",
     "multer": "^2.0.2",
     "nodemailer": "^8.0.1",
     "openai": "^6.3.0",
@@ -59,6 +61,7 @@
     "pdf2json": "^4.0.2",
     "puppeteer": "^24.37.2",
     "reflect-metadata": "^0.2.2",
+    "resend": "^6.12.0",
     "rxjs": "^7.8.1",
     "sharp": "^0.34.5",
     "stripe": "^22.0.1",
@@ -78,6 +81,7 @@
     "@types/form-data": "^2.2.1",
     "@types/jest": "^30.0.0",
     "@types/jsdom": "^28.0.1",
+    "@types/luxon": "^3.7.1",
     "@types/mozilla-readability": "^0.2.1",
     "@types/multer": "^2.0.0",
     "@types/node": "^22.10.7",

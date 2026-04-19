@@ -8,9 +8,25 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { TwilioConfigDto } from './dto/twilio-config.dto';
 import { getFirestore } from '../firebase/firebase.config';
 
+/**
+ * Registro **persistente** de cuentas Twilio (Account SID) que ya se asociaron a un periodo
+ * de prueba Starter (Stripe `trialing`) o a Starter activo. No se borra al desvincular Twilio
+ * (a diferencia de `twilio_index`), para evitar abrir otro periodo de prueba con el mismo SID.
+ */
+const TWILIO_STARTER_TRIAL_REGISTRY = 'twilio_starter_trial_registry';
+
 @Injectable()
 export class TwilioService {
   private firestore = getFirestore();
+
+  /**
+   * Si es `false` (por defecto en local/dev), no se bloquea ni se registra reutilización Twilio en prueba Starter.
+   * En preprod y producción (`app.llamalo.ai`): `ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY=true` en el despliegue API.
+   */
+  isStarterTrialRegistryEnforced(): boolean {
+    const v = process.env.ENFORCE_TWILIO_STARTER_TRIAL_REGISTRY?.trim().toLowerCase();
+    return v === 'true' || v === '1' || v === 'yes';
+  }
 
   // 🔧 Normalizar twilio: convierte estructura antigua (objeto) a nueva (array)
   private normalizeTwilioArray(twilioData: unknown): Array<{
@@ -90,6 +106,86 @@ export class TwilioService {
     }
   }
 
+  /**
+   * `true` si algún Account SID vinculado al usuario ya consumió prueba Starter con **otra** cuenta de app.
+   * Usado antes de crear Checkout con `trial` en Starter.
+   */
+  async userHasTwilioSidBlockingStarterTrial(userId: string): Promise<boolean> {
+    if (!this.isStarterTrialRegistryEnforced()) return false;
+    const snap = await this.firestore.collection('users').doc(userId).get();
+    if (!snap.exists) return false;
+    const u = snap.data() as Record<string, unknown>;
+    const twilioArray = this.normalizeTwilioArray(u.twilio);
+    for (const acc of twilioArray) {
+      const sid = acc.twilioSid?.trim();
+      if (!sid?.startsWith('AC')) continue;
+      const reg = await this.firestore
+        .collection(TWILIO_STARTER_TRIAL_REGISTRY)
+        .doc(sid)
+        .get();
+      if (reg.exists) {
+        const first = (reg.data() as { firstUserId?: string })?.firstUserId?.trim();
+        if (first && first !== userId) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * No permitir conectar un Account SID que ya registró prueba Starter para otro userId.
+   */
+  private async assertTwilioSidEligibleForStarterTrialRegistry(
+    userId: string,
+    twilioSid: string,
+  ): Promise<void> {
+    if (!this.isStarterTrialRegistryEnforced()) return;
+    const sid = twilioSid.trim();
+    if (!sid.startsWith('AC')) return;
+    const reg = await this.firestore
+      .collection(TWILIO_STARTER_TRIAL_REGISTRY)
+      .doc(sid)
+      .get();
+    if (!reg.exists) return;
+    const first = (reg.data() as { firstUserId?: string })?.firstUserId?.trim();
+    if (first && first !== userId) {
+      throw new BadRequestException(
+        'Esta cuenta de Twilio ya se utilizó con un periodo de prueba Starter en la plataforma. Usa otras credenciales u otro proyecto en Twilio, o contacta con soporte.',
+      );
+    }
+  }
+
+  /**
+   * Primera escritura por Account SID gana: marca el SID como usado en contexto Starter/trial.
+   * Convoca tras checkout trialing, webhooks de suscripción o al guardar Twilio mientras aplica.
+   */
+  async registerTwilioSidsAfterTrialOrStarterSubscription(
+    userId: string,
+  ): Promise<void> {
+    if (!this.isStarterTrialRegistryEnforced()) return;
+    const snap = await this.firestore.collection('users').doc(userId).get();
+    if (!snap.exists) return;
+    const u = snap.data() as Record<string, unknown>;
+    const status = (u.stripeSubscriptionStatus as string | undefined)?.trim();
+    const plan = (u.plan as string | undefined)?.trim();
+    const shouldRegister =
+      status === 'trialing' ||
+      (status === 'active' && plan === 'starter');
+    if (!shouldRegister) return;
+    const twilioArray = this.normalizeTwilioArray(u.twilio);
+    for (const acc of twilioArray) {
+      const sid = acc.twilioSid?.trim();
+      if (!sid?.startsWith('AC')) continue;
+      const ref = this.firestore.collection(TWILIO_STARTER_TRIAL_REGISTRY).doc(sid);
+      const existing = await ref.get();
+      if (!existing.exists) {
+        await ref.set({
+          firstUserId: userId,
+          registeredAt: FieldValue.serverTimestamp(),
+        });
+      }
+    }
+  }
+
   // ✅ Configurar Twilio
   async setTwilioConfig(userId: string, config: TwilioConfigDto) {
     try {
@@ -108,6 +204,11 @@ export class TwilioService {
         userId,
         config.twilioSid,
         config.twilioToken,
+      );
+
+      await this.assertTwilioSidEligibleForStarterTrialRegistry(
+        userId,
+        config.twilioSid,
       );
 
       // Validar credenciales antes de guardar
@@ -188,6 +289,14 @@ export class TwilioService {
       // Se hace de forma no bloqueante para no retrasar la respuesta al usuario
       this.registerWebhookOnAllNumbers(config.twilioSid, config.twilioToken).catch(
         (err) => console.error('[Twilio] Error registrando webhook al conectar cuenta:', err),
+      );
+
+      void this.registerTwilioSidsAfterTrialOrStarterSubscription(userId).catch(
+        (err) =>
+          console.error(
+            '[Twilio] Error en registro trial/starter tras guardar cuenta:',
+            err,
+          ),
       );
 
       return {
@@ -304,17 +413,27 @@ export class TwilioService {
   }
 
   /**
-   * URL del webhook de Twilio. Se lee de variable de entorno para flexibilidad
-   * entre entornos (dev/staging/prod).
+   * URL pública del API (variable APP_URL), sin barra final.
+   * Si no está definida, se usa el despliegue por defecto (solo como respaldo).
    */
+  private get publicBackendBase(): string {
+    const raw = process.env.APP_URL?.trim();
+    if (raw) {
+      return raw.replace(/\/$/, '');
+    }
+    return 'https://llamaloiabackend-5294.onrender.com';
+  }
+
   private get webhookUrl(): string {
-    return process.env.BACKEND_URL
-      ? `${process.env.BACKEND_URL}/metrics/twilio-webhook`
-      : 'https://llamaloiabackend-5294.onrender.com/metrics/twilio-webhook';
+    return `${this.publicBackendBase}/metrics/twilio-webhook`;
+  }
+
+  private get voiceIncomingUrl(): string {
+    return `${this.publicBackendBase}/voice/incoming`;
   }
 
   /**
-   * Registra el webhook de status callback en TODOS los números de una cuenta Twilio.
+   * Registra en cada número: voz entrante POST → /voice/incoming y status callback → /metrics/twilio-webhook.
    * Se llama automáticamente al conectar una cuenta nueva.
    */
   async registerWebhookOnAllNumbers(twilioSid: string, twilioToken: string): Promise<void> {
@@ -345,7 +464,7 @@ export class TwilioService {
         nextPageUri = response.data.next_page_uri;
       } while (nextPageUri);
 
-      // 2. Actualizar cada número con el webhook de status callback
+      // 2. Actualizar cada número con Voice URL + status callback
       await Promise.allSettled(
         allNumbers.map((number) =>
           this.registerWebhookOnNumber(twilioSid, twilioToken, number.sid),
@@ -361,7 +480,7 @@ export class TwilioService {
   }
 
   /**
-   * Registra el webhook de status callback en UN número específico (por su SID de Twilio).
+   * Actualiza un número Twilio: Voice URL (POST) y status callback (POST).
    */
   private async registerWebhookOnNumber(
     twilioSid: string,
@@ -370,6 +489,8 @@ export class TwilioService {
   ): Promise<void> {
     const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
     const params = new URLSearchParams({
+      VoiceUrl: this.voiceIncomingUrl,
+      VoiceMethod: 'POST',
       StatusCallback: this.webhookUrl,
       StatusCallbackMethod: 'POST',
     });
@@ -861,6 +982,11 @@ export class TwilioService {
           twilioToken,
         );
 
+        await this.assertTwilioSidEligibleForStarterTrialRegistry(
+          userId,
+          twilioSid,
+        );
+
         // Verificar que las credenciales no estén asociadas parcialmente a otra cuenta
         const existingAccount = twilioArray.find(
           (acc) =>
@@ -999,6 +1125,17 @@ export class TwilioService {
       }
 
       await userDocRef.set(updateData, { merge: true });
+
+      if (accountsUpdated) {
+        void this.registerTwilioSidsAfterTrialOrStarterSubscription(
+          userId,
+        ).catch((err) =>
+          console.error(
+            '[Twilio] Error en registro trial/starter tras crear número:',
+            err,
+          ),
+        );
+      }
 
       // Registrar webhook en este número automáticamente (fire-and-forget)
       this.registerWebhookOnPhoneNumber(
