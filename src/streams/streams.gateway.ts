@@ -1166,6 +1166,24 @@ export class StreamsGateway {
       // 1. Cargar reglas de voz (siempre)
       const voiceRules = this.readStaticFile('src/prompts/voice-rules.md');
 
+      // 1b. Inyección interna: uso de acciones Make/webhook (no visible en la UI del cliente)
+      let makeWebhookHints = '';
+      if (session.webhookActions?.length) {
+        let makeBody = this.readStaticFile(
+          'src/prompts/make-webhook-hints.md',
+        ).trim();
+        if (!makeBody) {
+          makeBody =
+            'Tienes herramientas webhook/Make: invócalas según su descripción cuando encaje la intención del usuario; no inventes resultados; resume por voz de forma breve.';
+        }
+        const lim =
+          typeof session.webhookExecLimitPerCall === 'number' &&
+          session.webhookExecLimitPerCall > 0
+            ? `\n[Límite de esta llamada: máximo ${session.webhookExecLimitPerCall} ejecuciones exitosas de acciones webhook; no repitas la misma acción con éxito dos veces.]\n`
+            : '';
+        makeWebhookHints = `\n${makeBody}${lim}`;
+      }
+
       // 2. Cargar conocimiento de empresa (OPTIMIZADO)
       // En lugar de cargar todo el privacy_policy y terms_and_conditions que consumen miles de tokens,
       // Solo indicamos al agente que se apoye en su conocimiento interno y herramientas, 
@@ -1285,6 +1303,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         conversationStatePrompt,
         baseInstructions,
         voiceRules ? `\n${voiceRules}\n` : '',
+        makeWebhookHints,
         companyKnowledge,
         fallbackInstructions,
         finalShopifyContext,
