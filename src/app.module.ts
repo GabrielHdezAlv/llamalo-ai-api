@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { LanguagesModule } from './languages/languages.module';
@@ -25,6 +27,9 @@ import { WebhookActionsModule } from './webhook-actions/webhook-actions.module';
 
 @Module({
   imports: [
+    // SentryModule debe estar lo más arriba posible para que envuelva el resto
+    // de módulos (instrumentación automática de controladores, providers, etc.)
+    SentryModule.forRoot(),
     ConfigModule.forRoot({
       // Carga .env como base y .env.{entorno} para sobrescribir (ej: .env.development)
       // Así funciona tanto si usas .env como .env.development
@@ -55,6 +60,13 @@ import { WebhookActionsModule } from './webhook-actions/webhook-actions.module';
     WebhookActionsModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    // SentryGlobalFilter captura cualquier excepción no manejada y la reporta
+    // a Sentry antes de delegar al comportamiento por defecto de NestJS.
+    {
+      provide: APP_FILTER,
+      useClass: SentryGlobalFilter,
+    },
+  ],
 })
 export class AppModule {}

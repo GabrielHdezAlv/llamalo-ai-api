@@ -1,4 +1,8 @@
+// ⚠️ IMPORTANTE: `instrument` debe ir antes que cualquier otro import para
+// que Sentry instrumente los módulos nativos de Node antes de ser cargados.
+import './instrument';
 import './bootstrap-gcp-credentials';
+import * as Sentry from '@sentry/nestjs';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -200,6 +204,7 @@ async function bootstrap() {
       streamsGateway.handleConnection(client);
     } catch (error) {
       console.error('❌ Error en StreamsGateway:', error);
+      Sentry.captureException(error, { tags: { gateway: 'streams' } });
     }
 
     ws.on('close', () => {
@@ -208,6 +213,7 @@ async function bootstrap() {
 
     ws.on('error', (error) => {
       console.error('❌ Error en WebSocket:', error);
+      Sentry.captureException(error, { tags: { gateway: 'streams', source: 'ws' } });
     });
   });
 
@@ -253,6 +259,7 @@ async function bootstrap() {
 
     testWs.on('error', (error) => {
       console.error('❌ Error en WebSocket de prueba:', error);
+      Sentry.captureException(error, { tags: { gateway: 'test-call', source: 'ws' } });
     });
   });
 
@@ -300,6 +307,7 @@ async function bootstrap() {
 
     supportWs.on('error', (error) => {
       console.error('❌ Error en WebSocket de soporte:', error);
+      Sentry.captureException(error, { tags: { gateway: 'support-chat', source: 'ws' } });
     });
   });
 
@@ -310,6 +318,7 @@ async function bootstrap() {
     profileEvents.handleConnection(profileWs);
     profileWs.on('error', (error) => {
       console.error('❌ Error en WebSocket profile/events:', error);
+      Sentry.captureException(error, { tags: { gateway: 'profile-events', source: 'ws' } });
     });
   });
 
