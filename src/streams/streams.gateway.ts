@@ -1948,20 +1948,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           fullResponse += token;
           sentenceBuffer += token;
 
-          // Normalizar cualquier variante de "End Call" o "END_CALL" al token [END_CALL] en cualquier parte del buffer
-          sentenceBuffer = sentenceBuffer.replace(
-            /\[?END[\s_]*CALL\]?/gi,
-            '[END_CALL]',
-          );
-
-          // 🔍 Detectar señal de colgado [END_CALL]
-          if (sentenceBuffer.includes('[END_CALL]')) {
+          // 🔍 Detectar señal de colgado [END_CALL] (cubre variantes vocales y
+          // tokens partidos entre chunks de streaming gracias al buffer acumulado)
+          if (!shouldHangup && this.containsEndCallSignal(sentenceBuffer)) {
             console.log(
               `🔚 [${session.callSid}] Señal [END_CALL] (o fallback "End Call") detectada.`,
             );
             shouldHangup = true;
-            // Limpiar el buffer de CUALQUIER rastro de la señal inmediatamente para que no llegue a TTS
-            sentenceBuffer = sentenceBuffer.replace(/\[?END[\s_]*CALL\]?/gi, '');
           }
 
           // Si el token contiene un fin de frase o la frase es suficientemente larga y encontramos una pausa
@@ -1984,11 +1977,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           if (isSentenceEnd || isPauseEnd || isTooLongWithoutPause) {
             if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
 
-            let sentenceToSend = sentenceBuffer.trim();
-            // Limpieza total: eliminar [END_CALL] y cualquier variante de "End Call" vocalizado (sin anclaje $)
-            sentenceToSend = sentenceToSend
-              .replace(/\[?END[\s_]*CALL\]?/gi, '')
-              .trim();
+            // Limpieza total: eliminar [END_CALL] y cualquier variante vocalizada antes del TTS
+            const sentenceToSend = this.stripEndCallToken(sentenceBuffer);
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
               const currentSentence = sentenceToSend;
@@ -2010,19 +2000,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
       // Enviar cualquier texto restante en el buffer que no haya terminado en puntuación
       if (!session.interrupted && sentenceBuffer.trim()) {
-        let remainingText = sentenceBuffer.trim();
-        // Normalizar "End Call" al token [END_CALL] (sin anclaje $)
-        remainingText = remainingText.replace(
-          /\[?END[\s_]*CALL\]?/gi,
-          '[END_CALL]',
-        );
-        if (remainingText.includes('[END_CALL]')) {
+        if (!shouldHangup && this.containsEndCallSignal(sentenceBuffer)) {
           shouldHangup = true;
-          remainingText = remainingText.replace(/\[?END[\s_]*CALL\]?/gi, '').trim();
         }
-        // Restos de token partido (p. ej. solo "]" tras quitar [END_CALL] en streaming)
-        remainingText = remainingText.replace(/^[\[\]]+|[\[\]]+$/g, '').trim();
-        if (remainingText && !/^[\s\[\]]+$/.test(remainingText)) {
+        const remainingText = this.stripEndCallToken(sentenceBuffer);
+        if (remainingText) {
           ttsQueue = ttsQueue.then(async () => {
             if (!session.interrupted) {
               console.log(`🔊 [${session.callSid}] Enviando chunk final a TTS: "${remainingText}"`);
@@ -2201,14 +2183,14 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
 
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
-        const cleanedResponse = fullResponse
-          .replace(/\[?END[\s_]*CALL\]?/gi, '') // Limpieza más robusta
-          .trim();
+        const cleanedResponse = this.stripEndCallToken(fullResponse);
         const finalContent = session.interrupted
           ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
           : cleanedResponse;
 
-        session.history.push({ role: 'assistant', content: finalContent });
+        if (finalContent) {
+          session.history.push({ role: 'assistant', content: finalContent });
+        }
       }
 
       // Marcar que el agente terminó de hablar solo si no fue interrumpido por otro proceso
@@ -3148,22 +3130,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     text: string,
     options?: { recordAssistantUtteranceOnComplete?: string },
   ) {
-    let processedText = text;
-    let shouldHangup = false;
-
-    // Normalizar cualquier variante de "End Call" al token [END_CALL] (sin anclaje $)
-    processedText = processedText.replace(
-      /\[?END[\s_]*CALL\]?/gi,
-      '[END_CALL]',
-    );
-
-    if (processedText.includes('[END_CALL]')) {
+    const shouldHangup = this.containsEndCallSignal(text);
+    if (shouldHangup) {
       console.log(
         `🔚 [${session.callSid}] Señal [END_CALL] (o fallback "End Call") detectada en TTS manual.`,
       );
-      shouldHangup = true;
-      processedText = processedText.replace(/\[?END[\s_]*CALL\]?/gi, '').trim();
     }
+    const processedText = this.stripEndCallToken(text);
 
     if (session.interrupted || !processedText.trim()) {
       console.log(
@@ -3630,10 +3603,22 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       clearTimeout(session.silenceTimeout);
     }
 
-    const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 15 * 1000; // 15s para primera intervención
+    const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 20 * 1000; // 20s para primera intervención
     const HANGUP_TIMEOUT_MS = Number(process.env.SILENCE_HANGUP_TIMEOUT_MS) || 30 * 1000; // 30s adicionales antes de colgar
 
     const nextTimeoutMs = (session.silenceInterventions ?? 0) >= 1 ? HANGUP_TIMEOUT_MS : PROMPT_TIMEOUT_MS;
+
+    // 🔑 Calcular el delay real: NO debemos empezar a contar los segundos de espera
+    // mientras el agente aún está reproduciéndose en Twilio. ElevenLabs genera el audio
+    // mucho más rápido que tiempo real (una frase de 10s se genera en ~2s), así que
+    // si arrancásemos el timer aquí, se "comería" durante la reproducción y el usuario
+    // tendría apenas 1-2s para contestar tras oír al agente.
+    // Solución: esperamos a que el audio deje de sonar (expectedAudioEndTime) y
+    // a partir de ahí damos PROMPT_TIMEOUT_MS completos al usuario para responder.
+    const now = Date.now();
+    const audioEnd = session.expectedAudioEndTime ?? 0;
+    const waitUntilAudioEnds = Math.max(0, audioEnd - now);
+    const totalDelay = waitUntilAudioEnds + nextTimeoutMs;
 
     session.silenceTimeout = setTimeout(async () => {
       session.silenceTimeout = undefined;
@@ -3685,7 +3670,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           "No detecto actividad. Voy a finalizar la llamada. ¡Que tengas un buen día! [END_CALL]"
         );
       }
-    }, nextTimeoutMs);
+    }, totalDelay);
+
+    if (waitUntilAudioEnds > 0) {
+      console.log(
+        `⏲️  [${session.callSid}] Silencio armado: esperando ${waitUntilAudioEnds}ms a que termine el audio + ${nextTimeoutMs}ms para el usuario (total ${totalDelay}ms).`,
+      );
+    }
   }
 
   private stopSilenceTimer(session: CallSession) {
@@ -3954,6 +3945,26 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     }
 
     this.sessions.delete(callSid);
+  }
+
+  /**
+   * Limpia el token técnico `[END_CALL]` y cualquier variante vocalizable
+   * («End Call», «END CALL», «end_call», «end-call», «endcall», con o sin
+   * corchetes o espacios) que el agente pueda emitir al cerrar la llamada.
+   * Evita que el TTS lo pronuncie literalmente y deja sólo la despedida.
+   */
+  private stripEndCallToken(text: string): string {
+    if (!text) return text;
+    return text
+      .replace(/\[?\s*END[\s_\-]*CALL\s*\]?/gi, '')
+      .replace(/^[\s\[\]]+|[\s\[\]]+$/g, '')
+      .trim();
+  }
+
+  /** Detecta si un fragmento de texto contiene el token `[END_CALL]` o variantes vocales. */
+  private containsEndCallSignal(text: string): boolean {
+    if (!text) return false;
+    return /\[?\s*END[\s_\-]*CALL\s*\]?/i.test(text);
   }
 
   private rawDataToString(data: RawData): string {
