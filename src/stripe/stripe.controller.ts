@@ -115,6 +115,28 @@ export class StripeController {
     });
   }
 
+  @Post('subscription/change-plan')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Cambiar plan o periodo (mensual/anual) de la suscripción existente (Stripe API)',
+  })
+  async subscriptionChangePlan(
+    @GetUser('uid') userId: string,
+    @Body()
+    body: {
+      plan: PlanType;
+      billingInterval?: 'month' | 'year';
+    },
+  ) {
+    return this.stripeService.changeSubscriptionPlanForUser({
+      userId,
+      plan: body.plan,
+      billingInterval: body.billingInterval,
+    });
+  }
+
   @Get('latest-invoice')
   @UseGuards(FirebaseAuthGuard)
   @ApiBearerAuth()
