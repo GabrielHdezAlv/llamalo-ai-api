@@ -602,8 +602,24 @@ export class TestCallGateway {
         ],
       });
 
-      const content = completion.choices[0]?.message?.content?.trim() || '';
-      if (!content) return;
+      const rawContent = completion.choices[0]?.message?.content?.trim() || '';
+      if (!rawContent) return;
+
+      const shouldHangup = this.containsEndCallSignal(rawContent);
+      const content = this.stripEndCallToken(rawContent);
+
+      if (shouldHangup) {
+        console.log(
+          `🔚 [TestCall] Señal [END_CALL] detectada en respuesta del agente. Se cerrará la sesión tras el TTS.`,
+        );
+      }
+
+      if (!content) {
+        if (shouldHangup) {
+          this.endSession(session.sessionId, 'agent_hangup');
+        }
+        return;
+      }
 
       session.history.push({ role: 'assistant', content });
       console.log(`💬 [TestCall] Respuesta LLM: "${content.substring(0, 80)}"`);
@@ -621,13 +637,21 @@ export class TestCallGateway {
       this.sendJson(session.client, { type: 'agent.speaking' });
 
       await this.streamTTSFromText(session, content);
+
+      if (shouldHangup && !session.interrupted) {
+        console.log(
+          `🔚 [TestCall] Cerrando sesión ${session.sessionId} por señal del agente (agent_hangup).`,
+        );
+        this.endSession(session.sessionId, 'agent_hangup');
+        return;
+      }
     } catch (err) {
       console.error(`❌ [TestCall] Error LLM:`, err);
     } finally {
       session.llmProcessing = false;
 
       const queued = session.pendingTranscript.trim();
-      if (queued) {
+      if (queued && this.sessions.has(session.sessionId)) {
         session.pendingTranscript = '';
         console.log(
           `🔄 [TestCall] Procesando texto encolado: "${queued.substring(0, 60)}"`,
@@ -635,6 +659,26 @@ export class TestCallGateway {
         void this.handleFinalTranscript(session, queued);
       }
     }
+  }
+
+  /**
+   * Limpia el token técnico `[END_CALL]` y cualquier variante vocalizable
+   * («End Call», «END CALL», «end_call», «end-call», «endcall», con o sin
+   * corchetes o espacios) que el agente pueda emitir al cerrar la
+   * conversación. Evita que el TTS lo pronuncie y que aparezca en el chat.
+   */
+  private stripEndCallToken(text: string): string {
+    if (!text) return text;
+    return text
+      .replace(/\[?\s*END[\s_\-]*CALL\s*\]?/gi, '')
+      .replace(/^[\s\[\]]+|[\s\[\]]+$/g, '')
+      .trim();
+  }
+
+  /** Detecta si un fragmento de texto contiene el token `[END_CALL]` o variantes vocales. */
+  private containsEndCallSignal(text: string): boolean {
+    if (!text) return false;
+    return /\[?\s*END[\s_\-]*CALL\s*\]?/i.test(text);
   }
 
   private buildInstructions(session: TestCallSession): string {
@@ -704,7 +748,9 @@ export class TestCallGateway {
     session: TestCallSession,
     text: string,
   ): Promise<void> {
-    if (session.interrupted || !text.trim()) return;
+    const sanitized = this.stripEndCallToken(text);
+    if (session.interrupted || !sanitized.trim()) return;
+    text = sanitized;
 
     if (session.currentTTSRequest) {
       try {
@@ -858,7 +904,12 @@ export class TestCallGateway {
       return;
 
     session.greetingSent = true;
-    const greeting = session.config.firstInteraction.trim().slice(0, 500);
+    const rawGreeting = session.config.firstInteraction.trim().slice(0, 500);
+    const greeting = this.stripEndCallToken(rawGreeting);
+    if (!greeting) {
+      session.greetingSent = false;
+      return;
+    }
 
     console.log(
       `👋 [TestCall] Enviando saludo: "${greeting.substring(0, 50)}"`,
