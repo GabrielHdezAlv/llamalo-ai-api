@@ -115,6 +115,58 @@ export class StripeController {
     });
   }
 
+  @Post('subscription/change-plan')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Cambiar plan de la suscripción actual (precio base + metered). Mantiene mensual/anual y prorratea.',
+  })
+  async changeSubscriptionPlan(
+    @GetUser('uid') userId: string,
+    @Body() body: { plan: PlanType },
+  ) {
+    return this.stripeService.changeSubscriptionPlanForUser({
+      userId,
+      plan: body.plan,
+    });
+  }
+
+  @Post('subscription/plan-change-portal')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Abre el Customer Portal en el flujo subscription_update_confirm (confirmación alojada en Stripe). Si no es posible, url será null.',
+  })
+  async planChangePortal(
+    @GetUser('uid') userId: string,
+    @Body() body: { plan: PlanType; returnUrl: string },
+  ) {
+    return this.stripeService.createSubscriptionPlanChangePortalSessionForUser({
+      userId,
+      plan: body.plan,
+      returnUrl: body.returnUrl,
+    });
+  }
+
+  @Post('subscription/preview-plan-change')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Vista previa de factura (sin aplicar cambio) al sustituir plan base + metered.',
+  })
+  async previewPlanChange(
+    @GetUser('uid') userId: string,
+    @Body() body: { plan: PlanType },
+  ) {
+    return this.stripeService.previewSubscriptionPlanChangeForUser({
+      userId,
+      plan: body.plan,
+    });
+  }
+
   @Get('latest-invoice')
   @UseGuards(FirebaseAuthGuard)
   @ApiBearerAuth()

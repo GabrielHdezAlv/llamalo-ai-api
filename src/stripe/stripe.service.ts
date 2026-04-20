@@ -58,6 +58,10 @@ type StripeSubscriptionRetrieved = Awaited<
   ReturnType<InstanceType<typeof Stripe>['subscriptions']['retrieve']>
 >;
 
+type StripeInvoicePreview = Awaited<
+  ReturnType<InstanceType<typeof Stripe>['invoices']['createPreview']>
+>;
+
 @Injectable()
 export class StripeService {
   private readonly logger = new Logger(StripeService.name);
@@ -336,8 +340,10 @@ export class StripeService {
   }
 
   /**
-   * Customer Portal (Stripe alojado). No usamos `flow_data.subscription_update`: Stripe rechaza
-   * suscripciones con varias líneas (p. ej. plan base + precio metered), que es nuestro caso en checkout.
+   * Customer Portal (Stripe alojado) sin flujo concreto.
+   * El cambio de plan con confirmación usa `createSubscriptionPlanChangePortalSessionForUser`
+   * (`subscription_update_confirm`); el flujo genérico `subscription_update` sigue sin soportar
+   * suscripciones multi-ítem en muchos casos.
    */
   async createBillingPortalSession(params: {
     customerId: string;
@@ -371,6 +377,279 @@ export class StripeService {
       customerId: custId.trim(),
       returnUrl: params.returnUrl,
     });
+  }
+
+  /**
+   * Contexto compartido para cambiar de plan (precio base + metered, mismo periodo de facturación).
+   */
+  private async loadPaidPlanChangeContext(params: {
+    userId: string;
+    targetPlan: PlanType;
+  }): Promise<{
+    stripe: InstanceType<typeof Stripe>;
+    userId: string;
+    subId: string;
+    customerId: string;
+    subscription: StripeSubscriptionRetrieved;
+    licensedItemId: string;
+    meteredItemId: string;
+    newLicensedPrice: string;
+    newMeteredPrice: string;
+    interval: BillingInterval;
+    currentPlan: PlanType;
+  }> {
+    if (!PAID_PLANS.includes(params.targetPlan)) {
+      throw new BadRequestException('Plan no válido para cambio de suscripción');
+    }
+
+    const userRef = this.firestore.collection('users').doc(params.userId);
+    const snap = await userRef.get();
+    if (!snap.exists) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+    const data = snap.data() as {
+      stripeSubscriptionId?: string | null;
+      billingChurnLocked?: boolean;
+    };
+    if (data.billingChurnLocked === true) {
+      throw new BadRequestException(
+        'No puedes cambiar de plan con la suscripción cancelada; contrata de nuevo desde planes.',
+      );
+    }
+    const subId = data.stripeSubscriptionId?.trim();
+    if (!subId) {
+      throw new BadRequestException(
+        'No hay suscripción activa. Usa la página de planes para contratar.',
+      );
+    }
+
+    const stripe = this.getStripe();
+    const subscription = await stripe.subscriptions.retrieve(subId, {
+      expand: ['items.data.price'],
+    });
+
+    if (STRIPE_BLOCKED_SUB_STATUSES.has(subscription.status)) {
+      throw new BadRequestException(
+        'No se puede cambiar el plan mientras el pago está pendiente. Actualiza el método de pago en el portal de facturación.',
+      );
+    }
+
+    const custRaw = subscription.customer;
+    const customerId =
+      typeof custRaw === 'string'
+        ? custRaw
+        : custRaw && typeof custRaw === 'object' && 'id' in custRaw
+          ? (custRaw as { id: string }).id
+          : '';
+    if (!customerId) {
+      throw new BadRequestException('Suscripción sin cliente de Stripe asociado.');
+    }
+
+    const items = subscription.items?.data ?? [];
+    type ItemRow = (typeof items)[number];
+    let licensedItem: ItemRow | undefined;
+    let meteredItem: ItemRow | undefined;
+    for (const item of items) {
+      const price = item.price;
+      if (!price || typeof price === 'string') continue;
+      const usageType = price.recurring?.usage_type;
+      if (usageType === 'metered') {
+        meteredItem = item;
+      } else {
+        licensedItem = item;
+      }
+    }
+
+    if (!licensedItem?.id || !meteredItem?.id) {
+      throw new BadRequestException(
+        'Esta suscripción no tiene el formato esperado (plan base + minutos extra). Contrata desde la página de planes o contacta con soporte.',
+      );
+    }
+
+    const licPrice = licensedItem.price;
+    const licPriceId =
+      typeof licPrice === 'string' ? licPrice : licPrice?.id;
+    if (!licPriceId) {
+      throw new BadRequestException('No se pudo leer el precio base de la suscripción.');
+    }
+
+    const interval = this.billingIntervalFromLicensedPriceId(licPriceId);
+    if (!interval) {
+      throw new BadRequestException(
+        'No se reconoce el periodo de facturación (mensual o anual) del plan actual.',
+      );
+    }
+
+    const currentPlan = this.planFromPriceId(licPriceId);
+    if (!currentPlan) {
+      throw new BadRequestException(
+        'No se reconoce el plan actual. Usa el portal de facturación o contacta con soporte.',
+      );
+    }
+    if (currentPlan === params.targetPlan) {
+      throw new BadRequestException('Ya estás en este plan.');
+    }
+
+    const newLicensedPrice = this.priceIdForPlan(params.targetPlan, interval);
+    const newMeteredPrice = this.meteredPriceIdForPlan(params.targetPlan, interval);
+
+    return {
+      stripe,
+      userId: params.userId,
+      subId,
+      customerId,
+      subscription,
+      licensedItemId: licensedItem.id,
+      meteredItemId: meteredItem.id,
+      newLicensedPrice,
+      newMeteredPrice,
+      interval,
+      currentPlan,
+    };
+  }
+
+  /**
+   * Flujo alojado en Stripe con confirmación (prorrateo y botón de confirmar), cuando la API lo permite.
+   * Usa `subscription_update_confirm` con ambos ítems (base + metered). Si Stripe rechaza la sesión
+   * (p. ej. límite de ítems en el portal), devuelve `url: null` y el cliente puede usar vista previa + API.
+   */
+  async createSubscriptionPlanChangePortalSessionForUser(params: {
+    userId: string;
+    plan: PlanType;
+    returnUrl: string;
+  }): Promise<{ url: string | null }> {
+    const ctx = await this.loadPaidPlanChangeContext({
+      userId: params.userId,
+      targetPlan: params.plan,
+    });
+    const { stripe, subId, customerId } = ctx;
+    try {
+      const session = await stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: params.returnUrl,
+        flow_data: {
+          type: 'subscription_update_confirm',
+          subscription_update_confirm: {
+            subscription: subId,
+            items: [
+              { id: ctx.licensedItemId, price: ctx.newLicensedPrice },
+              { id: ctx.meteredItemId, price: ctx.newMeteredPrice },
+            ],
+          },
+          after_completion: {
+            type: 'redirect',
+            redirect: { return_url: params.returnUrl },
+          },
+        },
+      });
+      return { url: session.url };
+    } catch (e) {
+      this.logger.warn(
+        `No se pudo abrir subscription_update_confirm en el portal: ${(e as Error).message}`,
+      );
+      return { url: null };
+    }
+  }
+
+  /**
+   * Vista previa de la próxima factura al cambiar de plan (sin modificar la suscripción).
+   */
+  async previewSubscriptionPlanChangeForUser(params: {
+    userId: string;
+    plan: PlanType;
+  }): Promise<{
+    currency: string;
+    amountDue: number;
+    lines: Array<{ description: string; amount: number }>;
+  }> {
+    const ctx = await this.loadPaidPlanChangeContext({
+      userId: params.userId,
+      targetPlan: params.plan,
+    });
+    const preview = (await ctx.stripe.invoices.createPreview({
+      customer: ctx.customerId,
+      subscription: ctx.subId,
+      subscription_details: {
+        items: [
+          { id: ctx.licensedItemId, price: ctx.newLicensedPrice },
+          { id: ctx.meteredItemId, price: ctx.newMeteredPrice },
+        ],
+        proration_behavior: 'create_prorations',
+      },
+    })) as StripeInvoicePreview;
+
+    const currency = (preview.currency || 'eur').toLowerCase();
+    const lines: Array<{ description: string; amount: number }> = [];
+    const rawLines = preview.lines?.data ?? [];
+    for (const line of rawLines) {
+      const description = line.description?.trim() || '—';
+      if (line.amount != null) {
+        lines.push({ description, amount: line.amount });
+      }
+    }
+
+    return {
+      currency,
+      amountDue: preview.amount_due ?? 0,
+      lines,
+    };
+  }
+
+  /**
+   * Cambio de plan (upgrade/downgrade) para suscripciones con **dos** ítems (precio base + metered).
+   * Alternativa cuando no hay URL de portal; aplica `subscriptions.update` con prorrateo.
+   */
+  async changeSubscriptionPlanForUser(params: {
+    userId: string;
+    plan: PlanType;
+  }): Promise<{ ok: true }> {
+    const ctx = await this.loadPaidPlanChangeContext({
+      userId: params.userId,
+      targetPlan: params.plan,
+    });
+
+    const meta = ctx.subscription.metadata ?? {};
+    await ctx.stripe.subscriptions.update(ctx.subId, {
+      items: [
+        { id: ctx.licensedItemId, price: ctx.newLicensedPrice },
+        { id: ctx.meteredItemId, price: ctx.newMeteredPrice },
+      ],
+      proration_behavior: 'create_prorations',
+      metadata: {
+        ...meta,
+        userId: meta.userId ?? params.userId,
+        plan: params.plan,
+      },
+    });
+
+    const refreshed = await ctx.stripe.subscriptions.retrieve(ctx.subId);
+    await this.syncSubscriptionToUser(refreshed as unknown as SubscriptionLike);
+
+    return { ok: true };
+  }
+
+  /** Deduce mensual vs anual a partir del price id del ítem con licencia (no metered). */
+  private billingIntervalFromLicensedPriceId(
+    licensedPriceId: string,
+  ): BillingInterval | null {
+    const p = licensedPriceId.trim();
+    const monthlyIds = [
+      process.env.STRIPE_PRICE_STARTER,
+      process.env.STRIPE_PRICE_GROWTH,
+      process.env.STRIPE_PRICE_SCALE,
+    ]
+      .map((x) => x?.trim())
+      .filter((x): x is string => Boolean(x));
+    const annualIds = [
+      process.env.STRIPE_PRICE_STARTER_ANNUAL,
+      process.env.STRIPE_PRICE_GROWTH_ANNUAL,
+      process.env.STRIPE_PRICE_SCALE_ANNUAL,
+    ]
+      .map((x) => x?.trim())
+      .filter((x): x is string => Boolean(x));
+    if (monthlyIds.includes(p)) return 'month';
+    if (annualIds.includes(p)) return 'year';
+    return null;
   }
 
   /**
