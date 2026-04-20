@@ -91,10 +91,16 @@ async function bootstrap() {
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD'],
     // Front (agents/knowledge-base): evita snackbar duplicado en 403 de plan; debe figurar en preflight
+    // Sentry (browserTracingIntegration): inyecta `sentry-trace` y `baggage` para propagar la
+    // traza distribuida hacia el backend; si no los permitimos aquí, el preflight CORS falla
+    // y el navegador cancela TODAS las peticiones con body JSON al API (síntoma: "status (null)"
+    // en Network y error "La cabecera 'baggage' no está permitida ..." en consola).
     allowedHeaders: [
       'Content-Type',
       'Authorization',
       'X-Handles-Plan-403',
+      'sentry-trace',
+      'baggage',
     ],
   });
 
