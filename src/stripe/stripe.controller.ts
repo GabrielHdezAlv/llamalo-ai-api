@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import * as Sentry from '@sentry/nestjs';
 import type { Request } from 'express';
 import { StripeService } from './stripe.service';
 import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
@@ -42,8 +43,23 @@ export class StripeController {
         'rawBody requerido para verificar firma Stripe (middleware en main.ts)',
       );
     }
-    await this.stripeService.handleWebhook(raw, signature);
-    return { received: true };
+    // Etiquetamos el scope para que cualquier excepción lanzada por
+    // handleWebhook llegue a Sentry con el contexto correcto (tipo de evento,
+    // id, etc.) sin silenciar el error: Stripe reintentará si devolvemos 5xx.
+    return Sentry.withScope(async (scope) => {
+      scope.setTag('webhook', 'stripe');
+      scope.setContext('stripe_signature', {
+        present: !!signature,
+        length: signature?.length ?? 0,
+      });
+      try {
+        await this.stripeService.handleWebhook(raw, signature);
+        return { received: true };
+      } catch (error) {
+        Sentry.captureException(error);
+        throw error;
+      }
+    });
   }
 
   @Post('onboarding-free-trial')
