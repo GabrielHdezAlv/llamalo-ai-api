@@ -22,6 +22,7 @@ import {
   ApiResponse,
   ApiQuery,
 } from '@nestjs/swagger';
+import * as Sentry from '@sentry/nestjs';
 import type { Response, Request } from 'express';
 import { ShopifyService } from './shopify.service';
 import type {
@@ -607,6 +608,10 @@ export class ShopifyController {
       return { success: true, message: 'Webhook already processed' }; // Retornar 200 INMEDIATO
     }
 
+    Sentry.setTag('webhook', 'shopify');
+    Sentry.setTag('shopify_topic', topic);
+    Sentry.setContext('shopify_webhook', { topic, shopDomain, webhookId });
+
     // Manejar topics específicos
     if (topic === 'app/uninstalled') {
       // Procesar en background para responder rápido a Shopify (timeout = 5s)
@@ -615,6 +620,10 @@ export class ShopifyController {
           `Error procesando webhook app/uninstalled para ${shopDomain}:`,
           err,
         );
+        Sentry.captureException(err, {
+          tags: { webhook: 'shopify', shopify_topic: 'app/uninstalled' },
+          extra: { shopDomain, webhookId },
+        });
       });
     } else {
       console.log(
