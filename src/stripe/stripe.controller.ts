@@ -107,33 +107,13 @@ export class StripeController {
   @ApiOperation({ summary: 'Portal de facturación Stripe' })
   async billingPortal(
     @GetUser('uid') userId: string,
-    @Body() body: { returnUrl: string },
+    @Body()
+    body: { returnUrl: string; subscriptionUpdateFlow?: boolean },
   ) {
     return this.stripeService.createBillingPortalSessionForUser({
       userId,
       returnUrl: body.returnUrl,
-    });
-  }
-
-  @Post('subscription/change-plan')
-  @UseGuards(FirebaseAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({
-    summary:
-      'Cambiar plan o periodo (mensual/anual) de la suscripción existente (Stripe API)',
-  })
-  async subscriptionChangePlan(
-    @GetUser('uid') userId: string,
-    @Body()
-    body: {
-      plan: PlanType;
-      billingInterval?: 'month' | 'year';
-    },
-  ) {
-    return this.stripeService.changeSubscriptionPlanForUser({
-      userId,
-      plan: body.plan,
-      billingInterval: body.billingInterval,
+      subscriptionUpdateFlow: body.subscriptionUpdateFlow === true,
     });
   }
 

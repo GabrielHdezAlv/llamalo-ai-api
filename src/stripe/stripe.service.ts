@@ -260,115 +260,6 @@ export class StripeService {
   }
 
   /**
-   * Cambia plan e intervalo (mensual/anual) sobre la suscripción existente (upgrade/downgrade).
-   * Actualiza líneas base + metered; anula cancelación al fin de periodo. El webhook sincroniza Firestore.
-   */
-  async changeSubscriptionPlanForUser(params: {
-    userId: string;
-    plan: PlanType;
-    billingInterval?: BillingInterval;
-  }): Promise<{ ok: true }> {
-    if (!PAID_PLANS.includes(params.plan)) {
-      throw new BadRequestException('Plan no válido');
-    }
-    let billingInterval: BillingInterval = 'month';
-    if (params.billingInterval === 'year') {
-      billingInterval = 'year';
-    } else if (params.billingInterval === 'month') {
-      billingInterval = 'month';
-    } else if (params.billingInterval != null) {
-      throw new BadRequestException('billingInterval debe ser month o year');
-    }
-
-    const snap = await this.firestore.collection('users').doc(params.userId).get();
-    if (!snap.exists) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
-    const data = snap.data() as {
-      stripeSubscriptionId?: string | null;
-      billingChurnLocked?: boolean;
-    };
-    const subId = data.stripeSubscriptionId?.trim();
-    if (!subId) {
-      throw new BadRequestException(
-        'No hay suscripción activa. Contrata un plan desde el checkout.',
-      );
-    }
-    if (data.billingChurnLocked === true) {
-      throw new BadRequestException(
-        'La suscripción está dada de baja. Vuelve a contratar desde la página de planes.',
-      );
-    }
-
-    const stripe = this.getStripe();
-    const newBase = this.priceIdForPlan(params.plan, billingInterval);
-    const newMetered = this.meteredPriceIdForPlan(params.plan, billingInterval);
-
-    const sub = await stripe.subscriptions.retrieve(subId, {
-      expand: ['items.data.price'],
-    });
-
-    const items = sub.items.data;
-    const isMeteredItem = (i: (typeof items)[number]) =>
-      i.price?.recurring?.usage_type === 'metered';
-    const licensed = items.filter((i) => !isMeteredItem(i));
-    const metered = items.filter(isMeteredItem);
-
-    const itemUpdates: Array<{
-      id?: string;
-      price?: string;
-      quantity?: number;
-      deleted?: boolean;
-    }> = [];
-
-    if (licensed.length >= 1) {
-      itemUpdates.push({
-        id: licensed[0].id,
-        price: newBase,
-        quantity: 1,
-      });
-      for (let i = 1; i < licensed.length; i++) {
-        itemUpdates.push({ id: licensed[i].id, deleted: true });
-      }
-    } else {
-      itemUpdates.push({ price: newBase, quantity: 1 });
-    }
-
-    if (metered.length >= 1) {
-      itemUpdates.push({
-        id: metered[0].id,
-        price: newMetered,
-      });
-      for (let i = 1; i < metered.length; i++) {
-        itemUpdates.push({ id: metered[i].id, deleted: true });
-      }
-    } else {
-      itemUpdates.push({ price: newMetered });
-    }
-
-    const meta: Record<string, string> = {};
-    if (sub.metadata) {
-      for (const k of Object.keys(sub.metadata)) {
-        const v = sub.metadata[k];
-        if (v != null) {
-          meta[k] = String(v);
-        }
-      }
-    }
-    meta.userId = params.userId;
-    meta.plan = params.plan;
-
-    await stripe.subscriptions.update(subId, {
-      items: itemUpdates,
-      proration_behavior: 'create_prorations',
-      cancel_at_period_end: false,
-      metadata: meta,
-      ...(sub.status === 'trialing' ? { trial_end: 'now' as const } : {}),
-    });
-    return { ok: true };
-  }
-
-  /**
    * Onboarding «7 días gratis» sin tarjeta: crea un **Customer** en Stripe (obligatorio para aparecer en el panel).
    * Si existe `STRIPE_PRICE_ONBOARDING_FREE` (precio recurrente 0 € creado en el Dashboard), también crea una
    * **Subscription** a ese precio para que el usuario cuente en informes de suscripciones.
@@ -447,11 +338,22 @@ export class StripeService {
   async createBillingPortalSession(params: {
     customerId: string;
     returnUrl: string;
+    /** Si viene, Stripe abre el flujo alojado de «cambiar suscripción» (confirmación en Stripe). */
+    subscriptionIdForUpdateFlow?: string;
   }): Promise<{ url: string | null }> {
     const stripe = this.getStripe();
+    const sub = params.subscriptionIdForUpdateFlow?.trim();
     const session = await stripe.billingPortal.sessions.create({
       customer: params.customerId,
       return_url: params.returnUrl,
+      ...(sub
+        ? {
+            flow_data: {
+              type: 'subscription_update' as const,
+              subscription_update: { subscription: sub },
+            },
+          }
+        : {}),
     });
     return { url: session.url };
   }
@@ -460,21 +362,37 @@ export class StripeService {
   async createBillingPortalSessionForUser(params: {
     userId: string;
     returnUrl: string;
+    /**
+     * true: enlaza al flujo de actualización de suscripción en el Customer Portal (UI Stripe),
+     * si existe `stripeSubscriptionId` en el usuario.
+     */
+    subscriptionUpdateFlow?: boolean;
   }): Promise<{ url: string | null }> {
     const snap = await this.firestore.collection('users').doc(params.userId).get();
     if (!snap.exists) {
       throw new BadRequestException('Usuario no encontrado');
     }
-    const custId = (snap.data() as { stripeCustomerId?: string | null })
-      ?.stripeCustomerId;
+    const row = snap.data() as {
+      stripeCustomerId?: string | null;
+      stripeSubscriptionId?: string | null;
+    };
+    const custId = row.stripeCustomerId;
     if (!custId || typeof custId !== 'string' || !custId.trim()) {
       throw new BadRequestException(
         'No hay facturación asociada. Suscríbete primero desde la página de planes.',
       );
     }
+    let subscriptionIdForUpdateFlow: string | undefined;
+    if (params.subscriptionUpdateFlow === true) {
+      const sid = row.stripeSubscriptionId?.trim();
+      if (sid) {
+        subscriptionIdForUpdateFlow = sid;
+      }
+    }
     return this.createBillingPortalSession({
       customerId: custId.trim(),
       returnUrl: params.returnUrl,
+      subscriptionIdForUpdateFlow,
     });
   }
 
