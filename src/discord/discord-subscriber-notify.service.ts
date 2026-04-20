@@ -12,15 +12,6 @@ export type CheckoutDiscordNotifyParams = {
   starterTrialing: boolean;
 };
 
-function maskEmail(email: string): string {
-  const t = email.trim();
-  const at = t.indexOf('@');
-  if (at <= 0) return '***';
-  const local = t.slice(0, at);
-  const domain = t.slice(at + 1);
-  return `${local.charAt(0)}***@${domain}`;
-}
-
 @Injectable()
 export class DiscordSubscriberNotifyService {
   private readonly logger = new Logger(DiscordSubscriberNotifyService.name);
@@ -58,12 +49,12 @@ export class DiscordSubscriberNotifyService {
       return;
     }
 
-    let maskedEmail: string | null = null;
+    let userEmail: string | null = null;
     try {
       const u = await this.firestore.collection('users').doc(params.userId).get();
       const em = (u.data() as { email?: string } | undefined)?.email?.trim();
       if (em) {
-        maskedEmail = maskEmail(em);
+        userEmail = em;
       }
     } catch {
       /* ignore */
@@ -74,21 +65,23 @@ export class DiscordSubscriberNotifyService {
       : 'Suscripción activa';
 
     const fields: Array<{ name: string; value: string; inline?: boolean }> = [
-      { name: 'Plan', value: params.planLabel, inline: true },
+      {
+        name: 'Correo',
+        value: userEmail ?? '— (no en perfil)',
+        inline: false,
+      },
+      {
+        name: 'Plan contratado',
+        value: params.planLabel,
+        inline: true,
+      },
       { name: 'Estado', value: statusLabel, inline: true },
       {
-        name: 'Usuario',
+        name: 'Usuario (ID)',
         value: `\`${params.userId}\``,
         inline: false,
       },
     ];
-    if (maskedEmail) {
-      fields.push({
-        name: 'Email',
-        value: maskedEmail,
-        inline: false,
-      });
-    }
 
     const body = {
       username: 'Llamalo',
