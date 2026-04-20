@@ -15,6 +15,7 @@ import {
 } from '../common/constants/plans.constants';
 import { EmailService } from '../auth/email.service';
 import { TwilioService } from '../twilio/twilio.service';
+import { DiscordSubscriberNotifyService } from '../discord/discord-subscriber-notify.service';
 
 const PAID_PLANS: PlanType[] = ['starter', 'growth', 'scale'];
 
@@ -66,6 +67,7 @@ export class StripeService {
   constructor(
     private readonly emailService: EmailService,
     private readonly twilioService: TwilioService,
+    private readonly discordSubscriberNotifyService: DiscordSubscriberNotifyService,
   ) {}
 
   private getStripe(): InstanceType<typeof Stripe> {
@@ -884,6 +886,17 @@ export class StripeService {
             `Registro Twilio trial registry tras checkout: ${(e as Error).message}`,
           ),
         );
+    }
+
+    if (session.id) {
+      const planLabel =
+        plan.slice(0, 1).toUpperCase() + plan.slice(1);
+      await this.discordSubscriberNotifyService.notifyCheckoutSessionCompleted({
+        sessionId: session.id,
+        userId,
+        planLabel,
+        starterTrialing,
+      });
     }
   }
 
