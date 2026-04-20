@@ -20,11 +20,9 @@ export class MailerLiteService {
     SETUP_COMPLETADO: '178201208129848516',
     PLAN_PAGO: '161200751988705064',
     NUEVO_USUARIO: '151309297489282526',
-    DIA_14: '179129137749821143',
-    DIA_13: '179129107491063431',
-    DIA_11: '179129103001060489',
-    CUENTA_NO_ACTIVADA: '160529624831362390',
-    CUENTA_ACTIVADA: '160528752534619313',
+    DIA_7: '179129137749821143',
+    DIA_6: '179129107491063431',
+    DIA_4: '179129103001060489',
     CON_LLAMADAS: '178201293482886453',
     MINUTOS_90: '179129073612620901',
     MINUTOS_80: '179128907731043692',
@@ -101,18 +99,11 @@ export class MailerLiteService {
       }
 
       // 5. Días específicos
-      if (diffDays === 11) groupsToJoin.push(this.groups.DIA_11);
-      if (diffDays === 13) groupsToJoin.push(this.groups.DIA_13);
-      if (diffDays === 14) groupsToJoin.push(this.groups.DIA_14);
+      if (diffDays === 4) groupsToJoin.push(this.groups.DIA_4);
+      if (diffDays === 6) groupsToJoin.push(this.groups.DIA_6);
+      if (diffDays === 7) groupsToJoin.push(this.groups.DIA_7);
 
-      // 6. Cuenta Activada / NO Activada
-      if (userData.accountStatus === 1) {
-        groupsToJoin.push(this.groups.CUENTA_ACTIVADA);
-      } else if (userData.accountStatus === 3) {
-        groupsToJoin.push(this.groups.CUENTA_NO_ACTIVADA);
-      }
-
-      // 7. Porcentaje de minutos usados
+      // 6. Porcentaje de minutos usados
       const monthMinutes = (userData.minutesByMonth?.[currentMonthKey] || 0) as number;
       const limit = (userData.minutesLimit || 100) as number;
       const usagePercent = monthMinutes / limit;
