@@ -10,7 +10,9 @@
  *                            queda deshabilitado (útil en tests/local sin red).
  *  - SENTRY_ENVIRONMENT    → fuerza el entorno en Sentry. Si falta, cae a
  *                            NODE_ENV o 'development'.
- *  - SENTRY_RELEASE        → SHA de commit (inyectado por Render en CI).
+ *  - SENTRY_RELEASE        → SHA de commit. Si no está definido, se usa
+ *                            RENDER_GIT_COMMIT (lo inyecta Render
+ *                            automáticamente en todos los servicios).
  *  - SENTRY_TRACES_SAMPLE_RATE → override manual del sample rate (0..1).
  */
 
@@ -34,7 +36,7 @@ Sentry.init({
   dsn,
   enabled: !!dsn,
   environment: env,
-  release: process.env.SENTRY_RELEASE,
+  release: process.env.SENTRY_RELEASE || process.env.RENDER_GIT_COMMIT,
 
   integrations: [nodeProfilingIntegration()],
 
