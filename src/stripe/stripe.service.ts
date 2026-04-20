@@ -335,25 +335,18 @@ export class StripeService {
     return { customerId, subscriptionId };
   }
 
+  /**
+   * Customer Portal (Stripe alojado). No usamos `flow_data.subscription_update`: Stripe rechaza
+   * suscripciones con varias líneas (p. ej. plan base + precio metered), que es nuestro caso en checkout.
+   */
   async createBillingPortalSession(params: {
     customerId: string;
     returnUrl: string;
-    /** Si viene, Stripe abre el flujo alojado de «cambiar suscripción» (confirmación en Stripe). */
-    subscriptionIdForUpdateFlow?: string;
   }): Promise<{ url: string | null }> {
     const stripe = this.getStripe();
-    const sub = params.subscriptionIdForUpdateFlow?.trim();
     const session = await stripe.billingPortal.sessions.create({
       customer: params.customerId,
       return_url: params.returnUrl,
-      ...(sub
-        ? {
-            flow_data: {
-              type: 'subscription_update' as const,
-              subscription_update: { subscription: sub },
-            },
-          }
-        : {}),
     });
     return { url: session.url };
   }
@@ -362,37 +355,21 @@ export class StripeService {
   async createBillingPortalSessionForUser(params: {
     userId: string;
     returnUrl: string;
-    /**
-     * true: enlaza al flujo de actualización de suscripción en el Customer Portal (UI Stripe),
-     * si existe `stripeSubscriptionId` en el usuario.
-     */
-    subscriptionUpdateFlow?: boolean;
   }): Promise<{ url: string | null }> {
     const snap = await this.firestore.collection('users').doc(params.userId).get();
     if (!snap.exists) {
       throw new BadRequestException('Usuario no encontrado');
     }
-    const row = snap.data() as {
-      stripeCustomerId?: string | null;
-      stripeSubscriptionId?: string | null;
-    };
-    const custId = row.stripeCustomerId;
+    const custId = (snap.data() as { stripeCustomerId?: string | null })
+      ?.stripeCustomerId;
     if (!custId || typeof custId !== 'string' || !custId.trim()) {
       throw new BadRequestException(
         'No hay facturación asociada. Suscríbete primero desde la página de planes.',
       );
     }
-    let subscriptionIdForUpdateFlow: string | undefined;
-    if (params.subscriptionUpdateFlow === true) {
-      const sid = row.stripeSubscriptionId?.trim();
-      if (sid) {
-        subscriptionIdForUpdateFlow = sid;
-      }
-    }
     return this.createBillingPortalSession({
       customerId: custId.trim(),
       returnUrl: params.returnUrl,
-      subscriptionIdForUpdateFlow,
     });
   }
 

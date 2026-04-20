@@ -107,13 +107,11 @@ export class StripeController {
   @ApiOperation({ summary: 'Portal de facturación Stripe' })
   async billingPortal(
     @GetUser('uid') userId: string,
-    @Body()
-    body: { returnUrl: string; subscriptionUpdateFlow?: boolean },
+    @Body() body: { returnUrl: string },
   ) {
     return this.stripeService.createBillingPortalSessionForUser({
       userId,
       returnUrl: body.returnUrl,
-      subscriptionUpdateFlow: body.subscriptionUpdateFlow === true,
     });
   }
 
