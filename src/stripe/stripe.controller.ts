@@ -132,24 +132,6 @@ export class StripeController {
     });
   }
 
-  @Post('subscription/plan-change-portal')
-  @UseGuards(FirebaseAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({
-    summary:
-      'Abre el Customer Portal en el flujo subscription_update_confirm (confirmación alojada en Stripe). Si no es posible, url será null.',
-  })
-  async planChangePortal(
-    @GetUser('uid') userId: string,
-    @Body() body: { plan: PlanType; returnUrl: string },
-  ) {
-    return this.stripeService.createSubscriptionPlanChangePortalSessionForUser({
-      userId,
-      plan: body.plan,
-      returnUrl: body.returnUrl,
-    });
-  }
-
   @Post('subscription/preview-plan-change')
   @UseGuards(FirebaseAuthGuard)
   @ApiBearerAuth()

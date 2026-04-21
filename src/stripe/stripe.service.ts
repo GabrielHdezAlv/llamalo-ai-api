@@ -340,10 +340,8 @@ export class StripeService {
   }
 
   /**
-   * Customer Portal (Stripe alojado) sin flujo concreto.
-   * El cambio de plan con confirmación usa `createSubscriptionPlanChangePortalSessionForUser`
-   * (`subscription_update_confirm`); el flujo genérico `subscription_update` sigue sin soportar
-   * suscripciones multi-ítem en muchos casos.
+   * Customer Portal (Stripe alojado) sin flujo concreto (método de pago, facturas, cancelación).
+   * El cambio Growth/Scale con base + metered se confirma en la app + `subscriptions.update`, no en el portal.
    */
   async createBillingPortalSession(params: {
     customerId: string;
@@ -509,49 +507,6 @@ export class StripeService {
   }
 
   /**
-   * Flujo alojado en Stripe con confirmación (prorrateo y botón de confirmar), cuando la API lo permite.
-   * Usa `subscription_update_confirm` con ambos ítems (base + metered). Si Stripe rechaza la sesión
-   * (p. ej. límite de ítems en el portal), devuelve `url: null` y el cliente puede usar vista previa + API.
-   */
-  async createSubscriptionPlanChangePortalSessionForUser(params: {
-    userId: string;
-    plan: PlanType;
-    returnUrl: string;
-  }): Promise<{ url: string | null }> {
-    const ctx = await this.loadPaidPlanChangeContext({
-      userId: params.userId,
-      targetPlan: params.plan,
-    });
-    const { stripe, subId, customerId } = ctx;
-    try {
-      const session = await stripe.billingPortal.sessions.create({
-        customer: customerId,
-        return_url: params.returnUrl,
-        flow_data: {
-          type: 'subscription_update_confirm',
-          subscription_update_confirm: {
-            subscription: subId,
-            items: [
-              { id: ctx.licensedItemId, price: ctx.newLicensedPrice },
-              { id: ctx.meteredItemId, price: ctx.newMeteredPrice },
-            ],
-          },
-          after_completion: {
-            type: 'redirect',
-            redirect: { return_url: params.returnUrl },
-          },
-        },
-      });
-      return { url: session.url };
-    } catch (e) {
-      this.logger.warn(
-        `No se pudo abrir subscription_update_confirm en el portal: ${(e as Error).message}`,
-      );
-      return { url: null };
-    }
-  }
-
-  /**
    * Vista previa de la próxima factura al cambiar de plan (sin modificar la suscripción).
    */
   async previewSubscriptionPlanChangeForUser(params: {
@@ -597,7 +552,7 @@ export class StripeService {
 
   /**
    * Cambio de plan (upgrade/downgrade) para suscripciones con **dos** ítems (precio base + metered).
-   * Alternativa cuando no hay URL de portal; aplica `subscriptions.update` con prorrateo.
+   * Aplica `subscriptions.update` con prorrateo tras confirmación en la app.
    */
   async changeSubscriptionPlanForUser(params: {
     userId: string;
