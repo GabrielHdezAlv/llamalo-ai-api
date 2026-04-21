@@ -24,7 +24,8 @@
     "sync:user-minutes": "node scripts/sync-user-minutes-from-catalog.js",
     "seed:plans": "node scripts/seed-plans-collection.js",
     "migrate:stripe-metered": "node scripts/add-metered-to-stripe-subscriptions.js",
-    "migrate:stripe-metered:verify": "node scripts/add-metered-to-stripe-subscriptions.js --verify"
+    "migrate:stripe-metered:verify": "node scripts/add-metered-to-stripe-subscriptions.js --verify",
+    "seed:preprod-user": "node scripts/upsert-preprod-firebase-user.js"
   },
   "dependencies": {
     "@langchain/openai": "^1.2.5",
