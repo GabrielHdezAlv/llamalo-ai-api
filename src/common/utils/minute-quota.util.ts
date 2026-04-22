@@ -8,6 +8,26 @@ import {
 } from '../../metrics/metrics-calendar.util';
 
 /**
+ * Clave de `minutesByMonth` para el periodo de uso: periodo de suscripción Stripe (`p{startUnix}`)
+ * si está disponible; si no, `YYYY-MM` (mes calendario de negocio).
+ */
+export function getVoiceUsageStorageKey(
+  userData: {
+    metricsCalendarTimezone?: string;
+    stripeCurrentPeriodStart?: number | null;
+  },
+): string {
+  const tz = resolveMetricsTimezoneFromUser(
+    userData as Record<string, unknown>,
+  );
+  const t = userData.stripeCurrentPeriodStart;
+  if (t != null && Number.isFinite(Number(t))) {
+    return `p${Number(t)}`;
+  }
+  return getCalendarMonthKey(tz);
+}
+
+/**
  * Cálculo unificado del cupo mensual de minutos (plan + extras vs consumo del mes).
  * Usar la misma lógica en UsersService, StreamsGateway y cualquier guard de API.
  */
@@ -56,6 +76,7 @@ export function computeMinuteQuotaFromUserData(
     extraMinutes?: number;
     minutesByMonth?: Record<string, number>;
     metricsCalendarTimezone?: string;
+    stripeCurrentPeriodStart?: number | null;
     billingChurnLocked?: boolean;
     stripeSubscriptionId?: string | null;
     stripeSubscriptionStatus?: string | null;
@@ -65,8 +86,11 @@ export function computeMinuteQuotaFromUserData(
   const tz = resolveMetricsTimezoneFromUser(
     userData as Record<string, unknown>,
   );
-  const currentMonth = getCalendarMonthKey(tz);
-  const usedMinutes = userData.minutesByMonth?.[currentMonth] || 0;
+  const usageKey = getVoiceUsageStorageKey({
+    metricsCalendarTimezone: userData.metricsCalendarTimezone,
+    stripeCurrentPeriodStart: userData.stripeCurrentPeriodStart,
+  });
+  const usedMinutes = userData.minutesByMonth?.[usageKey] || 0;
 
   if (isUnlimitedPlan(userData.plan)) {
     return {

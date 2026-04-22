@@ -6,6 +6,7 @@ import {
   DEFAULT_PLAN,
   LEGACY_FREE_PLAN_SLUGS,
 } from '../common/constants/plans.constants';
+import { getVoiceUsageStorageKey } from '../common/utils/minute-quota.util';
 
 @Injectable()
 export class MailerLiteService {
@@ -67,7 +68,15 @@ export class MailerLiteService {
       const diffDays = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
       // 1. SIN/CON llamadas
-      const currentMonthKey = this.getCurrentMonthKey();
+      const usageKey = getVoiceUsageStorageKey({
+        metricsCalendarTimezone: userData.metricsCalendarTimezone as
+          | string
+          | undefined,
+        stripeCurrentPeriodStart: userData.stripeCurrentPeriodStart as
+          | number
+          | null
+          | undefined,
+      });
       const totalMinutes = Object.values(userData.minutesByMonth || {}).reduce((a: number, b: number) => a + b, 0) as number;
       
       if (totalMinutes > 0) {
@@ -104,7 +113,7 @@ export class MailerLiteService {
       if (diffDays === 7) groupsToJoin.push(this.groups.DIA_7);
 
       // 6. Porcentaje de minutos usados
-      const monthMinutes = (userData.minutesByMonth?.[currentMonthKey] || 0) as number;
+      const monthMinutes = (userData.minutesByMonth?.[usageKey] || 0) as number;
       const limit = (userData.minutesLimit || 100) as number;
       const usagePercent = monthMinutes / limit;
 
@@ -164,13 +173,6 @@ export class MailerLiteService {
       const err = error as { response?: { data?: unknown }; message?: string };
       this.logger.error(`Error en API MailerLite para ${email}: ${JSON.stringify(err.response?.data || err.message)}`);
     }
-  }
-
-  private getCurrentMonthKey(): string {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-    return `${year}-${month}`;
   }
 
   /**

@@ -200,6 +200,20 @@ export class UserProfileResponseDto {
   @ApiProperty({
     required: false,
     description:
+      'Inicio del periodo de facturación actual en Stripe (segundos UNIX).',
+  })
+  stripeCurrentPeriodStart?: number | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Fin del periodo de facturación actual en Stripe (segundos UNIX; fin semántico exclusivo en la API de Stripe).',
+  })
+  stripeCurrentPeriodEnd?: number | null;
+
+  @ApiProperty({
+    required: false,
+    description:
       'true si la suscripción terminó (cancelación): el cliente debe volver a contratar (pantalla dedicada).',
   })
   billingChurnLocked?: boolean;

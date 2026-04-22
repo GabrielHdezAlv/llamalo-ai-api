@@ -108,6 +108,52 @@ export function getCurrentMonthRange001(
   };
 }
 
+/** Últimos 30 días (ventana móvil) en `timezone`, ambos extremos incluidos. */
+export function getRolling30DaysRangeInclusive(
+  timezone: string,
+  now: Date = new Date(),
+): { startInclusive: Date; endInclusive: Date } {
+  const end = DateTime.fromJSDate(now, { zone: 'utc' }).setZone(timezone);
+  const start = end.minus({ days: 30 });
+  return {
+    startInclusive: start.toJSDate(),
+    endInclusive: end.toJSDate(),
+  };
+}
+
+type VoiceUsageUserFields = {
+  stripeCurrentPeriodStart?: unknown;
+  stripeCurrentPeriodEnd?: unknown;
+};
+
+/**
+ * Periodo de consumo de voz: si el perfil trae `stripeCurrentPeriodStart/End` (seg. UNIX, Stripe),
+ * usa [inicio, fin) como rango lógico con fin excluso convertido a `endInclusive` en ms;
+ * si no, mes calendario de negocio.
+ */
+export function getVoiceUsagePeriodRangeInclusive(
+  userData: VoiceUsageUserFields,
+  tz: string,
+  now: Date = new Date(),
+): { startInclusive: Date; endInclusive: Date } {
+  const startSec = userData.stripeCurrentPeriodStart;
+  const endSec = userData.stripeCurrentPeriodEnd;
+  if (
+    typeof startSec === 'number' &&
+    typeof endSec === 'number' &&
+    Number.isFinite(startSec) &&
+    Number.isFinite(endSec) &&
+    endSec > startSec
+  ) {
+    const endExclusiveMs = endSec * 1000;
+    return {
+      startInclusive: new Date(startSec * 1000),
+      endInclusive: new Date(endExclusiveMs - 1),
+    };
+  }
+  return getCurrentMonthRange001(tz, now);
+}
+
 /** Clave `YYYY-MM` del mes en curso según el calendario de `timezone`. */
 export function getCalendarMonthKey(
   timezone: string,

@@ -92,6 +92,9 @@ interface UserData {
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
   stripeSubscriptionStatus?: string | null;
+  /** Periodo de facturación Stripe (seg. UNIX); alinea consumo de voz con la suscripción. */
+  stripeCurrentPeriodStart?: number | null;
+  stripeCurrentPeriodEnd?: number | null;
   /** Suscripción cancelada: debe re-suscribirse (pantalla dedicada, sin trial Starter). */
   billingChurnLocked?: boolean;
   /** false = no ofrecer 7 días Starter (ya pagó o churn). Ausente/true = elegible trial. */
@@ -179,6 +182,10 @@ export type UserProfileResponse = {
   stripeCustomerId?: string | null;
   stripeSubscriptionId?: string | null;
   stripeSubscriptionStatus?: string | null;
+  /** Inicio del periodo de facturación actual (seg. UNIX, Stripe). */
+  stripeCurrentPeriodStart?: number | null;
+  /** Fin del periodo de facturación actual (seg. UNIX, Stripe; fin exclusivo en API Stripe). */
+  stripeCurrentPeriodEnd?: number | null;
   billingChurnLocked?: boolean;
   stripeStarterTrialEligible?: boolean;
   /** false = pendiente elegir plan o prueba tras registro; ausente/true = ya elegido (legacy = completado) */
@@ -342,6 +349,8 @@ export class UsersService {
         stripeCustomerId: userData?.stripeCustomerId ?? null,
         stripeSubscriptionId: userData?.stripeSubscriptionId ?? null,
         stripeSubscriptionStatus: userData?.stripeSubscriptionStatus ?? null,
+        stripeCurrentPeriodStart: userData?.stripeCurrentPeriodStart ?? null,
+        stripeCurrentPeriodEnd: userData?.stripeCurrentPeriodEnd ?? null,
         billingChurnLocked: userData?.billingChurnLocked === true,
         stripeStarterTrialEligible: userData?.stripeStarterTrialEligible !== false,
         planSelectionCompleted: userData?.planSelectionCompleted !== false,

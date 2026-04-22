@@ -14,7 +14,10 @@ import {
   MetricaConComparacionDto,
 } from './dto/dashboard-metrics-response.dto';
 import { MailerLiteService } from '../mailerlite/mailerlite.service';
-import { computeAutoExtraMinutesAfterSync } from '../common/utils/minute-quota.util';
+import {
+  computeAutoExtraMinutesAfterSync,
+  getVoiceUsageStorageKey,
+} from '../common/utils/minute-quota.util';
 import { ProfileEventsService } from '../profile-events/profile-events.service';
 import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 import { StripeService } from '../stripe/stripe.service';
@@ -31,12 +34,13 @@ import {
 } from './dto/twilio-detailed-metrics.dto';
 import { DateTime } from 'luxon';
 import {
-  getCalendarMonthKey,
   getCurrentMonthRange001,
   getCurrentWeekRange001,
   getMonday001ForWeekContaining,
   getPreviousWeekRange001,
+  getRolling30DaysRangeInclusive,
   getTwoWeekFetchRangeInclusive,
+  getVoiceUsagePeriodRangeInclusive,
   inRangeHalfOpen,
   isInInclusiveRange,
   resolveMetricsTimezoneFromUser,
@@ -294,19 +298,24 @@ export class MetricsService {
       const userData = userSnapshot.data() as Record<string, unknown>;
       const tz = resolveMetricsTimezoneFromUser(userData);
       const twoWeek = getTwoWeekFetchRangeInclusive(tz);
-      const monthRange = getCurrentMonthRange001(tz);
+      const usageRange = getVoiceUsagePeriodRangeInclusive(userData, tz);
+      const roll30 = getRolling30DaysRangeInclusive(tz);
       const currentWeek = getCurrentWeekRange001(tz);
+      const now = new Date();
 
       const earliestFetch = new Date(
         Math.min(
           twoWeek.startInclusive.getTime(),
-          monthRange.startInclusive.getTime(),
+          usageRange.startInclusive.getTime(),
+          roll30.startInclusive.getTime(),
         ),
       );
       const fetchEnd = new Date(
         Math.max(
           twoWeek.endInclusive.getTime(),
-          monthRange.endInclusive.getTime(),
+          usageRange.endInclusive.getTime(),
+          roll30.endInclusive.getTime(),
+          now.getTime(),
         ),
       );
 
@@ -325,12 +334,12 @@ export class MetricsService {
         );
       });
 
-      const allCallsMonth = allCallsFetched.filter((call) => {
+      const allCallsUsagePeriod = allCallsFetched.filter((call) => {
         const t = new Date(call.start_time || call.date_created).getTime();
         return isInInclusiveRange(
           t,
-          monthRange.startInclusive,
-          monthRange.endInclusive,
+          usageRange.startInclusive,
+          usageRange.endInclusive,
         );
       });
 
@@ -344,7 +353,7 @@ export class MetricsService {
       });
 
       console.log(
-        `[Metrics] Llamadas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — cuentas Twilio en perfil: ${twilioAccounts.length}; 2 sem cal (${tz}): ${allCalls14Days.length}, semana actual: ${allCalls7Days.length}, mes: ${allCallsMonth.length}`,
+        `[Metrics] Llamadas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — cuentas Twilio en perfil: ${twilioAccounts.length}; 2 sem cal (${tz}): ${allCalls14Days.length}, semana actual: ${allCalls7Days.length}, periodo uso: ${allCallsUsagePeriod.length}`,
       );
 
       const accountIdsForTerms =
@@ -373,7 +382,7 @@ export class MetricsService {
       // El webhook de Twilio contaba todas las llamadas de la cuenta; el dashboard solo sesiones guardadas aquí.
       await this.syncUserMinutesByMonthFromRegisteredCalls(
         userId,
-        allCallsMonth,
+        allCallsUsagePeriod,
         tz,
       );
 
@@ -381,7 +390,7 @@ export class MetricsService {
       const resumen = this.calculateSummaryWithComparison(
         allCalls7Days,
         allCalls14Days,
-        allCallsMonth,
+        allCallsUsagePeriod,
         terminacionesDashboard,
         tz,
       );
@@ -418,13 +427,6 @@ export class MetricsService {
         `Error al obtener las métricas: ${(error as Error).message}`,
       );
     }
-  }
-
-  /**
-   * Devuelve la clave del mes actual en formato "YYYY-MM" (calendario de negocio).
-   */
-  private getCurrentMonthKey(tz: string): string {
-    return getCalendarMonthKey(tz);
   }
 
   /**
@@ -759,18 +761,23 @@ export class MetricsService {
 
       const tz = resolveMetricsTimezoneFromUser(userData);
       const twoWeek = getTwoWeekFetchRangeInclusive(tz);
-      const monthRange = getCurrentMonthRange001(tz);
+      const usageRange = getVoiceUsagePeriodRangeInclusive(userData, tz);
+      const roll30 = getRolling30DaysRangeInclusive(tz);
+      const now = new Date();
 
       const earliestFetch = new Date(
         Math.min(
           twoWeek.startInclusive.getTime(),
-          monthRange.startInclusive.getTime(),
+          usageRange.startInclusive.getTime(),
+          roll30.startInclusive.getTime(),
         ),
       );
       const fetchEnd = new Date(
         Math.max(
           twoWeek.endInclusive.getTime(),
-          monthRange.endInclusive.getTime(),
+          usageRange.endInclusive.getTime(),
+          roll30.endInclusive.getTime(),
+          now.getTime(),
         ),
       );
 
@@ -790,23 +797,32 @@ export class MetricsService {
         );
       });
 
-      const callsLastMonth = allFetched.filter((call) => {
+      const callsUsagePeriod = allFetched.filter((call) => {
         const t = new Date(call.start_time || call.date_created).getTime();
         return isInInclusiveRange(
           t,
-          monthRange.startInclusive,
-          monthRange.endInclusive,
+          usageRange.startInclusive,
+          usageRange.endInclusive,
+        );
+      });
+
+      const callsLast30Days = allFetched.filter((call) => {
+        const t = new Date(call.start_time || call.date_created).getTime();
+        return isInInclusiveRange(
+          t,
+          roll30.startInclusive,
+          roll30.endInclusive,
         );
       });
 
       console.log(
-        `[Metrics] Métricas detalladas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — 2 sem (${tz}): ${callsLast14Days.length}, mes: ${callsLastMonth.length}`,
+        `[Metrics] Métricas detalladas desde Firestore (${this.REGISTERED_CALLS_COLLECTION}) — 2 sem (${tz}): ${callsLast14Days.length}, periodo uso: ${callsUsagePeriod.length}, 30d: ${callsLast30Days.length}`,
       );
 
       if (filterByAccountId === undefined) {
         await this.syncUserMinutesByMonthFromRegisteredCalls(
           userId,
-          callsLastMonth,
+          callsUsagePeriod,
           tz,
         );
       }
@@ -818,7 +834,7 @@ export class MetricsService {
             ? twilioArray.map((a) => a.twilioAccountId)
             : [
                 ...new Set(
-                  [...callsLast14Days, ...callsLastMonth]
+                  [...callsLast14Days, ...callsUsagePeriod, ...callsLast30Days]
                     .map((c) => c.twilioAccountId)
                     .filter((id): id is number => typeof id === 'number'),
                 ),
@@ -830,7 +846,7 @@ export class MetricsService {
           : (
               await Promise.all(
                 accountIdsForTerminaciones.map((id) =>
-                  this.getCallTerminations(userId, id, 31),
+                  this.getCallTerminations(userId, id, 45),
                 ),
               )
             ).flat();
@@ -849,36 +865,34 @@ export class MetricsService {
         llamadasExitosasUltimos7Dias,
       );
 
-      // Minutos del mes: mismo criterio entero que el resumen del dashboard
+      // Minutos del periodo de uso: mismo criterio que el resumen del dashboard
       const totalMinutosUltimoMes =
-        this.totalMinutesIntegerFromCalls(callsLastMonth);
+        this.totalMinutesIntegerFromCalls(callsUsagePeriod);
 
       // Métricas históricas: Firestore es la fuente principal.
-      // callsLastMonth se pasa como fallback para cuando el histórico de Firestore aún está vacío
+      // callsUsagePeriod se pasa como fallback para cuando el histórico de Firestore aún está vacío
       // (usuarios nuevos o llamadas previas a la implementación del acumulado).
       const duracionMediaLlamadas = this.calculateDuracionMediaLlamadas(
-        callsLastMonth,
+        callsUsagePeriod,
         historicalMetrics,
       );
       const paisesOrigen = this.calculatePaisesOrigen(
-        callsLastMonth,
+        callsUsagePeriod,
         historicalMetrics,
       );
-      // Evaluación de éxito: mismo período y fuente que razonesFinalizacion (mes actual)
-      // El histórico de Firestore actúa solo como fallback si no hay llamadas del mes
+      // Evaluación y razones: ventana móvil de 30 días
       const evaluacionExito = this.calculateEvaluacionExito(
-        callsLastMonth,
+        callsLast30Days,
         terminacionesFirestore,
         historicalMetrics,
       );
 
-      // Métricas mensuales: usar callsLastMonth
       const tiposLlamadas = this.calculateTiposLlamadas(
-        callsLastMonth,
+        callsUsagePeriod,
         historicalMetrics,
       );
       const razonesFinalizacion = this.calculateRazonesFinalizacion(
-        callsLastMonth,
+        callsLast30Days,
         terminacionesFirestore,
       );
 
@@ -1045,7 +1059,6 @@ export class MetricsService {
     callsMonth: TwilioCall[],
     tz: string,
   ): Promise<void> {
-    const monthKey = this.getCurrentMonthKey(tz);
     const totalSegundos = callsMonth.reduce(
       (t, c) => t + parseInt(c.duration || '0', 10),
       0,
@@ -1064,7 +1077,14 @@ export class MetricsService {
       extraMinutes?: number;
       minutesByMonth?: Record<string, number>;
       stripeCustomerId?: string;
+      metricsCalendarTimezone?: string;
+      stripeCurrentPeriodStart?: number | null;
     };
+
+    const monthKey = getVoiceUsageStorageKey({
+      metricsCalendarTimezone: userData.metricsCalendarTimezone,
+      stripeCurrentPeriodStart: userData.stripeCurrentPeriodStart,
+    });
 
     const prevRaw = userData.minutesByMonth?.[monthKey];
     const prev =

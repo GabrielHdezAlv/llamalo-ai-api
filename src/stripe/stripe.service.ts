@@ -45,6 +45,9 @@ type SubscriptionLike = {
   items?: { data?: Array<{ price?: { id?: string } }> };
   /** Fin de trial en Stripe (segundos UNIX). */
   trial_end?: number | null;
+  /** Inicio / fin del periodo de facturación actual (seg. UNIX, Stripe). */
+  current_period_start?: number;
+  current_period_end?: number;
 };
 
 type StripeInvoiceRetrieved = Awaited<
@@ -1196,11 +1199,30 @@ export class StripeService {
     await this.updateUserFromSubscription(userId, sub);
   }
 
+  /** Periodo de facturación (voz / uso) alineado con Stripe. */
+  private voiceBillingPeriodFromSubscription(
+    sub: SubscriptionLike,
+  ): { stripeCurrentPeriodStart: number; stripeCurrentPeriodEnd: number } | null {
+    const start = sub.current_period_start;
+    const end = sub.current_period_end;
+    if (
+      typeof start === 'number' &&
+      typeof end === 'number' &&
+      Number.isFinite(start) &&
+      Number.isFinite(end) &&
+      end > start
+    ) {
+      return { stripeCurrentPeriodStart: start, stripeCurrentPeriodEnd: end };
+    }
+    return null;
+  }
+
   private async updateUserFromSubscription(
     userId: string,
     sub: SubscriptionLike,
   ): Promise<void> {
     const status = sub.status;
+    const period = this.voiceBillingPeriodFromSubscription(sub);
 
     if (status === 'canceled' || status === 'incomplete_expired') {
       await this.firestore
@@ -1214,6 +1236,8 @@ export class StripeService {
             stripeSubscriptionStatus: null,
             billingChurnLocked: true,
             stripeStarterTrialEligible: false,
+            stripeCurrentPeriodStart: admin.firestore.FieldValue.delete(),
+            stripeCurrentPeriodEnd: admin.firestore.FieldValue.delete(),
             updatedAt: new Date(),
           },
           { merge: true },
@@ -1268,6 +1292,12 @@ export class StripeService {
             billingChurnLocked: false,
             stripeStarterTrialEligible: false,
             updatedAt: new Date(),
+            ...(period
+              ? {
+                  stripeCurrentPeriodStart: period.stripeCurrentPeriodStart,
+                  stripeCurrentPeriodEnd: period.stripeCurrentPeriodEnd,
+                }
+              : {}),
             ...(plan !== 'gratis'
               ? { trialEndsAt: admin.firestore.FieldValue.delete() }
               : {}),
@@ -1293,6 +1323,12 @@ export class StripeService {
             billingChurnLocked: false,
             stripeStarterTrialEligible: false,
             updatedAt: new Date(),
+            ...(period
+              ? {
+                  stripeCurrentPeriodStart: period.stripeCurrentPeriodStart,
+                  stripeCurrentPeriodEnd: period.stripeCurrentPeriodEnd,
+                }
+              : {}),
           },
           { merge: true },
         );
@@ -1328,6 +1364,12 @@ export class StripeService {
           billingChurnLocked: false,
           stripeStarterTrialEligible: false,
           updatedAt: new Date(),
+          ...(period
+            ? {
+                stripeCurrentPeriodStart: period.stripeCurrentPeriodStart,
+                stripeCurrentPeriodEnd: period.stripeCurrentPeriodEnd,
+              }
+            : {}),
           ...(plan !== 'gratis'
             ? { trialEndsAt: admin.firestore.FieldValue.delete() }
             : {}),
