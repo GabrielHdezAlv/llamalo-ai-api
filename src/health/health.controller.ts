@@ -12,16 +12,4 @@ export class HealthController {
     return 'pong';
   }
 
-  /**
-   * Endpoint temporal para verificar la integración con Sentry.
-   * Lanza una excepción a propósito: debe aparecer como issue en Sentry.
-   * Eliminar (o proteger con guard) una vez validada la configuración.
-   */
-  @Get('debug-sentry')
-  @ApiOperation({
-    summary: 'Lanza un error de prueba para verificar Sentry (quitar en prod)',
-  })
-  debugSentry(): never {
-    throw new Error('Sentry backend test error');
-  }
 }
