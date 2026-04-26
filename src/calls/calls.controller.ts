@@ -1,6 +1,7 @@
-import { Controller, Post, Body, Res } from '@nestjs/common';
+import { Controller, Post, Body, Res, Req, ForbiddenException } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { validateRequest } from 'twilio';
 import { TwilioService } from './twilio.service';
 import { getTwilioMediaStreamWebSocketUrl } from './twilio-media-stream-url';
 import { AgentKnowledgeService } from '../agents/agent-knowledge.service';
@@ -16,6 +17,7 @@ class IncomingDto {
   To?: string;
   From?: string;
   CallSid?: string;
+  AccountSid?: string;
 }
 
 @Controller('voice')
@@ -42,7 +44,15 @@ export class CallsController {
 
   @Post('incoming')
   @Throttle({ default: { limit: 300, ttl: 60000 } })
-  async incoming(@Body() body: IncomingDto, @Res() res: Response) {
+  async incoming(
+    @Req() req: Request,
+    @Body() body: IncomingDto,
+    @Res() res: Response,
+  ) {
+    await this.assertTwilioSignature(
+      req,
+      body as Record<string, string | undefined>,
+    );
     const r = this.twilio.newVoiceResponse();
 
     console.log('📞 Llamada entrante detectada');
@@ -655,5 +665,111 @@ export class CallsController {
         this.callerAttemptBuckets.set(key, fresh);
       }
     }
+  }
+
+  private async assertTwilioSignature(
+    req: Request,
+    payload: Record<string, string | undefined>,
+  ): Promise<void> {
+    const signature = req.header('x-twilio-signature');
+    if (!signature) {
+      throw new ForbiddenException('Falta cabecera X-Twilio-Signature.');
+    }
+
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    const sanitizedPayload: Record<string, string> = {};
+    for (const [key, value] of Object.entries(payload)) {
+      if (typeof value === 'string') {
+        sanitizedPayload[key] = value;
+      }
+    }
+
+    const candidateTokens = await this.getCandidateTwilioTokens(sanitizedPayload);
+    const isValid = candidateTokens.some((token) =>
+      validateRequest(token, signature, url, sanitizedPayload),
+    );
+    if (!isValid || candidateTokens.length === 0) {
+      throw new ForbiddenException('Firma de webhook Twilio inválida.');
+    }
+  }
+
+  private async getCandidateTwilioTokens(
+    payload: Record<string, string>,
+  ): Promise<string[]> {
+    const tokens = new Set<string>();
+    const accountSid = payload.AccountSid?.trim();
+    const to = payload.To?.trim();
+
+    if (accountSid) {
+      const fromIndex = await this.getTokensByAccountSid(accountSid);
+      fromIndex.forEach((token) => tokens.add(token));
+    }
+
+    if (to) {
+      const userDoc = await this.resolveUserDocFromPhoneTo(to);
+      if (userDoc) {
+        const userData = userDoc.data() as Record<string, unknown>;
+        const twilioAccounts =
+          (userData.twilio as Array<{ twilioToken?: string }>) || [];
+        for (const account of twilioAccounts) {
+          const token = account.twilioToken?.trim();
+          if (token) {
+            tokens.add(token);
+          }
+        }
+      }
+    }
+
+    const globalToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+    if (globalToken) {
+      tokens.add(globalToken);
+    }
+
+    return Array.from(tokens);
+  }
+
+  private async getTokensByAccountSid(accountSid: string): Promise<string[]> {
+    const firestore = admin.firestore();
+    const tokens = new Set<string>();
+
+    const indexDoc = await firestore.collection('twilio_index').doc(accountSid).get();
+    if (indexDoc.exists) {
+      const userId = (indexDoc.data() as Record<string, string>)?.userId;
+      if (userId) {
+        const userDoc = await firestore.collection('users').doc(userId).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data() as Record<string, unknown>;
+          const twilioAccounts =
+            (userData.twilio as Array<{
+              twilioSid?: string;
+              twilioToken?: string;
+            }>) || [];
+          for (const account of twilioAccounts) {
+            if (account.twilioSid === accountSid && account.twilioToken?.trim()) {
+              tokens.add(account.twilioToken.trim());
+            }
+          }
+        }
+      }
+    }
+
+    if (tokens.size > 0) {
+      return Array.from(tokens);
+    }
+
+    const usersSnapshot = await firestore.collection('users').get();
+    for (const userDoc of usersSnapshot.docs) {
+      const userData = userDoc.data() as Record<string, unknown>;
+      const twilioAccounts =
+        (userData.twilio as Array<{ twilioSid?: string; twilioToken?: string }>) ||
+        [];
+      for (const account of twilioAccounts) {
+        if (account.twilioSid === accountSid && account.twilioToken?.trim()) {
+          tokens.add(account.twilioToken.trim());
+        }
+      }
+    }
+
+    return Array.from(tokens);
   }
 }
