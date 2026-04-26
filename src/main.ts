@@ -16,6 +16,7 @@ import { TestCallGateway } from './test-call/test-call.gateway';
 import { SupportChatGateway } from './support-chat/support-chat.gateway';
 import { ProfileEventsService } from './profile-events/profile-events.service';
 import { configureLogging } from './utils/logging';
+import helmet from 'helmet';
 
 /** Normaliza un origen (sin barra final, con esquema). */
 function normalizeOrigin(raw: string): string {
@@ -65,6 +66,17 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   // Usar IP real del cliente detrás de proxy (Render/NGINX) para rate limiting.
   app.getHttpAdapter().getInstance().set('trust proxy', true);
+  app.use(
+    helmet({
+      // En producción fuerza HTTPS en navegadores compatibles (HSTS).
+      strictTransportSecurity:
+        process.env.NODE_ENV === 'production'
+          ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+          : false,
+      // Evita fricciones en docs y front hasta definir una CSP explícita por app.
+      contentSecurityPolicy: false,
+    }),
+  );
 
   // 🧠 Body parser (Twilio usa x-www-form-urlencoded)
   app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
