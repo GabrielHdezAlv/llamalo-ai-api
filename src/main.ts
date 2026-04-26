@@ -33,7 +33,10 @@ function normalizeOrigin(raw: string): string {
 function buildCorsOrigins(): string[] {
   const raw = process.env.FRONTEND_URL?.trim();
   const fromFrontend = raw
-    ? raw.split(',').map((s) => normalizeOrigin(s)).filter(Boolean)
+    ? raw
+        .split(',')
+        .map((s) => normalizeOrigin(s))
+        .filter(Boolean)
     : [normalizeOrigin('https://app.llamalo.ai')];
   const extraFromEnv = (process.env.CORS_EXTRA_ORIGINS ?? '')
     .split(',')
@@ -60,6 +63,8 @@ async function bootstrap() {
   console.log('🌐 Servidor HTTP y WS escuchando en /voice/stream');
 
   const app = await NestFactory.create(AppModule);
+  // Usar IP real del cliente detrás de proxy (Render/NGINX) para rate limiting.
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
 
   // 🧠 Body parser (Twilio usa x-www-form-urlencoded)
   app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
@@ -219,7 +224,9 @@ async function bootstrap() {
 
     ws.on('error', (error) => {
       console.error('❌ Error en WebSocket:', error);
-      Sentry.captureException(error, { tags: { gateway: 'streams', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'streams', source: 'ws' },
+      });
     });
   });
 
@@ -265,7 +272,9 @@ async function bootstrap() {
 
     testWs.on('error', (error) => {
       console.error('❌ Error en WebSocket de prueba:', error);
-      Sentry.captureException(error, { tags: { gateway: 'test-call', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'test-call', source: 'ws' },
+      });
     });
   });
 
@@ -313,7 +322,9 @@ async function bootstrap() {
 
     supportWs.on('error', (error) => {
       console.error('❌ Error en WebSocket de soporte:', error);
-      Sentry.captureException(error, { tags: { gateway: 'support-chat', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'support-chat', source: 'ws' },
+      });
     });
   });
 
@@ -324,7 +335,9 @@ async function bootstrap() {
     profileEvents.handleConnection(profileWs);
     profileWs.on('error', (error) => {
       console.error('❌ Error en WebSocket profile/events:', error);
-      Sentry.captureException(error, { tags: { gateway: 'profile-events', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'profile-events', source: 'ws' },
+      });
     });
   });
 

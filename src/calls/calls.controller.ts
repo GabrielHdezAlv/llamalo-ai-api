@@ -1,4 +1,5 @@
 import { Controller, Post, Body, Res } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { getTwilioMediaStreamWebSocketUrl } from './twilio-media-stream-url';
@@ -19,6 +20,11 @@ class IncomingDto {
 
 @Controller('voice')
 export class CallsController {
+  // Protección anti-spam por caller→destino sin bloquear picos legítimos de muchos callers distintos.
+  private readonly callerWindowMs = 10 * 60 * 1000;
+  private readonly callerMaxAttemptsPerWindow = 6;
+  private readonly callerAttemptBuckets = new Map<string, number[]>();
+
   constructor(
     private readonly twilio: TwilioService,
     private readonly agentKnowledgeService: AgentKnowledgeService,
@@ -35,6 +41,7 @@ export class CallsController {
   }
 
   @Post('incoming')
+  @Throttle({ default: { limit: 300, ttl: 60000 } })
   async incoming(@Body() body: IncomingDto, @Res() res: Response) {
     const r = this.twilio.newVoiceResponse();
 
@@ -49,6 +56,12 @@ export class CallsController {
     // EARLY EXIT: Rechazar peticiones de prueba/fantasma sin número real inmediatamente
     if (!body.To || body.To === 'N/A' || body.To.includes('client:')) {
       console.log('⚠️ Ignorando petición sin número real (Early Exit)');
+      return res.type('text/xml').send('<Response><Reject /></Response>');
+    }
+    if (this.isCallerBurstExceeded(body.From, body.To)) {
+      console.warn(
+        '⚠️ [Calls] Patrón repetitivo detectado para caller/destino; rechazando llamada para mitigar spam',
+      );
       return res.type('text/xml').send('<Response><Reject /></Response>');
     }
 
@@ -153,8 +166,7 @@ export class CallsController {
       const legacyDigitsMatch = (la: Record<string, unknown>): boolean => {
         const lpn = la.phoneNumber;
         const legacyDigits = parseInt(
-          String(lpn ?? '')
-            .replace(/\D/g, '') || '0',
+          String(lpn ?? '').replace(/\D/g, '') || '0',
           10,
         );
         return legacyDigits === agentNumber && legacyDigits !== 0;
@@ -487,6 +499,7 @@ export class CallsController {
   }
 
   @Post('resume')
+  @Throttle({ default: { limit: 300, ttl: 60000 } })
   async resume(@Body() body: Record<string, unknown>, @Res() res: Response) {
     const to =
       typeof body.To === 'string'
@@ -498,7 +511,9 @@ export class CallsController {
     try {
       const agentDoc = await this.resolveUserDocFromPhoneTo(to);
       if (!agentDoc) {
-        console.warn('[Calls] resume: no se pudo resolver usuario por To/Called');
+        console.warn(
+          '[Calls] resume: no se pudo resolver usuario por To/Called',
+        );
         return res.type('text/xml').send('<Response><Reject /></Response>');
       }
       const userId = agentDoc.id;
@@ -602,5 +617,43 @@ export class CallsController {
     }
 
     return agentSnapshot.docs[0];
+  }
+
+  private normalizePhone(phone?: string): string {
+    return String(phone ?? '')
+      .replace(/\D/g, '')
+      .trim();
+  }
+
+  private isCallerBurstExceeded(from?: string, to?: string): boolean {
+    const fromKey = this.normalizePhone(from);
+    const toKey = this.normalizePhone(to);
+    if (!fromKey || !toKey) {
+      return false;
+    }
+    const now = Date.now();
+    const key = `${fromKey}->${toKey}`;
+    const cutoff = now - this.callerWindowMs;
+    const current = (this.callerAttemptBuckets.get(key) ?? []).filter(
+      (timestamp) => timestamp >= cutoff,
+    );
+    current.push(now);
+    this.callerAttemptBuckets.set(key, current);
+    this.compactCallerBuckets(cutoff);
+    return current.length > this.callerMaxAttemptsPerWindow;
+  }
+
+  private compactCallerBuckets(cutoff: number): void {
+    if (this.callerAttemptBuckets.size < 2000) {
+      return;
+    }
+    for (const [key, timestamps] of this.callerAttemptBuckets.entries()) {
+      const fresh = timestamps.filter((timestamp) => timestamp >= cutoff);
+      if (fresh.length === 0) {
+        this.callerAttemptBuckets.delete(key);
+      } else {
+        this.callerAttemptBuckets.set(key, fresh);
+      }
+    }
   }
 }
