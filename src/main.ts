@@ -16,6 +16,7 @@ import { TestCallGateway } from './test-call/test-call.gateway';
 import { SupportChatGateway } from './support-chat/support-chat.gateway';
 import { ProfileEventsService } from './profile-events/profile-events.service';
 import { configureLogging } from './utils/logging';
+import helmet from 'helmet';
 
 /** Normaliza un origen (sin barra final, con esquema). */
 function normalizeOrigin(raw: string): string {
@@ -33,7 +34,10 @@ function normalizeOrigin(raw: string): string {
 function buildCorsOrigins(): string[] {
   const raw = process.env.FRONTEND_URL?.trim();
   const fromFrontend = raw
-    ? raw.split(',').map((s) => normalizeOrigin(s)).filter(Boolean)
+    ? raw
+        .split(',')
+        .map((s) => normalizeOrigin(s))
+        .filter(Boolean)
     : [normalizeOrigin('https://app.llamalo.ai')];
   const extraFromEnv = (process.env.CORS_EXTRA_ORIGINS ?? '')
     .split(',')
@@ -51,6 +55,11 @@ function buildCorsOrigins(): string[] {
   );
 }
 
+function isEnabled(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
   getFirebaseApp();
@@ -60,6 +69,41 @@ async function bootstrap() {
   console.log('🌐 Servidor HTTP y WS escuchando en /voice/stream');
 
   const app = await NestFactory.create(AppModule);
+  // Usar IP real del cliente detrás de proxy (Render/NGINX) para rate limiting.
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
+  const cspReportOnly = isEnabled(process.env.CSP_REPORT_ONLY);
+  const cspConnectSrc = ["'self'", ...(process.env.CSP_EXTRA_CONNECT_SRC ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)];
+  app.use(
+    helmet({
+      // En producción fuerza HTTPS en navegadores compatibles (HSTS).
+      strictTransportSecurity:
+        process.env.NODE_ENV === 'production'
+          ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+          : false,
+      contentSecurityPolicy: {
+        reportOnly: cspReportOnly,
+        directives: {
+          defaultSrc: ["'self'"],
+          // Swagger UI necesita inline script/style para renderizar correctamente.
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: cspConnectSrc,
+          fontSrc: ["'self'", 'data:', 'https:'],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          frameAncestors: ["'none'"],
+          formAction: ["'self'"],
+        },
+      },
+    }),
+  );
+  console.log(
+    `CSP activa en modo ${cspReportOnly ? 'Report-Only' : 'enforced'}`,
+  );
 
   // 🧠 Body parser (Twilio usa x-www-form-urlencoded)
   app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
@@ -219,7 +263,9 @@ async function bootstrap() {
 
     ws.on('error', (error) => {
       console.error('❌ Error en WebSocket:', error);
-      Sentry.captureException(error, { tags: { gateway: 'streams', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'streams', source: 'ws' },
+      });
     });
   });
 
@@ -265,7 +311,9 @@ async function bootstrap() {
 
     testWs.on('error', (error) => {
       console.error('❌ Error en WebSocket de prueba:', error);
-      Sentry.captureException(error, { tags: { gateway: 'test-call', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'test-call', source: 'ws' },
+      });
     });
   });
 
@@ -313,7 +361,9 @@ async function bootstrap() {
 
     supportWs.on('error', (error) => {
       console.error('❌ Error en WebSocket de soporte:', error);
-      Sentry.captureException(error, { tags: { gateway: 'support-chat', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'support-chat', source: 'ws' },
+      });
     });
   });
 
@@ -324,7 +374,9 @@ async function bootstrap() {
     profileEvents.handleConnection(profileWs);
     profileWs.on('error', (error) => {
       console.error('❌ Error en WebSocket profile/events:', error);
-      Sentry.captureException(error, { tags: { gateway: 'profile-events', source: 'ws' } });
+      Sentry.captureException(error, {
+        tags: { gateway: 'profile-events', source: 'ws' },
+      });
     });
   });
 

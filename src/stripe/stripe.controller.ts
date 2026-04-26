@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import * as Sentry from '@sentry/nestjs';
 import type { Request } from 'express';
 import { StripeService } from './stripe.service';
@@ -28,6 +29,7 @@ export class StripeController {
   ) {}
 
   @Post('webhook')
+  @SkipThrottle()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:

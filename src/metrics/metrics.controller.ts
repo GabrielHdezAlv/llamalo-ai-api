@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Query, HttpCode, HttpStatus, Req, ForbiddenException } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -14,6 +14,9 @@ import { FirebaseAuthGuard } from '../auth/firebase-auth.guard';
 import { OwnerRoleGuard } from '../auth/owner-role.guard';
 import { GetUser } from '../auth/get-user.decorator';
 import { BadRequestException } from '@nestjs/common';
+import type { Request } from 'express';
+import { validateRequest } from 'twilio';
+import * as admin from 'firebase-admin';
 
 @ApiTags('metrics')
 @ApiBearerAuth()
@@ -78,7 +81,11 @@ export class MetricsController {
   @Post('twilio-webhook')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiExcludeEndpoint()
-  async twilioCallWebhook(@Body() body: Record<string, string>): Promise<void> {
+  async twilioCallWebhook(
+    @Req() req: Request,
+    @Body() body: Record<string, string>,
+  ): Promise<void> {
+    await this.assertTwilioSignature(req, body);
     await this.metricsService.handleTwilioCallWebhook(body);
   }
 
@@ -118,5 +125,88 @@ export class MetricsController {
       userId,
       twilioAccountId,
     );
+  }
+
+  private async assertTwilioSignature(
+    req: Request,
+    payload: Record<string, string>,
+  ): Promise<void> {
+    const signature = req.header('x-twilio-signature');
+    if (!signature) {
+      throw new ForbiddenException('Falta cabecera X-Twilio-Signature.');
+    }
+
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    const candidateTokens = await this.getCandidateTwilioTokens(payload);
+    const isValid = candidateTokens.some((token) =>
+      validateRequest(token, signature, url, payload),
+    );
+    if (!isValid || candidateTokens.length === 0) {
+      throw new ForbiddenException('Firma de webhook Twilio inválida.');
+    }
+  }
+
+  private async getCandidateTwilioTokens(
+    payload: Record<string, string>,
+  ): Promise<string[]> {
+    const tokens = new Set<string>();
+    const accountSid = payload.AccountSid?.trim();
+    if (accountSid) {
+      const firestore = admin.firestore();
+      const indexDoc = await firestore
+        .collection('twilio_index')
+        .doc(accountSid)
+        .get();
+
+      if (indexDoc.exists) {
+        const userId = (indexDoc.data() as Record<string, string>)?.userId;
+        if (userId) {
+          const userDoc = await firestore.collection('users').doc(userId).get();
+          if (userDoc.exists) {
+            const userData = userDoc.data() as Record<string, unknown>;
+            const twilioAccounts =
+              (userData.twilio as Array<{
+                twilioSid?: string;
+                twilioToken?: string;
+              }>) || [];
+            for (const account of twilioAccounts) {
+              if (
+                account.twilioSid === accountSid &&
+                account.twilioToken?.trim()
+              ) {
+                tokens.add(account.twilioToken.trim());
+              }
+            }
+          }
+        }
+      }
+
+      if (tokens.size === 0) {
+        const usersSnapshot = await firestore.collection('users').get();
+        for (const userDoc of usersSnapshot.docs) {
+          const userData = userDoc.data() as Record<string, unknown>;
+          const twilioAccounts =
+            (userData.twilio as Array<{
+              twilioSid?: string;
+              twilioToken?: string;
+            }>) || [];
+          for (const account of twilioAccounts) {
+            if (
+              account.twilioSid === accountSid &&
+              account.twilioToken?.trim()
+            ) {
+              tokens.add(account.twilioToken.trim());
+            }
+          }
+        }
+      }
+    }
+
+    const globalToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+    if (globalToken) {
+      tokens.add(globalToken);
+    }
+
+    return Array.from(tokens);
   }
 }

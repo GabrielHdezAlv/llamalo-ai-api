@@ -23,6 +23,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import * as Sentry from '@sentry/nestjs';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Response, Request } from 'express';
 import { ShopifyService } from './shopify.service';
 import type {
@@ -537,7 +538,10 @@ export class ShopifyController {
       properties: { message: { type: 'string' } },
     },
   })
-  @ApiResponse({ status: 400, description: 'Parámetro shop faltante o tienda no encontrada' })
+  @ApiResponse({
+    status: 400,
+    description: 'Parámetro shop faltante o tienda no encontrada',
+  })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   async disconnectConnection(
     @GetUser('uid') userId: string,
@@ -551,6 +555,7 @@ export class ShopifyController {
   }
 
   @Post('webhooks')
+  @SkipThrottle()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Webhook receiver para Shopify',
