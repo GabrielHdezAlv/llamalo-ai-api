@@ -55,6 +55,11 @@ function buildCorsOrigins(): string[] {
   );
 }
 
+function isEnabled(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 async function bootstrap() {
   // 🔥 Inicializa Firebase antes que cualquier otro servicio NestJS
   getFirebaseApp();
@@ -66,6 +71,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   // Usar IP real del cliente detrás de proxy (Render/NGINX) para rate limiting.
   app.getHttpAdapter().getInstance().set('trust proxy', true);
+  const cspReportOnly = isEnabled(process.env.CSP_REPORT_ONLY);
+  const cspConnectSrc = ["'self'", ...(process.env.CSP_EXTRA_CONNECT_SRC ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)];
   app.use(
     helmet({
       // En producción fuerza HTTPS en navegadores compatibles (HSTS).
@@ -73,9 +83,26 @@ async function bootstrap() {
         process.env.NODE_ENV === 'production'
           ? { maxAge: 31536000, includeSubDomains: true, preload: true }
           : false,
-      // Evita fricciones en docs y front hasta definir una CSP explícita por app.
-      contentSecurityPolicy: false,
+      contentSecurityPolicy: {
+        reportOnly: cspReportOnly,
+        directives: {
+          defaultSrc: ["'self'"],
+          // Swagger UI necesita inline script/style para renderizar correctamente.
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: cspConnectSrc,
+          fontSrc: ["'self'", 'data:', 'https:'],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          frameAncestors: ["'none'"],
+          formAction: ["'self'"],
+        },
+      },
     }),
+  );
+  console.log(
+    `CSP activa en modo ${cspReportOnly ? 'Report-Only' : 'enforced'}`,
   );
 
   // 🧠 Body parser (Twilio usa x-www-form-urlencoded)
