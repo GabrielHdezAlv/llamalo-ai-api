@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -37,6 +38,12 @@ import { WebhookActionsModule } from './webhook-actions/webhook-actions.module';
       isGlobal: true,
     }),
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 60,
+      },
+    ]),
     CryptoModule,
     CallsModule,
     AuthModule,
@@ -61,6 +68,10 @@ import { WebhookActionsModule } from './webhook-actions/webhook-actions.module';
   ],
   controllers: [],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     // SentryGlobalFilter captura cualquier excepción no manejada y la reporta
     // a Sentry antes de delegar al comportamiento por defecto de NestJS.
     {
