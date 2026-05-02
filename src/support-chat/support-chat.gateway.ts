@@ -372,6 +372,8 @@ export class SupportChatGateway {
             model: this.deepgramListenModel,
             language,
             smart_format: true,
+            endpointing: 300,
+            interim_results: true,
           },
         },
       },
@@ -404,47 +406,51 @@ export class SupportChatGateway {
           break;
 
         case 'UserStartedSpeaking':
-          // Verificamos si el agente está hablando o si hay audio encolado reproduciéndose
-          const isPlayingAudio =
-            session.expectedAudioEndTime &&
-            session.expectedAudioEndTime > Date.now();
-
-          if (
-            (session.agentSpeaking || isPlayingAudio) &&
-            session.allowInterruptions
-          ) {
-            this.logger.log(
-              `🛑 [SupportVoice] Interrupción detectada (Barge-in), silenciando agente`,
-            );
-            session.interrupted = true;
-            session.agentSpeaking = false;
-            session.expectedAudioEndTime = 0;
-
-            if (session.ttsCancelStream) {
-              session.ttsCancelStream();
-              session.ttsCancelStream = undefined;
-            }
-            session.currentTTSRequest = undefined;
-
-            // Enviar instrucción al frontend para que vacíe su buffer de audio inmediatamente
-            this.sendJson(session.client, { type: 'clear_audio' });
-          }
+          // Delegamos la interrupción a ConversationText parcial para evitar falsos positivos
           break;
 
         case 'ConversationText': {
           const role = this.extractRole(message);
           const text = this.extractText(message);
+          const isFinal = message.is_final !== false;
 
           if (text && role === 'user') {
-            this.logger.log(
-              `📝 [SupportVoice] Transcript usuario: "${text.substring(0, 80)}"`,
-            );
-            this.sendJson(session.client, {
-              type: 'transcript',
-              role: 'user',
-              text,
-            });
-            this.enqueueTranscript(session, text);
+            if (isFinal) {
+              this.logger.log(
+                `📝 [SupportVoice] Transcript usuario: "${text.substring(0, 80)}"`,
+              );
+              this.sendJson(session.client, {
+                type: 'transcript',
+                role: 'user',
+                text,
+              });
+              this.enqueueTranscript(session, text);
+            } else {
+              // Parcial: verificamos interrupción
+              const isPlayingAudio =
+                session.expectedAudioEndTime &&
+                session.expectedAudioEndTime > Date.now();
+
+              if (
+                (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+                session.allowInterruptions &&
+                text.trim().length > 8
+              ) {
+                this.logger.log(`🛑 [SupportVoice] Interrupción detectada (parcial: "${text.substring(0, 30)}...")`);
+                session.interrupted = true;
+                session.agentSpeaking = false;
+                session.expectedAudioEndTime = 0;
+                
+                if (session.ttsCancelStream) {
+                  session.ttsCancelStream();
+                  session.ttsCancelStream = undefined;
+                }
+                session.currentTTSRequest = undefined;
+                
+                // Enviar instrucción al frontend para que vacíe su buffer de audio inmediatamente
+                this.sendJson(session.client, { type: 'clear_audio' });
+              }
+            }
           }
           break;
         }
