@@ -468,18 +468,7 @@ export class SupportChatGateway {
                 text.trim().length > 8
               ) {
                 this.logger.log(`🛑 [SupportVoice] Interrupción detectada (parcial: "${text.substring(0, 30)}...")`);
-                session.interrupted = true;
-                session.agentSpeaking = false;
-                session.expectedAudioEndTime = 0;
-                
-                if (session.ttsCancelStream) {
-                  session.ttsCancelStream();
-                  session.ttsCancelStream = undefined;
-                }
-                session.currentTTSRequest = undefined;
-                
-                // Enviar instrucción al frontend para que vacíe su buffer de audio inmediatamente
-                this.sendJson(session.client, { type: 'clear_audio' });
+                this.handleInterruption(session);
               }
             }
           }
@@ -574,6 +563,21 @@ export class SupportChatGateway {
 
   // ── LLM ────────────────────────────────────────────────────────────────────
 
+  private handleInterruption(session: SupportVoiceSession) {
+    session.interrupted = true;
+    session.agentSpeaking = false;
+    session.expectedAudioEndTime = 0;
+
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
+    }
+    session.currentTTSRequest = undefined;
+
+    // Enviar instrucción al frontend para que vacíe su buffer de audio inmediatamente
+    this.sendJson(session.client, { type: 'clear_audio' });
+  }
+
   private async handleFinalTranscript(
     session: SupportVoiceSession,
     text: string,
@@ -587,15 +591,7 @@ export class SupportChatGateway {
     session.llmProcessing = true;
 
     // Si el usuario habla, forzamos la interrupción del audio que esté sonando
-    session.interrupted = true;
-    session.agentSpeaking = false;
-
-    if (session.ttsCancelStream) {
-      session.ttsCancelStream();
-      session.ttsCancelStream = undefined;
-    }
-    session.currentTTSRequest = undefined;
-    this.sendJson(session.client, { type: 'clear_audio' });
+    this.handleInterruption(session);
 
     // Ahora empezamos a procesar el nuevo mensaje
     session.interrupted = false;

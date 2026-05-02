@@ -1510,26 +1510,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           console.log(
             `🛑 [${session.callSid}] Interrupción por voz del usuario (parcial: "${text.substring(0, 30)}...")`,
           );
-          session.interrupted = true;
-          session.agentSpeaking = false;
-          session.silenceInterventions = 0;
-
-          if (session.ttsCancelStream) {
-            session.ttsCancelStream();
-            session.ttsCancelStream = undefined;
-          }
-
-          session.outboundBuffer = Buffer.alloc(0);
-
-          // Vaciar el buffer de Twilio instantáneamente
-          if (session.streamSid) {
-            session.client.send(
-              JSON.stringify({
-                event: 'clear',
-                streamSid: session.streamSid,
-              }),
-            );
-          }
+          this.handleInterruption(session);
         }
       }
     }
@@ -2516,6 +2497,41 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     return defaultValue;
   }
 
+  private handleInterruption(session: CallSession) {
+    session.interrupted = true;
+    session.agentSpeaking = false;
+    session.expectedAudioEndTime = 0;
+    session.silenceInterventions = 0;
+    session.interceptedResponseText = '';
+
+    if (session.terminadoPor === 'silencio') {
+      session.terminadoPor = undefined;
+    }
+
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
+    }
+    
+    if (session.currentTTSRequest) {
+      session.currentTTSRequest = undefined;
+    }
+
+    session.outboundBuffer = Buffer.alloc(0);
+
+    // Vaciar el buffer de Twilio instantáneamente
+    if (session.streamSid) {
+      session.client.send(
+        JSON.stringify({
+          event: 'clear',
+          streamSid: session.streamSid,
+        }),
+      );
+    }
+
+    this.resetSilenceTimer(session);
+  }
+
   private forwardInboundAudio(callSid: string, msg: TwilioMediaIn) {
     const session = this.sessions.get(callSid);
     if (!session) {
@@ -3011,38 +3027,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
                   console.log(
                     `🛑 [${session.callSid}] Interrupción por voz del usuario (parcial: "${text.substring(0, 30)}...")`,
                   );
-                  session.interrupted = true;
-                  session.agentSpeaking = false;
-                  session.expectedAudioEndTime = 0;
-                  session.silenceInterventions = 0;
-                  
-                  if (session.terminadoPor === 'silencio') {
-                    session.terminadoPor = undefined;
-                  }
-
-                  if (session.ttsCancelStream) {
-                    session.ttsCancelStream();
-                    session.ttsCancelStream = undefined;
-                  }
-
-                  if (session.currentTTSRequest) {
-                    session.currentTTSRequest = undefined;
-                  }
-
-                  session.interceptedResponseText = '';
-                  session.outboundBuffer = Buffer.alloc(0);
-
-                  // Vaciar el buffer de Twilio instantáneamente
-                  if (session.streamSid) {
-                    session.client.send(
-                      JSON.stringify({
-                        event: 'clear',
-                        streamSid: session.streamSid,
-                      }),
-                    );
-                  }
-                  
-                  this.resetSilenceTimer(session);
+                  this.handleInterruption(session);
                 }
               }
             } else {

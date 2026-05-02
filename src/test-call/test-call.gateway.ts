@@ -506,18 +506,7 @@ export class TestCallGateway {
                 text.trim().length > 8
               ) {
                 console.log(`🛑 [TestCall] Usuario interrumpió al agente (parcial: "${text.substring(0, 30)}...")`);
-                session.interrupted = true;
-                session.agentSpeaking = false;
-                session.expectedAudioEndTime = 0;
-                
-                if (session.ttsCancelStream) {
-                  session.ttsCancelStream();
-                  session.ttsCancelStream = undefined;
-                }
-                session.currentTTSRequest = undefined;
-                
-                // Vaciar buffer del frontend
-                this.sendJson(session.client, { type: 'clear_audio' });
+                this.handleInterruption(session);
               }
             }
           }
@@ -721,6 +710,21 @@ export class TestCallGateway {
         void this.handleFinalTranscript(session, queued);
       }
     }
+  }
+
+  private handleInterruption(session: TestCallSession) {
+    session.interrupted = true;
+    session.agentSpeaking = false;
+    session.expectedAudioEndTime = 0;
+
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
+    }
+    session.currentTTSRequest = undefined;
+
+    // Vaciar buffer del frontend
+    this.sendJson(session.client, { type: 'clear_audio' });
   }
 
   /**
