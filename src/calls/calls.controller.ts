@@ -283,14 +283,18 @@ export class CallsController {
       //   }
       // }
 
-      const wsUrl = getTwilioMediaStreamWebSocketUrl();
-      console.log('[Calls] Twilio Media Stream WebSocket:', wsUrl);
+    const wsUrl = getTwilioMediaStreamWebSocketUrl();
+    console.log('[Calls] Twilio Media Stream WebSocket:', wsUrl);
 
-      const connect = r.connect();
-      const stream = connect.stream({
-        url: wsUrl,
-        track: 'inbound_track',
-      });
+    // Ajustamos la configuración TwiML para máxima estabilidad en llamadas inbounds
+    const connect = r.connect();
+    const stream = connect.stream({
+      url: wsUrl,
+    });
+    // Importante: No forzar 'track: inbound_track' para permitir que el WebSocket reciba la media de audio correcta según Twilio
+    
+    // Configuraciones avanzadas para la máxima calidad del flujo de Twilio (Barge-in optimizado)
+    r.pause({ length: 1 }); // Añadimos pequeña pausa para estabilidad del audio TwiML inicial
 
       const addStreamParameter = (name: string, value?: string) => {
         if (!value) return;
@@ -559,8 +563,11 @@ export class CallsController {
     const connect = r.connect();
     connect.stream({
       url: wsUrl,
-      track: 'inbound_track',
     });
+    // Importante: No forzar 'track: inbound_track' para permitir que el WebSocket reciba la media de audio correcta según Twilio
+    
+    // Configuraciones avanzadas para la máxima calidad del flujo de Twilio (Barge-in optimizado)
+    r.pause({ length: 1 }); // Añadimos pequeña pausa para estabilidad del audio TwiML inicial
 
     const twimlString = r.toString();
     console.log(

@@ -173,15 +173,15 @@ export class StreamsGateway {
 
   private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const; // Solicitar mu-law nativo para passthrough directo a Twilio
   private readonly elevenLabsTtsModelId =
-    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Usar Flash v2.5 para latencia ultra-baja (<100ms) en producción
+    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Flash v2.5 obligatorio para latencia ultra-baja en llamadas telefónicas
   private readonly elevenLabsTtsStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5, // Bajado a 0.5 para mayor expresividad
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.35, // Expressividad balanceada (0.35 para voces más fluidas y humanas)
   );
   private readonly elevenLabsTtsStyle = Number(
-    process.env.ELEVENLABS_TTS_STYLE ?? 0.05,
+    process.env.ELEVENLABS_TTS_STYLE ?? 0.0, // Cero para latencia óptima
   );
   private readonly elevenLabsTtsSimilarity = Number(
-    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.8,
+    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.85, // Subido a 0.85 para evitar artefactos en la voz
   );
   private readonly elevenLabsTtsSpeakerBoost =
     (process.env.ELEVENLABS_TTS_SPEAKER_BOOST ?? 'true') === 'true';
@@ -217,7 +217,7 @@ export class StreamsGateway {
   private readonly llmModelFirstTurn =
     process.env.OPENAI_MODEL_FIRST_TURN ?? 'gpt-4o-mini';
   private readonly llmTemperature = Number(
-    process.env.OPENAI_TEMPERATURE ?? 0.7, // Subido a 0.7 para respuestas de voz más creativas y conversacionales
+    process.env.OPENAI_TEMPERATURE ?? 0.6, // Ajustado a 0.6 para equilibrar coherencia de empresa y naturalidad
   );
   private readonly llmMaxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 200);
   private readonly llmMaxTokensFirstTurn = Number(
@@ -230,7 +230,7 @@ export class StreamsGateway {
   );
   private readonly maxBufferedChunks = Math.max(
     1,
-    Number(process.env.DG_MAX_BUFFERED_CHUNKS ?? 25),
+    Number(process.env.DG_MAX_BUFFERED_CHUNKS ?? 250), // Aumentado para prevenir cortes de audio (alta empresa)
   );
   private readonly defaultInstructions =
     process.env.DG_AGENT_PROMPT ||
@@ -1571,20 +1571,28 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       return;
     }
 
-    // 🛡️ FILTRO ANTI-ECO (SALUDO INICIAL):
-    // Si el texto que escuchamos es casi idéntico al saludo inicial que dijo el bot, lo ignoramos.
-    // Esto evita que el bot se responda a sí mismo si se escucha por el altavoz.
-    if (role === 'user' && session.pendingGreeting) {
+    // 🛡️ FILTRO ANTI-ECO Y FILLERS (hm, vale, etc.):
+    // Si el texto es muy corto y contiene fillers, o es eco del saludo, lo ignoramos.
+    if (role === 'user') {
       const cleanTranscript = correctedText.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
-      const cleanGreeting = session.pendingGreeting.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
       
-      // Si el transcript contiene gran parte del saludo o viceversa, es eco.
-      if (
-        cleanTranscript.length > 10 && 
-        (cleanGreeting.includes(cleanTranscript) || cleanTranscript.includes(cleanGreeting))
-      ) {
-        console.log(`🛡️ [${session.callSid}] Eco detectado y bloqueado: "${text}" coincide con el saludo.`);
+      // Bloquear fillers comunes que Deepgram capta como habla
+      const fillers = ['hm', 'hmm', 'uh', 'uhm', 'vale', 'si', 'sí', 'ok', 'okay', 'ah'];
+      if (fillers.includes(cleanTranscript) || cleanTranscript.length < 3) {
+        // console.log(`🔇 [${session.callSid}] Ignorando ruido/filler: "${text}"`);
         return;
+      }
+      
+      if (session.pendingGreeting) {
+        const cleanGreeting = session.pendingGreeting.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
+        // Si el transcript contiene gran parte del saludo o viceversa, es eco.
+        if (
+          cleanTranscript.length > 10 && 
+          (cleanGreeting.includes(cleanTranscript) || cleanTranscript.includes(cleanGreeting))
+        ) {
+          console.log(`🛡️ [${session.callSid}] Eco detectado y bloqueado: "${text}" coincide con el saludo.`);
+          return;
+        }
       }
     }
 
@@ -1847,6 +1855,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           reason: err.message,
           metadata: { callSid: session.callSid, userId: session.userId }
         });
+        
+        // Manejo Graceful de Errores (Alta Disponibilidad)
+        if (!session.interrupted) {
+          const fallbackMsg = "Disculpa, estoy experimentando un pequeño problema técnico en este momento. Por favor, vuelve a llamarnos en unos minutos.";
+          await this.streamElevenLabsTTS(session, fallbackMsg);
+        }
+        
         session.interrupted = false;
         session.agentSpeaking = false;
         return;
@@ -1961,18 +1976,18 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           const lastChar = token.slice(-1);
           const isSentenceEnd = strongEnders.has(lastChar);
 
-          // Enviar en comas si la frase ya tiene >5 palabras (para evitar que hable sin respirar),
+          // Enviar en comas si la frase ya tiene >3 palabras (para evitar que hable sin respirar),
           // O si es el PRIMER chunk y tiene al menos 1 palabra (ej: "Claro,", "Sí,")
           const wordsCount = sentenceBuffer.trim().split(' ').length;
           
           // FORZAR PUNTUACIÓN (Anti-Metralleta):
-          // Si el bot ha dicho 15 palabras y no hay puntuación, forzamos un corte enviando lo que hay.
-          // El TTS interpretará este corte del chunk como una micro pausa natural.
-          const isTooLongWithoutPause = wordsCount >= 15;
+          // Reducido a 7 palabras para empresas de alta gama. Esto obliga a enviar el fragmento
+          // más rápido a ElevenLabs, reduciendo drásticamente la latencia percibida en frases largas.
+          const isTooLongWithoutPause = wordsCount >= 7;
 
           const isPauseEnd =
             weakEnders.has(lastChar) &&
-            (wordsCount > 5 || (isFirstChunk && wordsCount >= 1));
+            (wordsCount > 3 || (isFirstChunk && wordsCount >= 1));
 
           if (isSentenceEnd || isPauseEnd || isTooLongWithoutPause) {
             if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
@@ -2173,6 +2188,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           console.error(
             `❌ [${session.callSid}] Error en webhook Make:`,
             whErr,
+          );
+          // Graceful degradation en Action Tool
+          return this.handleFinalTranscript(
+            session,
+            '(SISTEMA: Ocurrió un error al ejecutar la acción externa. Pide disculpas y ofrece continuar ayudando de otra forma.)',
           );
         }
       }
@@ -2412,6 +2432,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
   private resolveVoiceId(
     customParameters?: Record<string, string>,
   ): string | undefined {
+    // Si queremos habilitar un fallback global a la voz general, se haría aquí
     const customVoice =
       customParameters?.voiceId ||
       customParameters?.labsId || // Mantener compatibilidad con labsId
@@ -2483,12 +2504,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       return;
     }
 
-    // Aceptar tanto el track por defecto ("inbound") como el configurado en TwiML ("inbound_track")
-    if (
-      msg.media.track &&
-      msg.media.track !== 'inbound' &&
-      msg.media.track !== 'inbound_track'
-    ) {
+    // Aceptar cualquier track (inbound, outbound, inbound_track) para evitar que se pierda audio si Twilio cambia el nombre
+    if (msg.media.track && msg.media.track === 'outbound') {
+      // Ignorar outbound track (audio que nosotros mismos generamos)
       return;
     }
 
@@ -3287,7 +3305,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,
     );
-    // Añadimos optimize_streaming_latency=4 para máxima velocidad con Flash v2.5
+    // optimize_streaming_latency=4 para máxima velocidad con Flash v2.5 en servidores europeos
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${encodeURIComponent(normalizedFormat)}&optimize_streaming_latency=4`;
 
     try {
@@ -3600,8 +3618,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       clearTimeout(session.silenceTimeout);
     }
 
-    const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 20 * 1000; // 20s para primera intervención
-    const HANGUP_TIMEOUT_MS = Number(process.env.SILENCE_HANGUP_TIMEOUT_MS) || 30 * 1000; // 30s adicionales antes de colgar
+    const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 10 * 1000; // 10s para primera intervención
+    const HANGUP_TIMEOUT_MS = Number(process.env.SILENCE_HANGUP_TIMEOUT_MS) || 15 * 1000; // 15s adicionales antes de colgar
 
     const nextTimeoutMs = (session.silenceInterventions ?? 0) >= 1 ? HANGUP_TIMEOUT_MS : PROMPT_TIMEOUT_MS;
 
