@@ -47,6 +47,7 @@ interface SupportVoiceSession {
   transcriptDebounceTimer?: NodeJS.Timeout;
   llmProcessing: boolean;
   expectedAudioEndTime?: number;
+  lastAgentStartSpeakingTime?: number;
 }
 
 interface RateLimitEntry {
@@ -104,7 +105,7 @@ export class SupportChatGateway {
     process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
   private readonly deepgramUrl =
     process.env.DG_VOICE_AGENT_URL ||
-    'wss://agent.deepgram.com/v1/agent/converse';
+    'wss://agent.deepgram.com/v1/agent/converse?interim_results=true&endpointing=300';
   private readonly deepgramListenModel =
     process.env.DG_LISTEN_MODEL ?? 'nova-3';
 
@@ -372,8 +373,6 @@ export class SupportChatGateway {
             model: this.deepgramListenModel,
             language,
             smart_format: true,
-            endpointing: 300,
-            interim_results: true,
           },
         },
       },
@@ -406,7 +405,32 @@ export class SupportChatGateway {
           break;
 
         case 'UserStartedSpeaking':
-          // Delegamos la interrupción a ConversationText parcial para evitar falsos positivos
+          // Durante el saludo inicial no permitimos barge-in
+          if (session.allowInterruptions === false) {
+            break;
+          }
+
+          // Si el agente está hablando, interrumpimos para una sensación natural.
+          // Para reducir falsos positivos (ruidos), verificamos que el agente
+          // lleve hablando al menos 500ms.
+          const agentSpeakingDuration = session.lastAgentStartSpeakingTime
+            ? Date.now() - session.lastAgentStartSpeakingTime
+            : 0;
+
+          const isPlayingAudio =
+            session.expectedAudioEndTime &&
+            session.expectedAudioEndTime > Date.now();
+
+          if (
+            (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+            !session.interrupted &&
+            agentSpeakingDuration > 500
+          ) {
+            console.log(
+              `🗣️ [SupportChat] Interrupción detectada por VAD (UserStartedSpeaking) - Duración agente: ${agentSpeakingDuration}ms`,
+            );
+            this.handleInterruption(session);
+          }
           break;
 
         case 'ConversationText': {
@@ -603,6 +627,7 @@ export class SupportChatGateway {
       });
 
       session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
       try {
         await this.streamTTSFromText(session, fastIntentResponse);
       } catch (err) {
@@ -661,6 +686,7 @@ export class SupportChatGateway {
       });
 
       session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
       session.interrupted = false;
       session.allowInterruptions = true;
       this.sendJson(session.client, { type: 'agent.speaking' });
@@ -1081,6 +1107,7 @@ export class SupportChatGateway {
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${this.ttsOutputFormat}&optimize_streaming_latency=3`;
 
     session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
 
     const response = await axios.post(
       url,
@@ -1271,6 +1298,7 @@ export class SupportChatGateway {
     // session.history.push({ role: 'assistant', content: greeting });
 
     session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
     session.allowInterruptions = true; // Permitir que el usuario corte el saludo inicial
 
     this.sendJson(session.client, {

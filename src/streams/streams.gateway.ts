@@ -194,7 +194,7 @@ export class StreamsGateway {
     process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
   private readonly deepgramUrl =
     process.env.DG_VOICE_AGENT_URL ||
-    'wss://agent.deepgram.com/v1/agent/converse';
+    'wss://agent.deepgram.com/v1/agent/converse?interim_results=true&endpointing=300';
   private readonly deepgramLanguage =
     process.env.DG_VOICE_AGENT_LANGUAGE ?? 'es';
   private readonly deepgramListenProvider =
@@ -2317,8 +2317,6 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           model: this.deepgramListenModel,
           language: this.deepgramLanguage,
           smart_format: true,
-          endpointing: 300, // Detectar silencio final más rápido (300ms) para mejorar latencia
-          interim_results: true, // Habilitar resultados parciales para barge-in más inteligente
         },
       },
       // DESHABILITADO: Deepgram Speak genera respuestas duplicadas sin contexto
@@ -2945,14 +2943,28 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             break;
           }
 
-          // En Deepgram Agent, UserStartedSpeaking salta por cualquier ruido (respiración, fondo).
-          // Para evitar falsos positivos que cortan al agente sin motivo (Punto 3),
-          // delegamos la interrupción real al evento ConversationText parcial (interim_results),
-          // que valida que haya texto real (> 8 caracteres) antes de vaciar el buffer de Twilio.
-          
-          // Solo registramos el evento para métricas y debugging.
-          // console.log(`🗣️ [${session.callSid}] UserStartedSpeaking detectado (esperando confirmación de texto parcial)`);
-          
+          // --- MEJORA DE INTERRUPCIÓN (Punto 2 y 3) ---
+          // Si el agente está hablando, interrumpimos para una sensación natural.
+          // Para reducir falsos positivos (ruidos/respiración), verificamos que el agente
+          // lleve hablando al menos 500ms (evita micro-cortes por ruidos iniciales o eco).
+          const agentSpeakingDuration = session.lastAgentStartSpeakingTime
+            ? Date.now() - session.lastAgentStartSpeakingTime
+            : 0;
+
+          const isPlayingAudio =
+            session.expectedAudioEndTime &&
+            session.expectedAudioEndTime > Date.now();
+
+          if (
+            (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+            !session.interrupted &&
+            agentSpeakingDuration > 500
+          ) {
+            console.log(
+              `🗣️ [${session.callSid}] Interrupción detectada por VAD (UserStartedSpeaking) - Duración agente: ${agentSpeakingDuration}ms`,
+            );
+            this.handleInterruption(session);
+          }
           break;
         case 'AgentThinking':
           // Silenciar este evento para reducir ruido
