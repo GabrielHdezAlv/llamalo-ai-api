@@ -179,6 +179,13 @@ export class UserProfileResponseDto {
   planUsage?: Record<string, unknown>;
 
   @ApiProperty({
+    example: 2,
+    description: 'Último paso del onboarding que el usuario ha visitado',
+    required: false,
+  })
+  lastOnboardingStep?: number;
+
+  @ApiProperty({
     required: false,
     description: 'ID de cliente Stripe (facturación)',
   })
