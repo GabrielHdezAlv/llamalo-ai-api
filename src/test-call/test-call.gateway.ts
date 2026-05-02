@@ -114,13 +114,13 @@ export class TestCallGateway {
   private readonly defaultVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP';
   private readonly defaultStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.72,
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5,
   );
   private readonly defaultSimilarity = Number(
-    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.8,
+    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.85,
   );
   private readonly defaultStyle = Number(
-    process.env.ELEVENLABS_TTS_STYLE ?? 0.05,
+    process.env.ELEVENLABS_TTS_STYLE ?? 0.0,
   );
   private readonly defaultBoost =
     (process.env.ELEVENLABS_TTS_SPEAKER_BOOST ?? 'true') === 'true';
