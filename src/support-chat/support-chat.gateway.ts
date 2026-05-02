@@ -416,8 +416,15 @@ export class SupportChatGateway {
 
           if (text && role === 'user') {
             if (isFinal) {
+              // --- VAD DINÁMICO (Semántico) ---
+              const unfinishedConnectors = ['y', 'o', 'pero', 'que', 'el', 'la', 'un', 'una', 'con', 'para', 'en'];
+              const lastWord = text.trim().split(' ').pop()?.toLowerCase() || '';
+              if (unfinishedConnectors.includes(lastWord)) {
+                // console.log(`⏳ [SupportVoice] VAD Semántico: Usuario parece no haber terminado ("...${lastWord}")`);
+              }
+
               this.logger.log(
-                `📝 [SupportVoice] Transcript usuario: "${text.substring(0, 80)}"`,
+                `📝 [SupportVoice] [USER_TEXT] Transcript usuario: "${text.substring(0, 80)}"`,
               );
               this.sendJson(session.client, {
                 type: 'transcript',
@@ -570,6 +577,15 @@ export class SupportChatGateway {
     session.interrupted = false;
 
     session.history.push({ role: 'user', content: text });
+    this.sendJson(session.client, { type: 'agent.thinking' });
+
+    // --- MULETILLAS (Comfort Noise Verbal) ---
+    if (text.split(' ').length > 3 && Math.random() < 0.35) {
+      const fillers = ['Mmm...', 'Vale,', 'A ver...', 'Entiendo,', 'Déjame ver...', 'Claro,'];
+      const randomFiller = fillers[Math.floor(Math.random() * fillers.length)];
+      this.logger.log(`🗣️ [SupportVoice] Muletilla: "${randomFiller}"`);
+      session.currentTTSRequest = this.streamElevenLabsTTS(session, randomFiller).catch(() => {});
+    }
 
     // ⚡ INTENT DETECTION LIGERO (Reducción de latencia)
     const fastIntentResponse = this.detectFastIntent(text, session);
@@ -841,6 +857,7 @@ export class SupportChatGateway {
       // Finalizar el mensaje en el frontend (sin el token técnico [END_CALL])
       const cleanFullResponse = this.stripEndCallToken(fullResponse);
       if (cleanFullResponse) {
+        this.logger.log(`🤖 [SupportVoice] [AGENT_RESPONSE] Respuesta final: "${cleanFullResponse}"`);
         session.history.push({
           role: 'assistant',
           content: cleanFullResponse,

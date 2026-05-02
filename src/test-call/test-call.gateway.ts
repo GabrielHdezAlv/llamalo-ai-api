@@ -452,11 +452,18 @@ export class TestCallGateway {
           const text = this.extractText(message);
           const isFinal = message.is_final !== false;
 
-          if (text && role === 'user') {
-            if (isFinal) {
-              console.log(
-                `📝 [TestCall] Transcript usuario: "${text.substring(0, 80)}"`,
-              );
+    if (text && role === 'user') {
+      if (isFinal) {
+        // --- VAD DINÁMICO (Semántico) ---
+        const unfinishedConnectors = ['y', 'o', 'pero', 'que', 'el', 'la', 'un', 'una', 'con', 'para', 'en'];
+        const lastWord = text.trim().split(' ').pop()?.toLowerCase() || '';
+        if (unfinishedConnectors.includes(lastWord)) {
+          // console.log(`⏳ [TestCall] VAD Semántico: Usuario parece no haber terminado ("...${lastWord}")`);
+        }
+
+        console.log(
+          `📝 [TestCall] [USER_TEXT] Transcript usuario: "${text.substring(0, 80)}"`,
+        );
               this.sendJson(session.client, {
                 type: 'transcript',
                 role: 'user',
@@ -598,6 +605,15 @@ export class TestCallGateway {
     }
 
     session.history.push({ role: 'user', content: text });
+    this.sendJson(session.client, { type: 'agent.thinking' });
+
+    // --- MULETILLAS (Comfort Noise Verbal) ---
+    if (text.split(' ').length > 3 && Math.random() < 0.35) {
+      const fillers = ['Mmm...', 'Vale,', 'A ver...', 'Entiendo,', 'Déjame ver...', 'Claro,'];
+      const randomFiller = fillers[Math.floor(Math.random() * fillers.length)];
+      console.log(`🗣️ [TestCall] Muletilla: "${randomFiller}"`);
+      session.currentTTSRequest = this.streamElevenLabsTTS(session, randomFiller).catch(() => {});
+    }
 
     try {
       const instructions = this.buildInstructions(session);
@@ -616,6 +632,13 @@ export class TestCallGateway {
 
       const rawContent = completion.choices[0]?.message?.content?.trim() || '';
       if (!rawContent) return;
+
+      console.log(`🤖 [TestCall] [AGENT_RESPONSE] Respuesta final: "${rawContent}"`);
+
+      // Si había una muletilla, esperamos a que termine antes de mandar la respuesta principal
+      if (session.currentTTSRequest) {
+        try { await session.currentTTSRequest; } catch (e) {}
+      }
 
       const shouldHangup = this.containsEndCallSignal(rawContent);
       const content = this.stripEndCallToken(rawContent);
@@ -648,6 +671,7 @@ export class TestCallGateway {
 
       this.sendJson(session.client, { type: 'agent.speaking' });
 
+      console.log(`🤖 [TestCall] [AGENT_TEXT] Generando: "${content}"`);
       await this.streamTTSFromText(session, content);
 
       if (shouldHangup && !session.interrupted) {

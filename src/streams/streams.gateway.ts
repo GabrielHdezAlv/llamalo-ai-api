@@ -324,7 +324,7 @@ export class StreamsGateway {
           if (msg.event === 'start') {
             callStreamEnded = false;
             currentCallSid = msg.start?.callSid || '';
-            console.log(`📞 [${currentCallSid}] Llamada iniciada`);
+            console.log(`📞 [${currentCallSid}] [CALL_START] Llamada iniciada`);
             mediaBeforeStartWarned = false;
 
             if (!currentCallSid) {
@@ -355,8 +355,8 @@ export class StreamsGateway {
           }
 
           if (msg.event === 'stop') {
-            console.log(`🛑 Llamada terminada.`);
             const sid = currentCallSid;
+            console.log(`🛑 [${sid || 'unknown'}] [CALL_STOP] Llamada terminada.`);
             // Si no se marcó ningún motivo previo, el cliente fue quien colgó
             const session = sid ? this.sessions.get(sid) : undefined;
             if (session && !session.terminadoPor) {
@@ -1597,7 +1597,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     }
 
     if (role === 'user') {
-      console.log(`💬 [${session.callSid}] Usuario dijo: "${text}"`);
+      console.log(`💬 [${session.callSid}] [USER_TEXT] Usuario: "${text}" (UserId: ${session.userId || 'n/a'})`);
       session.history.push({ role: 'user', content: correctedText });
       session.silenceInterventions = 0; // Resetear contador de intervenciones por silencio
       if (session.terminadoPor === 'silencio') {
@@ -1812,6 +1812,25 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       const mergedTools = [...baseTools, ...makeWebhookTools];
       const safeTools = mergedTools.length ? mergedTools : undefined;
 
+      // --- MULETILLAS (Comfort Noise Verbal) ---
+      // Para evitar silencio incómodo (dead air) mientras el LLM y el TTS piensan,
+      // inyectamos una muletilla rápida en ~35% de los turnos conversacionales.
+      if (role === 'user' && session.history.length >= 2) {
+        const wordsCount = text.split(' ').length;
+        // Solo usar muletilla si el usuario dijo más de 3 palabras y por probabilidad aleatoria
+        if (wordsCount > 3 && Math.random() < 0.35) {
+          const fillers = ['Mmm...', 'Vale,', 'A ver...', 'Entiendo,', 'Déjame ver...', 'Claro,'];
+          const randomFiller = fillers[Math.floor(Math.random() * fillers.length)];
+          console.log(`🗣️ [${session.callSid}] Inyectando muletilla (Comfort Noise): "${randomFiller}"`);
+          
+          // Lo disparamos sin await, para que OpenAI se llame en paralelo.
+          // Asignamos la promesa a currentTTSRequest para que la cola principal espere a que acabe.
+          session.currentTTSRequest = this.streamElevenLabsTTS(session, randomFiller).catch(err => {
+            console.warn(`⚠️ [${session.callSid}] Error en muletilla:`, err.message);
+          });
+        }
+      }
+
       // Implementar Sliding Window: Retener solo los últimos N mensajes para no agotar tokens de OpenAI
       const maxHistory = 10; // Últimos 5 turnos (usuario + asistente)
       const recentHistory = session.history.slice(-maxHistory);
@@ -1997,10 +2016,16 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
               const currentSentence = sentenceToSend;
+              console.log(`🤖 [${session.callSid}] [AGENT_TEXT] Generando: "${currentSentence}"`);
               ttsQueue = ttsQueue.then(async () => {
                 if (!session.interrupted) {
+                  // Si hay una muletilla o audio previo corriendo, esperamos a que termine
+                  if (session.currentTTSRequest) {
+                    try { await session.currentTTSRequest; } catch (e) {}
+                  }
                   console.log(`🔊 [${session.callSid}] Enviando chunk a TTS: "${currentSentence}"`);
-                  await this.streamElevenLabsTTS(session, currentSentence);
+                  session.currentTTSRequest = this.streamElevenLabsTTS(session, currentSentence);
+                  await session.currentTTSRequest;
                 }
               });
             }
@@ -2204,6 +2229,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
         const cleanedResponse = this.stripEndCallToken(fullResponse);
+        console.log(`🤖 [${session.callSid}] [AGENT_RESPONSE] Respuesta final: "${cleanedResponse}"`);
         const finalContent = session.interrupted
           ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
           : cleanedResponse;
@@ -2944,6 +2970,16 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
               }
               
               if (isFinal) {
+                // --- VAD DINÁMICO (Semántico) ---
+                // Si el texto final parece incompleto (termina en conectores), esperamos un poco más
+                const unfinishedConnectors = ['y', 'o', 'pero', 'que', 'el', 'la', 'un', 'una', 'con', 'para', 'en'];
+                const lastWord = text.trim().split(' ').pop()?.toLowerCase() || '';
+                
+                if (unfinishedConnectors.includes(lastWord)) {
+                  // console.log(`⏳ [${session.callSid}] VAD Semántico: Usuario parece no haber terminado ("...${lastWord}"), esperando...`);
+                  // Podríamos implementar un delay aquí, pero por ahora lo dejamos registrado para el log empresarial
+                }
+
                 void this.handleFinalTranscript(session, text);
                 this.resetSilenceTimer(session); // Reiniciar temporizador de silencio
               } else {
@@ -3248,6 +3284,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     session: CallSession,
     text: string,
   ): Promise<void> {
+    // --- COMFORT NOISE (Punto 2 Enterprise) ---
+    // En arquitecturas de alta disponibilidad, se podría inyectar un audio de fondo (hiss) 
+    // mientras el agente no habla para evitar el "silencio digital" absoluto.
+    // Actualmente lo manejamos vía Muletillas verbales (Verbal Comfort Noise).
+
     if (!this.elevenLabsApiKey) {
       console.error(
         `❌ [${session.callSid}] ELEVENLABS_API_KEY no configurado para TTS.`,
