@@ -753,7 +753,7 @@ export class SupportChatGateway {
           const lastChar = token.slice(-1);
           const isSentenceEnd = sentenceEnders.has(lastChar);
           const isPauseEnd =
-            pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8;
+            pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 12;
 
           if (isSentenceEnd || isPauseEnd) {
             // Limpiar `[END_CALL]` (y variantes vocales) antes de enviar al TTS

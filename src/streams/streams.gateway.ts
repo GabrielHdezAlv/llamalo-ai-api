@@ -175,7 +175,7 @@ export class StreamsGateway {
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Flash v2.5 obligatorio para latencia ultra-baja en llamadas telefónicas
   private readonly elevenLabsTtsStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.35, // Expressividad balanceada (0.35 para voces más fluidas y humanas)
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5, // Subido de 0.35 a 0.5 para mayor consistencia en la entonación
   );
   private readonly elevenLabsTtsStyle = Number(
     process.env.ELEVENLABS_TTS_STYLE ?? 0.0, // Cero para latencia óptima
@@ -1981,13 +1981,12 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           const wordsCount = sentenceBuffer.trim().split(' ').length;
           
           // FORZAR PUNTUACIÓN (Anti-Metralleta):
-          // Reducido a 7 palabras para empresas de alta gama. Esto obliga a enviar el fragmento
-          // más rápido a ElevenLabs, reduciendo drásticamente la latencia percibida en frases largas.
-          const isTooLongWithoutPause = wordsCount >= 7;
+          // Umbral ajustado a 12 palabras para mejorar la fluidez y evitar parones antinaturales.
+          const isTooLongWithoutPause = wordsCount >= 12;
 
           const isPauseEnd =
             weakEnders.has(lastChar) &&
-            (wordsCount > 3 || (isFirstChunk && wordsCount >= 1));
+            (wordsCount > 5 || (isFirstChunk && wordsCount >= 1));
 
           if (isSentenceEnd || isPauseEnd || isTooLongWithoutPause) {
             if (isFirstChunk) isFirstChunk = false; // Ya enviamos el primer fragmento
