@@ -175,7 +175,7 @@ export class StreamsGateway {
   private readonly elevenLabsTtsModelId =
     process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Flash v2.5 obligatorio para latencia ultra-baja en llamadas telefónicas
   private readonly elevenLabsTtsStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5, // Subido de 0.35 a 0.5 para mayor consistencia en la entonación
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.75, // Aumentado a 0.75 para evitar que alargue vocales como "Hoooola"
   );
   private readonly elevenLabsTtsStyle = Number(
     process.env.ELEVENLABS_TTS_STYLE ?? 0.0, // Cero para latencia óptima
@@ -1980,9 +1980,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           // O si es el PRIMER chunk y tiene al menos 1 palabra (ej: "Claro,", "Sí,")
           const wordsCount = sentenceBuffer.trim().split(' ').length;
           
-          // FORZAR PUNTUACIÓN (Anti-Metralleta):
-          // Umbral ajustado a 12 palabras para mejorar la fluidez y evitar parones antinaturales.
-          const isTooLongWithoutPause = wordsCount >= 12;
+          // Ya no forzamos cortes arbitrarios por número de palabras a menos que sea extremo y haya un espacio.
+          // Esto evita cortar palabras por la mitad ("product" - "os") y mejora la entonación.
+          const isTooLongWithoutPause = wordsCount >= 25 && lastChar === ' ';
 
           const isPauseEnd =
             weakEnders.has(lastChar) &&

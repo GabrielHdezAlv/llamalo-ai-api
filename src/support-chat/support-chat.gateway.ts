@@ -87,7 +87,7 @@ export class SupportChatGateway {
   private readonly defaultVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP';
   private readonly defaultStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5,
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.75,
   );
   private readonly defaultSimilarity = Number(
     process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.85,
@@ -753,9 +753,10 @@ export class SupportChatGateway {
           const lastChar = token.slice(-1);
           const isSentenceEnd = sentenceEnders.has(lastChar);
           const isPauseEnd =
-            pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 12;
+            pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 5;
+          const isTooLongWithoutPause = sentenceBuffer.split(' ').length >= 25 && lastChar === ' ';
 
-          if (isSentenceEnd || isPauseEnd) {
+          if (isSentenceEnd || isPauseEnd || isTooLongWithoutPause) {
             // Limpiar `[END_CALL]` (y variantes vocales) antes de enviar al TTS
             const sentenceToSend = this.stripEndCallToken(sentenceBuffer);
             if (sentenceToSend) {
