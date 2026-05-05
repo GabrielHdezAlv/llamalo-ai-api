@@ -456,6 +456,15 @@ export class UsersService {
         updates.hasCompletedSetup = 
           updateDto.hasCompletedSetup === 'true' || 
           updateDto.hasCompletedSetup === true;
+          
+        const userData = snapshot.data() as UserData;
+        if (updates.hasCompletedSetup === true && userData.hasCompletedSetup !== true) {
+          if (!userData.trialEndsAt) {
+            updates.trialEndsAt = admin.firestore.Timestamp.fromMillis(
+              Date.now() + 7 * 24 * 60 * 60 * 1000,
+            );
+          }
+        }
       }
       
       if (updateDto.minutesLimit !== undefined) {
