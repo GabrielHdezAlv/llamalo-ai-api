@@ -49,16 +49,12 @@ export class PlanLimitsService {
     return STRIPE_BILLING_BLOCKED_STATUSES.has(s.trim());
   }
 
-  /** Resuelve fin de trial en ms; si falta `trialEndsAt`, deriva de `createdAt` + 7 días. */
+  /** Resuelve fin de trial en ms. Si no está definido (ej. usuario no ha completado onboarding), no hay trial activo. */
   resolveTrialEndsAtMs(userData: admin.firestore.DocumentData | undefined): number | null {
     if (!userData) return null;
     const raw = userData.trialEndsAt as admin.firestore.Timestamp | undefined;
     if (raw && typeof raw.toMillis === 'function') {
       return raw.toMillis();
-    }
-    const created = userData.createdAt as admin.firestore.Timestamp | undefined;
-    if (created && typeof created.toMillis === 'function') {
-      return created.toMillis() + TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000;
     }
     return null;
   }

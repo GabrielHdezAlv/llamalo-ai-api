@@ -138,6 +138,14 @@ export class UpdateProfileDto {
   onboardingDiscoveryChannels?: string[];
 
   @ApiProperty({
+    example: 2,
+    description: 'Último paso del onboarding que el usuario ha visitado',
+    required: false,
+  })
+  @IsOptional()
+  lastOnboardingStep?: number;
+
+  @ApiProperty({
     example: 'Europe/Madrid',
     description:
       'Zona horaria IANA para períodos de métricas (semana/mes en el panel). Vacío = valor por defecto del servidor (Europe/Madrid).',

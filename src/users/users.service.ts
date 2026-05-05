@@ -104,6 +104,7 @@ interface UserData {
   onboardingRegistration?: {
     goals?: string[];
     discoveryChannels?: string[];
+    lastStep?: number;
     updatedAt?: admin.firestore.Timestamp;
   };
   /** IANA: semanas/meses de negocio en métricas del panel */
@@ -196,6 +197,8 @@ export type UserProfileResponse = {
   extraPerMinuteEur?: number;
   /** Tour primer agente omitido (persistente en Firestore). */
   firstAgentTourSkipped?: boolean;
+  /** Último paso del onboarding que el usuario ha visitado */
+  lastOnboardingStep?: number;
 };
 
 export interface UploadFile {
@@ -360,6 +363,7 @@ export class UsersService {
             userData as unknown as admin.firestore.DocumentData,
           ).extraPerMinuteEur,
         firstAgentTourSkipped: userData?.firstAgentTourSkipped === true,
+        lastOnboardingStep: userData?.onboardingRegistration?.lastStep,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -452,6 +456,15 @@ export class UsersService {
         updates.hasCompletedSetup = 
           updateDto.hasCompletedSetup === 'true' || 
           updateDto.hasCompletedSetup === true;
+          
+        const userData = snapshot.data() as UserData;
+        if (updates.hasCompletedSetup === true && userData.hasCompletedSetup !== true) {
+          if (!userData.trialEndsAt) {
+            updates.trialEndsAt = admin.firestore.Timestamp.fromMillis(
+              Date.now() + 7 * 24 * 60 * 60 * 1000,
+            );
+          }
+        }
       }
       
       if (updateDto.minutesLimit !== undefined) {
@@ -479,13 +492,15 @@ export class UsersService {
 
       if (
         updateDto.onboardingGoals !== undefined ||
-        updateDto.onboardingDiscoveryChannels !== undefined
+        updateDto.onboardingDiscoveryChannels !== undefined ||
+        updateDto.lastOnboardingStep !== undefined
       ) {
         const prev = (snapshot.data() as UserData)?.onboardingRegistration;
         const prevGoals = Array.isArray(prev?.goals) ? prev.goals : [];
         const prevDiscovery = Array.isArray(prev?.discoveryChannels)
           ? prev.discoveryChannels
           : [];
+        const prevLastStep = prev?.lastStep;
         updates.onboardingRegistration = {
           goals:
             updateDto.onboardingGoals !== undefined
@@ -495,6 +510,10 @@ export class UsersService {
             updateDto.onboardingDiscoveryChannels !== undefined
               ? updateDto.onboardingDiscoveryChannels
               : prevDiscovery,
+          lastStep:
+            updateDto.lastOnboardingStep !== undefined
+              ? updateDto.lastOnboardingStep
+              : prevLastStep,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
       }
@@ -571,6 +590,7 @@ export class UsersService {
         metricsCalendarTimezone:
           this.resolveDisplayMetricsTimezone(updatedData),
         firstAgentTourSkipped: updatedData?.firstAgentTourSkipped === true,
+        lastOnboardingStep: updatedData?.onboardingRegistration?.lastStep,
       };
     } catch (error) {
       if (

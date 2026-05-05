@@ -173,15 +173,15 @@ export class StreamsGateway {
 
   private readonly elevenLabsTtsOutputFormat = 'ulaw_8000' as const; // Solicitar mu-law nativo para passthrough directo a Twilio
   private readonly elevenLabsTtsModelId =
-    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Usar Flash v2.5 para latencia ultra-baja (<100ms) en producción
+    process.env.ELEVENLABS_TTS_MODEL_ID ?? 'eleven_flash_v2_5'; // Flash v2.5 obligatorio para latencia ultra-baja en llamadas telefónicas
   private readonly elevenLabsTtsStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5, // Bajado a 0.5 para mayor expresividad
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.75, // Aumentado a 0.75 para evitar que alargue vocales como "Hoooola"
   );
   private readonly elevenLabsTtsStyle = Number(
-    process.env.ELEVENLABS_TTS_STYLE ?? 0.05,
+    process.env.ELEVENLABS_TTS_STYLE ?? 0.0, // Cero para latencia óptima
   );
   private readonly elevenLabsTtsSimilarity = Number(
-    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.8,
+    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.85, // Subido a 0.85 para evitar artefactos en la voz
   );
   private readonly elevenLabsTtsSpeakerBoost =
     (process.env.ELEVENLABS_TTS_SPEAKER_BOOST ?? 'true') === 'true';
@@ -194,7 +194,7 @@ export class StreamsGateway {
     process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
   private readonly deepgramUrl =
     process.env.DG_VOICE_AGENT_URL ||
-    'wss://agent.deepgram.com/v1/agent/converse';
+    'wss://agent.deepgram.com/v1/agent/converse?interim_results=true&endpointing=300';
   private readonly deepgramLanguage =
     process.env.DG_VOICE_AGENT_LANGUAGE ?? 'es';
   private readonly deepgramListenProvider =
@@ -217,7 +217,7 @@ export class StreamsGateway {
   private readonly llmModelFirstTurn =
     process.env.OPENAI_MODEL_FIRST_TURN ?? 'gpt-4o-mini';
   private readonly llmTemperature = Number(
-    process.env.OPENAI_TEMPERATURE ?? 0.7, // Subido a 0.7 para respuestas de voz más creativas y conversacionales
+    process.env.OPENAI_TEMPERATURE ?? 0.6, // Ajustado a 0.6 para equilibrar coherencia de empresa y naturalidad
   );
   private readonly llmMaxTokens = Number(process.env.OPENAI_MAX_TOKENS ?? 200);
   private readonly llmMaxTokensFirstTurn = Number(
@@ -230,7 +230,7 @@ export class StreamsGateway {
   );
   private readonly maxBufferedChunks = Math.max(
     1,
-    Number(process.env.DG_MAX_BUFFERED_CHUNKS ?? 25),
+    Number(process.env.DG_MAX_BUFFERED_CHUNKS ?? 250), // Aumentado para prevenir cortes de audio (alta empresa)
   );
   private readonly defaultInstructions =
     process.env.DG_AGENT_PROMPT ||
@@ -324,7 +324,7 @@ export class StreamsGateway {
           if (msg.event === 'start') {
             callStreamEnded = false;
             currentCallSid = msg.start?.callSid || '';
-            console.log(`📞 [${currentCallSid}] Llamada iniciada`);
+            console.log(`📞 [${currentCallSid}] [CALL_START] Llamada iniciada`);
             mediaBeforeStartWarned = false;
 
             if (!currentCallSid) {
@@ -355,8 +355,8 @@ export class StreamsGateway {
           }
 
           if (msg.event === 'stop') {
-            console.log(`🛑 Llamada terminada.`);
             const sid = currentCallSid;
+            console.log(`🛑 [${sid || 'unknown'}] [CALL_STOP] Llamada terminada.`);
             // Si no se marcó ningún motivo previo, el cliente fue quien colgó
             const session = sid ? this.sessions.get(sid) : undefined;
             if (session && !session.terminadoPor) {
@@ -1510,26 +1510,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           console.log(
             `🛑 [${session.callSid}] Interrupción por voz del usuario (parcial: "${text.substring(0, 30)}...")`,
           );
-          session.interrupted = true;
-          session.agentSpeaking = false;
-          session.silenceInterventions = 0;
-
-          if (session.ttsCancelStream) {
-            session.ttsCancelStream();
-            session.ttsCancelStream = undefined;
-          }
-
-          session.outboundBuffer = Buffer.alloc(0);
-
-          // Vaciar el buffer de Twilio instantáneamente
-          if (session.streamSid) {
-            session.client.send(
-              JSON.stringify({
-                event: 'clear',
-                streamSid: session.streamSid,
-              }),
-            );
-          }
+          this.handleInterruption(session);
         }
       }
     }
@@ -1571,25 +1552,33 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       return;
     }
 
-    // 🛡️ FILTRO ANTI-ECO (SALUDO INICIAL):
-    // Si el texto que escuchamos es casi idéntico al saludo inicial que dijo el bot, lo ignoramos.
-    // Esto evita que el bot se responda a sí mismo si se escucha por el altavoz.
-    if (role === 'user' && session.pendingGreeting) {
+    // 🛡️ FILTRO ANTI-ECO Y FILLERS (hm, vale, etc.):
+    // Si el texto es muy corto y contiene fillers, o es eco del saludo, lo ignoramos.
+    if (role === 'user') {
       const cleanTranscript = correctedText.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
-      const cleanGreeting = session.pendingGreeting.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
       
-      // Si el transcript contiene gran parte del saludo o viceversa, es eco.
-      if (
-        cleanTranscript.length > 10 && 
-        (cleanGreeting.includes(cleanTranscript) || cleanTranscript.includes(cleanGreeting))
-      ) {
-        console.log(`🛡️ [${session.callSid}] Eco detectado y bloqueado: "${text}" coincide con el saludo.`);
+      // Bloquear fillers comunes que Deepgram capta como habla
+      const fillers = ['hm', 'hmm', 'uh', 'uhm', 'vale', 'si', 'sí', 'ok', 'okay', 'ah'];
+      if (fillers.includes(cleanTranscript) || cleanTranscript.length < 3) {
+        // console.log(`🔇 [${session.callSid}] Ignorando ruido/filler: "${text}"`);
         return;
+      }
+      
+      if (session.pendingGreeting) {
+        const cleanGreeting = session.pendingGreeting.toLowerCase().replace(/[.,!¡¿?]/g, '').trim();
+        // Si el transcript contiene gran parte del saludo o viceversa, es eco.
+        if (
+          cleanTranscript.length > 10 && 
+          (cleanGreeting.includes(cleanTranscript) || cleanTranscript.includes(cleanGreeting))
+        ) {
+          console.log(`🛡️ [${session.callSid}] Eco detectado y bloqueado: "${text}" coincide con el saludo.`);
+          return;
+        }
       }
     }
 
     if (role === 'user') {
-      console.log(`💬 [${session.callSid}] Usuario dijo: "${text}"`);
+      console.log(`💬 [${session.callSid}] [USER_TEXT] Usuario: "${text}" (UserId: ${session.userId || 'n/a'})`);
       session.history.push({ role: 'user', content: correctedText });
       session.silenceInterventions = 0; // Resetear contador de intervenciones por silencio
       if (session.terminadoPor === 'silencio') {
@@ -1804,6 +1793,25 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       const mergedTools = [...baseTools, ...makeWebhookTools];
       const safeTools = mergedTools.length ? mergedTools : undefined;
 
+      // --- MULETILLAS (Comfort Noise Verbal) ---
+      // Para evitar silencio incómodo (dead air) mientras el LLM y el TTS piensan,
+      // inyectamos una muletilla rápida en ~35% de los turnos conversacionales.
+      if (role === 'user' && session.history.length >= 2) {
+        const wordsCount = text.split(' ').length;
+        // Solo usar muletilla si el usuario dijo más de 3 palabras y por probabilidad aleatoria
+        if (wordsCount > 3 && Math.random() < 0.35) {
+          const fillers = ['Mmm...', 'Vale,', 'A ver...', 'Entiendo,', 'Déjame ver...', 'Claro,'];
+          const randomFiller = fillers[Math.floor(Math.random() * fillers.length)];
+          console.log(`🗣️ [${session.callSid}] Inyectando muletilla (Comfort Noise): "${randomFiller}"`);
+          
+          // Lo disparamos sin await, para que OpenAI se llame en paralelo.
+          // Asignamos la promesa a currentTTSRequest para que la cola principal espere a que acabe.
+          session.currentTTSRequest = this.streamElevenLabsTTS(session, randomFiller).catch(err => {
+            console.warn(`⚠️ [${session.callSid}] Error en muletilla:`, err.message);
+          });
+        }
+      }
+
       // Implementar Sliding Window: Retener solo los últimos N mensajes para no agotar tokens de OpenAI
       const maxHistory = 10; // Últimos 5 turnos (usuario + asistente)
       const recentHistory = session.history.slice(-maxHistory);
@@ -1847,6 +1855,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           reason: err.message,
           metadata: { callSid: session.callSid, userId: session.userId }
         });
+        
+        // Manejo Graceful de Errores (Alta Disponibilidad)
+        if (!session.interrupted) {
+          const fallbackMsg = "Disculpa, estoy experimentando un pequeño problema técnico en este momento. Por favor, vuelve a llamarnos en unos minutos.";
+          await this.streamElevenLabsTTS(session, fallbackMsg);
+        }
+        
         session.interrupted = false;
         session.agentSpeaking = false;
         return;
@@ -1961,14 +1976,13 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           const lastChar = token.slice(-1);
           const isSentenceEnd = strongEnders.has(lastChar);
 
-          // Enviar en comas si la frase ya tiene >5 palabras (para evitar que hable sin respirar),
+          // Enviar en comas si la frase ya tiene >3 palabras (para evitar que hable sin respirar),
           // O si es el PRIMER chunk y tiene al menos 1 palabra (ej: "Claro,", "Sí,")
           const wordsCount = sentenceBuffer.trim().split(' ').length;
           
-          // FORZAR PUNTUACIÓN (Anti-Metralleta):
-          // Si el bot ha dicho 15 palabras y no hay puntuación, forzamos un corte enviando lo que hay.
-          // El TTS interpretará este corte del chunk como una micro pausa natural.
-          const isTooLongWithoutPause = wordsCount >= 15;
+          // Ya no forzamos cortes arbitrarios por número de palabras a menos que sea extremo y haya un espacio.
+          // Esto evita cortar palabras por la mitad ("product" - "os") y mejora la entonación.
+          const isTooLongWithoutPause = wordsCount >= 25 && lastChar === ' ';
 
           const isPauseEnd =
             weakEnders.has(lastChar) &&
@@ -1982,10 +1996,16 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             if (sentenceToSend) {
               // Encolar la frase para mantener el orden de reproducción secuencial
               const currentSentence = sentenceToSend;
+              console.log(`🤖 [${session.callSid}] [AGENT_TEXT] Generando: "${currentSentence}"`);
               ttsQueue = ttsQueue.then(async () => {
                 if (!session.interrupted) {
+                  // Si hay una muletilla o audio previo corriendo, esperamos a que termine
+                  if (session.currentTTSRequest) {
+                    try { await session.currentTTSRequest; } catch (e) {}
+                  }
                   console.log(`🔊 [${session.callSid}] Enviando chunk a TTS: "${currentSentence}"`);
-                  await this.streamElevenLabsTTS(session, currentSentence);
+                  session.currentTTSRequest = this.streamElevenLabsTTS(session, currentSentence);
+                  await session.currentTTSRequest;
                 }
               });
             }
@@ -2174,6 +2194,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             `❌ [${session.callSid}] Error en webhook Make:`,
             whErr,
           );
+          // Graceful degradation en Action Tool
+          return this.handleFinalTranscript(
+            session,
+            '(SISTEMA: Ocurrió un error al ejecutar la acción externa. Pide disculpas y ofrece continuar ayudando de otra forma.)',
+          );
         }
       }
 
@@ -2184,6 +2209,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       // Actualizar el historial completo una vez terminado
       if (fullResponse.trim()) {
         const cleanedResponse = this.stripEndCallToken(fullResponse);
+        console.log(`🤖 [${session.callSid}] [AGENT_RESPONSE] Respuesta final: "${cleanedResponse}"`);
         const finalContent = session.interrupted
           ? cleanedResponse + ' [Interrumpido por el usuario antes de terminar]'
           : cleanedResponse;
@@ -2271,7 +2297,6 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
           model: this.deepgramListenModel,
           language: this.deepgramLanguage,
           smart_format: true,
-          endpointing: 300, // Detectar silencio final más rápido (300ms) para mejorar latencia
         },
       },
       // DESHABILITADO: Deepgram Speak genera respuestas duplicadas sin contexto
@@ -2411,6 +2436,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
   private resolveVoiceId(
     customParameters?: Record<string, string>,
   ): string | undefined {
+    // Si queremos habilitar un fallback global a la voz general, se haría aquí
     const customVoice =
       customParameters?.voiceId ||
       customParameters?.labsId || // Mantener compatibilidad con labsId
@@ -2470,6 +2496,41 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     return defaultValue;
   }
 
+  private handleInterruption(session: CallSession) {
+    session.interrupted = true;
+    session.agentSpeaking = false;
+    session.expectedAudioEndTime = 0;
+    session.silenceInterventions = 0;
+    session.interceptedResponseText = '';
+
+    if (session.terminadoPor === 'silencio') {
+      session.terminadoPor = undefined;
+    }
+
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
+    }
+    
+    if (session.currentTTSRequest) {
+      session.currentTTSRequest = undefined;
+    }
+
+    session.outboundBuffer = Buffer.alloc(0);
+
+    // Vaciar el buffer de Twilio instantáneamente
+    if (session.streamSid) {
+      session.client.send(
+        JSON.stringify({
+          event: 'clear',
+          streamSid: session.streamSid,
+        }),
+      );
+    }
+
+    this.resetSilenceTimer(session);
+  }
+
   private forwardInboundAudio(callSid: string, msg: TwilioMediaIn) {
     const session = this.sessions.get(callSid);
     if (!session) {
@@ -2482,12 +2543,9 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       return;
     }
 
-    // Aceptar tanto el track por defecto ("inbound") como el configurado en TwiML ("inbound_track")
-    if (
-      msg.media.track &&
-      msg.media.track !== 'inbound' &&
-      msg.media.track !== 'inbound_track'
-    ) {
+    // Aceptar cualquier track (inbound, outbound, inbound_track) para evitar que se pierda audio si Twilio cambia el nombre
+    if (msg.media.track && msg.media.track === 'outbound') {
+      // Ignorar outbound track (audio que nosotros mismos generamos)
       return;
     }
 
@@ -2900,71 +2958,27 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
             break;
           }
 
-          // En Deepgram V1 Listen puro o si estamos usando Agent, UserStartedSpeaking puede saltar por ruido
-          // Solo limpiar si el agente realmente estaba hablando y reproduciendo audio.
-          // Si el LLM está pensando y aún no ha reproducido nada, ignoramos esto para no auto-cortar la llamada por eco.
+          // --- MEJORA DE INTERRUPCIÓN (Punto 2 y 3) ---
+          // Si el agente está hablando, interrumpimos para una sensación natural.
+          // Para reducir falsos positivos (ruidos/respiración), verificamos que el agente
+          // lleve hablando al menos 500ms (evita micro-cortes por ruidos iniciales o eco).
+          const agentSpeakingDuration = session.lastAgentStartSpeakingTime
+            ? Date.now() - session.lastAgentStartSpeakingTime
+            : 0;
 
-          // 🔥 FIX: Protección contra Barge-in temprano (eco inicial o ruido de línea)
-          // Ignorar interrupciones durante los primeros 1500ms desde que el agente empezó a hablar (reducido para mejor respuesta)
-          if (
-            session.lastAgentStartSpeakingTime &&
-            Date.now() - session.lastAgentStartSpeakingTime < 1500
-          ) {
-            // console.log(`ℹ️ [${session.callSid}] Barge-in ignorado (<1500ms)`);
-            break;
-          }
-
-          // Verificamos si el agente está hablando o si hay audio encolado reproduciéndose en Twilio
           const isPlayingAudio =
             session.expectedAudioEndTime &&
             session.expectedAudioEndTime > Date.now();
 
           if (
-            (session.agentSpeaking || isPlayingAudio) &&
-            !session.interrupted
+            (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+            !session.interrupted &&
+            agentSpeakingDuration > 500
           ) {
             console.log(
-              `🛑 [${session.callSid}] Barge-in: usuario interrumpió`,
+              `🗣️ [${session.callSid}] Interrupción detectada por VAD (UserStartedSpeaking) - Duración agente: ${agentSpeakingDuration}ms`,
             );
-            session.interrupted = true;
-            session.agentSpeaking = false;
-            session.expectedAudioEndTime = 0; // Resetear tiempo estimado
-            session.silenceInterventions = 0;
-            // Al detectar una interrupción, también consideramos que el usuario "ha hablado", 
-            // así que limpiamos la bandera de silencio si existiera para que no se despida después.
-            if (session.terminadoPor === 'silencio') {
-              session.terminadoPor = undefined;
-            }
-
-            // Cancelar cualquier TTS en progreso
-            if (session.ttsCancelStream) {
-              session.ttsCancelStream();
-              session.ttsCancelStream = undefined;
-            }
-
-            // Cancelar cualquier request TTS pendiente
-            if (session.currentTTSRequest) {
-              session.currentTTSRequest = undefined;
-            }
-
-            // Limpiar texto interceptado
-            session.interceptedResponseText = '';
-
-            // Limpiar buffer de audio saliente
-            session.outboundBuffer = Buffer.alloc(0);
-
-            // 🔥 FIX CRÍTICO: Vaciar el buffer interno de Twilio para silencio inmediato
-            if (session.streamSid) {
-              session.client.send(
-                JSON.stringify({
-                  event: 'clear',
-                  streamSid: session.streamSid,
-                }),
-              );
-            }
-
-            // Al interrumpir, reiniciamos la espera porque el usuario ha tomado el turno
-            this.resetSilenceTimer(session);
+            this.handleInterruption(session);
           }
           break;
         case 'AgentThinking':
@@ -2973,6 +2987,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         case 'ConversationText': {
           const text = this.extractTextFromConversationText(message);
           const role = this.extractRoleFromConversationText(message);
+          const isFinal = message.is_final !== false; // Si no viene, asumimos final
 
           if (text) {
             if (role === 'user') {
@@ -2980,8 +2995,40 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
               if (session.allowInterruptions === false) {
                 break;
               }
-              void this.handleFinalTranscript(session, text);
-              this.resetSilenceTimer(session); // Reiniciar temporizador de silencio
+              
+              if (isFinal) {
+                // --- VAD DINÁMICO (Semántico) ---
+                // Si el texto final parece incompleto (termina en conectores), esperamos un poco más
+                const unfinishedConnectors = ['y', 'o', 'pero', 'que', 'el', 'la', 'un', 'una', 'con', 'para', 'en'];
+                const lastWord = text.trim().split(' ').pop()?.toLowerCase() || '';
+                
+                if (unfinishedConnectors.includes(lastWord)) {
+                  // console.log(`⏳ [${session.callSid}] VAD Semántico: Usuario parece no haber terminado ("...${lastWord}"), esperando...`);
+                  // Podríamos implementar un delay aquí, pero por ahora lo dejamos registrado para el log empresarial
+                }
+
+                void this.handleFinalTranscript(session, text);
+                this.resetSilenceTimer(session); // Reiniciar temporizador de silencio
+              } else {
+                // Es un resultado parcial (interim_result)
+                // Verificamos si el agente está hablando o reproduciendo audio
+                const isPlayingAudio =
+                  session.expectedAudioEndTime &&
+                  session.expectedAudioEndTime > Date.now();
+
+                // Solo interrumpimos si el ruido/voz detectado es algo consistente (más de 8 caracteres)
+                // para evitar que respiraciones o ecos cortos corten al agente.
+                if (
+                  (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+                  !session.interrupted &&
+                  text.trim().length > 8
+                ) {
+                  console.log(
+                    `🛑 [${session.callSid}] Interrupción por voz del usuario (parcial: "${text.substring(0, 30)}...")`,
+                  );
+                  this.handleInterruption(session);
+                }
+              }
             } else {
               // Ignorar ConversationText de Deepgram cuando role=assistant (eco/TTS)
               // No renovamos lastAgentStartSpeakingTime aquí para no bloquear el barge-in durante toda la locución.
@@ -3233,6 +3280,11 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     session: CallSession,
     text: string,
   ): Promise<void> {
+    // --- COMFORT NOISE (Punto 2 Enterprise) ---
+    // En arquitecturas de alta disponibilidad, se podría inyectar un audio de fondo (hiss) 
+    // mientras el agente no habla para evitar el "silencio digital" absoluto.
+    // Actualmente lo manejamos vía Muletillas verbales (Verbal Comfort Noise).
+
     if (!this.elevenLabsApiKey) {
       console.error(
         `❌ [${session.callSid}] ELEVENLABS_API_KEY no configurado para TTS.`,
@@ -3290,7 +3342,7 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
     const normalizedFormat = this.normalizeTtsFormat(
       this.elevenLabsTtsOutputFormat,
     );
-    // Añadimos optimize_streaming_latency=4 para máxima velocidad con Flash v2.5
+    // optimize_streaming_latency=4 para máxima velocidad con Flash v2.5 en servidores europeos
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${encodeURIComponent(normalizedFormat)}&optimize_streaming_latency=4`;
 
     try {
@@ -3603,8 +3655,8 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
       clearTimeout(session.silenceTimeout);
     }
 
-    const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 20 * 1000; // 20s para primera intervención
-    const HANGUP_TIMEOUT_MS = Number(process.env.SILENCE_HANGUP_TIMEOUT_MS) || 30 * 1000; // 30s adicionales antes de colgar
+    const PROMPT_TIMEOUT_MS = Number(process.env.SILENCE_PROMPT_TIMEOUT_MS) || 10 * 1000; // 10s para primera intervención
+    const HANGUP_TIMEOUT_MS = Number(process.env.SILENCE_HANGUP_TIMEOUT_MS) || 15 * 1000; // 15s adicionales antes de colgar
 
     const nextTimeoutMs = (session.silenceInterventions ?? 0) >= 1 ? HANGUP_TIMEOUT_MS : PROMPT_TIMEOUT_MS;
 
@@ -3652,9 +3704,15 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         // Marcar que la causa probable de finalización es silencio del cliente
         session.terminadoPor = 'silencio';
 
-        // Simular una instrucción de sistema para activar la respuesta del LLM
-        const silenceInstruction =
-          '(INSTRUCCIÓN DE SISTEMA: El usuario lleva un rato en silencio. Haz una pregunta muy breve y natural para saber si sigue ahí o necesita algo más. NUNCA menciones la palabra "silencio" ni digas que se cortó la conexión.)';
+        // Variedad de prompts para que el LLM no repita siempre la misma frase
+        const silencePrompts = [
+          '(INSTRUCCIÓN DE SISTEMA: El usuario lleva un rato en silencio. Haz una pregunta muy breve y natural para saber si sigue ahí o necesita algo más. NUNCA menciones la palabra "silencio" ni digas que se cortó la conexión.)',
+          '(INSTRUCCIÓN DE SISTEMA: No detecto voz del usuario hace unos segundos. Pregúntale de forma muy amigable y corta si podemos ayudarle en algo más o si sigue en la línea.)',
+          '(INSTRUCCIÓN DE SISTEMA: Hubo una pausa larga. Retoma la conversación de forma cálida invitando a hablar, por ejemplo preguntando si sigue ahí o si tiene alguna duda más, usando tus propias palabras.)',
+          '(INSTRUCCIÓN DE SISTEMA: El usuario lleva un tiempo sin responder. Anímale a continuar la conversación con una pregunta sencilla y empática, sin sonar robótico ni mencionar pausas.)',
+        ];
+        const silenceInstruction = silencePrompts[Math.floor(Math.random() * silencePrompts.length)];
+        
         await this.handleFinalTranscript(session, silenceInstruction, 'system');
       } else {
         // Segunda vez, colgar directamente sin pasar por el LLM para asegurar que se corte.
@@ -3664,11 +3722,17 @@ Aunque la tienda "${shopifyContext.shopDomain}" está configurada, no hemos podi
         // Detener temporizador para que no se re-inicie
         this.stopSilenceTimer(session);
 
+        // Variedad de despedidas nativas
+        const finalMessages = [
+          "Como no escucho a nadie, voy a finalizar la llamada. ¡Que tengas un buen día! [END_CALL]",
+          "Parece que no hay nadie en la línea. Finalizo la llamada por ahora, ¡hasta pronto! [END_CALL]",
+          "No detecto actividad, así que voy a colgar. ¡Gracias por tu tiempo! [END_CALL]",
+          "Creo que hemos perdido la comunicación. Corto la llamada por ahora, ¡un saludo! [END_CALL]"
+        ];
+        const finalMessage = finalMessages[Math.floor(Math.random() * finalMessages.length)];
+
         // Enviamos una última despedida por TTS directamente
-        await this.streamTTSFromText(
-          session,
-          "No detecto actividad. Voy a finalizar la llamada. ¡Que tengas un buen día! [END_CALL]"
-        );
+        await this.streamTTSFromText(session, finalMessage);
       }
     }, totalDelay);
 

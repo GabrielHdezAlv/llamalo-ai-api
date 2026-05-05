@@ -75,6 +75,7 @@ interface TestCallSession {
   // Lock para evitar llamadas LLM concurrentes
   llmProcessing: boolean;
   expectedAudioEndTime?: number;
+  lastAgentStartSpeakingTime?: number;
 }
 
 interface RateLimitEntry {
@@ -113,13 +114,13 @@ export class TestCallGateway {
   private readonly defaultVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP';
   private readonly defaultStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.72,
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.75,
   );
   private readonly defaultSimilarity = Number(
-    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.8,
+    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.85,
   );
   private readonly defaultStyle = Number(
-    process.env.ELEVENLABS_TTS_STYLE ?? 0.05,
+    process.env.ELEVENLABS_TTS_STYLE ?? 0.0,
   );
   private readonly defaultBoost =
     (process.env.ELEVENLABS_TTS_SPEAKER_BOOST ?? 'true') === 'true';
@@ -132,7 +133,7 @@ export class TestCallGateway {
     process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
   private readonly deepgramUrl =
     process.env.DG_VOICE_AGENT_URL ||
-    'wss://agent.deepgram.com/v1/agent/converse';
+    'wss://agent.deepgram.com/v1/agent/converse?interim_results=true&endpointing=300';
   private readonly deepgramListenModel =
     process.env.DG_LISTEN_MODEL ?? 'nova-3';
 
@@ -442,41 +443,72 @@ export class TestCallGateway {
           break;
 
         case 'UserStartedSpeaking':
-          // Verificamos si el agente está hablando o si hay audio encolado reproduciéndose
+          // Durante el saludo inicial no permitimos barge-in
+          if (session.allowInterruptions === false) {
+            break;
+          }
+
+          // Si el agente está hablando, interrumpimos para una sensación natural.
+          // Para reducir falsos positivos (ruidos), verificamos que el agente
+          // lleve hablando al menos 500ms.
+          const agentSpeakingDuration = session.lastAgentStartSpeakingTime
+            ? Date.now() - session.lastAgentStartSpeakingTime
+            : 0;
+
           const isPlayingAudio =
             session.expectedAudioEndTime &&
             session.expectedAudioEndTime > Date.now();
 
           if (
-            (session.agentSpeaking || isPlayingAudio) &&
-            session.allowInterruptions
+            (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+            !session.interrupted &&
+            agentSpeakingDuration > 500
           ) {
-            console.log(`🛑 [TestCall] Usuario interrumpió al agente`);
-            session.interrupted = true;
-            session.agentSpeaking = false;
-            session.expectedAudioEndTime = 0;
-            if (session.ttsCancelStream) {
-              session.ttsCancelStream();
-              session.ttsCancelStream = undefined;
-            }
-            session.currentTTSRequest = undefined;
+            console.log(
+              `🗣️ [TestCall] Interrupción detectada por VAD (UserStartedSpeaking) - Duración agente: ${agentSpeakingDuration}ms`,
+            );
+            this.handleInterruption(session);
           }
           break;
 
         case 'ConversationText': {
           const role = this.extractRole(message);
           const text = this.extractText(message);
+          const isFinal = message.is_final !== false;
 
-          if (text && role === 'user') {
-            console.log(
-              `📝 [TestCall] Transcript usuario: "${text.substring(0, 80)}"`,
-            );
-            this.sendJson(session.client, {
-              type: 'transcript',
-              role: 'user',
-              text,
-            });
-            this.enqueueTranscript(session, text);
+    if (text && role === 'user') {
+      if (isFinal) {
+        // --- VAD DINÁMICO (Semántico) ---
+        const unfinishedConnectors = ['y', 'o', 'pero', 'que', 'el', 'la', 'un', 'una', 'con', 'para', 'en'];
+        const lastWord = text.trim().split(' ').pop()?.toLowerCase() || '';
+        if (unfinishedConnectors.includes(lastWord)) {
+          // console.log(`⏳ [TestCall] VAD Semántico: Usuario parece no haber terminado ("...${lastWord}")`);
+        }
+
+        console.log(
+          `📝 [TestCall] [USER_TEXT] Transcript usuario: "${text.substring(0, 80)}"`,
+        );
+              this.sendJson(session.client, {
+                type: 'transcript',
+                role: 'user',
+                text,
+              });
+              this.enqueueTranscript(session, text);
+            } else {
+              // Parcial: verificamos interrupción
+              const isPlayingAudio =
+                session.expectedAudioEndTime &&
+                session.expectedAudioEndTime > Date.now();
+
+              if (
+                (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+                session.allowInterruptions &&
+                text.trim().length > 8
+              ) {
+                console.log(`🛑 [TestCall] Usuario interrumpió al agente (parcial: "${text.substring(0, 30)}...")`);
+                this.handleInterruption(session);
+              }
+            }
           }
           break;
         }
@@ -586,6 +618,15 @@ export class TestCallGateway {
     }
 
     session.history.push({ role: 'user', content: text });
+    this.sendJson(session.client, { type: 'agent.thinking' });
+
+    // --- MULETILLAS (Comfort Noise Verbal) ---
+    if (text.split(' ').length > 3 && Math.random() < 0.35) {
+      const fillers = ['Mmm...', 'Vale,', 'A ver...', 'Entiendo,', 'Déjame ver...', 'Claro,'];
+      const randomFiller = fillers[Math.floor(Math.random() * fillers.length)];
+      console.log(`🗣️ [TestCall] Muletilla: "${randomFiller}"`);
+      session.currentTTSRequest = this.streamElevenLabsTTS(session, randomFiller).catch(() => {});
+    }
 
     try {
       const instructions = this.buildInstructions(session);
@@ -604,6 +645,13 @@ export class TestCallGateway {
 
       const rawContent = completion.choices[0]?.message?.content?.trim() || '';
       if (!rawContent) return;
+
+      console.log(`🤖 [TestCall] [AGENT_RESPONSE] Respuesta final: "${rawContent}"`);
+
+      // Si había una muletilla, esperamos a que termine antes de mandar la respuesta principal
+      if (session.currentTTSRequest) {
+        try { await session.currentTTSRequest; } catch (e) {}
+      }
 
       const shouldHangup = this.containsEndCallSignal(rawContent);
       const content = this.stripEndCallToken(rawContent);
@@ -631,11 +679,14 @@ export class TestCallGateway {
       });
 
       session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
+      session.lastAgentStartSpeakingTime = Date.now();
       session.interrupted = false;
       session.allowInterruptions = true;
 
       this.sendJson(session.client, { type: 'agent.speaking' });
 
+      console.log(`🤖 [TestCall] [AGENT_TEXT] Generando: "${content}"`);
       await this.streamTTSFromText(session, content);
 
       if (shouldHangup && !session.interrupted) {
@@ -659,6 +710,21 @@ export class TestCallGateway {
         void this.handleFinalTranscript(session, queued);
       }
     }
+  }
+
+  private handleInterruption(session: TestCallSession) {
+    session.interrupted = true;
+    session.agentSpeaking = false;
+    session.expectedAudioEndTime = 0;
+
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
+    }
+    session.currentTTSRequest = undefined;
+
+    // Vaciar buffer del frontend
+    this.sendJson(session.client, { type: 'clear_audio' });
   }
 
   /**
@@ -799,6 +865,7 @@ export class TestCallGateway {
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${this.ttsOutputFormat}`;
 
     session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
 
     const response = await axios.post(
       url,
@@ -916,6 +983,7 @@ export class TestCallGateway {
     );
 
     session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
     session.allowInterruptions = false;
 
     this.sendJson(session.client, {

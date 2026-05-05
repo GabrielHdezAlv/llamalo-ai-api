@@ -47,6 +47,7 @@ interface SupportVoiceSession {
   transcriptDebounceTimer?: NodeJS.Timeout;
   llmProcessing: boolean;
   expectedAudioEndTime?: number;
+  lastAgentStartSpeakingTime?: number;
 }
 
 interface RateLimitEntry {
@@ -86,13 +87,13 @@ export class SupportChatGateway {
   private readonly defaultVoiceId =
     process.env.ELEVENLABS_TTS_VOICE_ID ?? '15bJsujCI3tcDWeoZsQP';
   private readonly defaultStability = Number(
-    process.env.ELEVENLABS_TTS_STABILITY ?? 0.5,
+    process.env.ELEVENLABS_TTS_STABILITY ?? 0.75,
   );
   private readonly defaultSimilarity = Number(
-    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.8,
+    process.env.ELEVENLABS_TTS_SIMILARITY ?? 0.85,
   );
   private readonly defaultStyle = Number(
-    process.env.ELEVENLABS_TTS_STYLE ?? 0.05,
+    process.env.ELEVENLABS_TTS_STYLE ?? 0.0,
   );
   private readonly defaultBoost =
     (process.env.ELEVENLABS_TTS_SPEAKER_BOOST ?? 'true') === 'true';
@@ -104,7 +105,7 @@ export class SupportChatGateway {
     process.env.DG_VOICE_AGENT_API_KEY ?? process.env.DG_API_KEY;
   private readonly deepgramUrl =
     process.env.DG_VOICE_AGENT_URL ||
-    'wss://agent.deepgram.com/v1/agent/converse';
+    'wss://agent.deepgram.com/v1/agent/converse?interim_results=true&endpointing=300';
   private readonly deepgramListenModel =
     process.env.DG_LISTEN_MODEL ?? 'nova-3';
 
@@ -404,47 +405,72 @@ export class SupportChatGateway {
           break;
 
         case 'UserStartedSpeaking':
-          // Verificamos si el agente está hablando o si hay audio encolado reproduciéndose
+          // Durante el saludo inicial no permitimos barge-in
+          if (session.allowInterruptions === false) {
+            break;
+          }
+
+          // Si el agente está hablando, interrumpimos para una sensación natural.
+          // Para reducir falsos positivos (ruidos), verificamos que el agente
+          // lleve hablando al menos 500ms.
+          const agentSpeakingDuration = session.lastAgentStartSpeakingTime
+            ? Date.now() - session.lastAgentStartSpeakingTime
+            : 0;
+
           const isPlayingAudio =
             session.expectedAudioEndTime &&
             session.expectedAudioEndTime > Date.now();
 
           if (
-            (session.agentSpeaking || isPlayingAudio) &&
-            session.allowInterruptions
+            (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+            !session.interrupted &&
+            agentSpeakingDuration > 500
           ) {
-            this.logger.log(
-              `🛑 [SupportVoice] Interrupción detectada (Barge-in), silenciando agente`,
+            console.log(
+              `🗣️ [SupportChat] Interrupción detectada por VAD (UserStartedSpeaking) - Duración agente: ${agentSpeakingDuration}ms`,
             );
-            session.interrupted = true;
-            session.agentSpeaking = false;
-            session.expectedAudioEndTime = 0;
-
-            if (session.ttsCancelStream) {
-              session.ttsCancelStream();
-              session.ttsCancelStream = undefined;
-            }
-            session.currentTTSRequest = undefined;
-
-            // Enviar instrucción al frontend para que vacíe su buffer de audio inmediatamente
-            this.sendJson(session.client, { type: 'clear_audio' });
+            this.handleInterruption(session);
           }
           break;
 
         case 'ConversationText': {
           const role = this.extractRole(message);
           const text = this.extractText(message);
+          const isFinal = message.is_final !== false;
 
           if (text && role === 'user') {
-            this.logger.log(
-              `📝 [SupportVoice] Transcript usuario: "${text.substring(0, 80)}"`,
-            );
-            this.sendJson(session.client, {
-              type: 'transcript',
-              role: 'user',
-              text,
-            });
-            this.enqueueTranscript(session, text);
+            if (isFinal) {
+              // --- VAD DINÁMICO (Semántico) ---
+              const unfinishedConnectors = ['y', 'o', 'pero', 'que', 'el', 'la', 'un', 'una', 'con', 'para', 'en'];
+              const lastWord = text.trim().split(' ').pop()?.toLowerCase() || '';
+              if (unfinishedConnectors.includes(lastWord)) {
+                // console.log(`⏳ [SupportVoice] VAD Semántico: Usuario parece no haber terminado ("...${lastWord}")`);
+              }
+
+              this.logger.log(
+                `📝 [SupportVoice] [USER_TEXT] Transcript usuario: "${text.substring(0, 80)}"`,
+              );
+              this.sendJson(session.client, {
+                type: 'transcript',
+                role: 'user',
+                text,
+              });
+              this.enqueueTranscript(session, text);
+            } else {
+              // Parcial: verificamos interrupción
+              const isPlayingAudio =
+                session.expectedAudioEndTime &&
+                session.expectedAudioEndTime > Date.now();
+
+              if (
+                (session.agentSpeaking || isPlayingAudio || session.currentTTSRequest) &&
+                session.allowInterruptions &&
+                text.trim().length > 8
+              ) {
+                this.logger.log(`🛑 [SupportVoice] Interrupción detectada (parcial: "${text.substring(0, 30)}...")`);
+                this.handleInterruption(session);
+              }
+            }
           }
           break;
         }
@@ -537,6 +563,21 @@ export class SupportChatGateway {
 
   // ── LLM ────────────────────────────────────────────────────────────────────
 
+  private handleInterruption(session: SupportVoiceSession) {
+    session.interrupted = true;
+    session.agentSpeaking = false;
+    session.expectedAudioEndTime = 0;
+
+    if (session.ttsCancelStream) {
+      session.ttsCancelStream();
+      session.ttsCancelStream = undefined;
+    }
+    session.currentTTSRequest = undefined;
+
+    // Enviar instrucción al frontend para que vacíe su buffer de audio inmediatamente
+    this.sendJson(session.client, { type: 'clear_audio' });
+  }
+
   private async handleFinalTranscript(
     session: SupportVoiceSession,
     text: string,
@@ -550,20 +591,21 @@ export class SupportChatGateway {
     session.llmProcessing = true;
 
     // Si el usuario habla, forzamos la interrupción del audio que esté sonando
-    session.interrupted = true;
-    session.agentSpeaking = false;
-
-    if (session.ttsCancelStream) {
-      session.ttsCancelStream();
-      session.ttsCancelStream = undefined;
-    }
-    session.currentTTSRequest = undefined;
-    this.sendJson(session.client, { type: 'clear_audio' });
+    this.handleInterruption(session);
 
     // Ahora empezamos a procesar el nuevo mensaje
     session.interrupted = false;
 
     session.history.push({ role: 'user', content: text });
+    this.sendJson(session.client, { type: 'agent.thinking' });
+
+    // --- MULETILLAS (Comfort Noise Verbal) ---
+    if (text.split(' ').length > 3 && Math.random() < 0.35) {
+      const fillers = ['Mmm...', 'Vale,', 'A ver...', 'Entiendo,', 'Déjame ver...', 'Claro,'];
+      const randomFiller = fillers[Math.floor(Math.random() * fillers.length)];
+      this.logger.log(`🗣️ [SupportVoice] Muletilla: "${randomFiller}"`);
+      session.currentTTSRequest = this.streamElevenLabsTTS(session, randomFiller).catch(() => {});
+    }
 
     // ⚡ INTENT DETECTION LIGERO (Reducción de latencia)
     const fastIntentResponse = this.detectFastIntent(text, session);
@@ -581,6 +623,7 @@ export class SupportChatGateway {
       });
 
       session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
       try {
         await this.streamTTSFromText(session, fastIntentResponse);
       } catch (err) {
@@ -639,6 +682,7 @@ export class SupportChatGateway {
       });
 
       session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
       session.interrupted = false;
       session.allowInterruptions = true;
       this.sendJson(session.client, { type: 'agent.speaking' });
@@ -709,9 +753,10 @@ export class SupportChatGateway {
           const lastChar = token.slice(-1);
           const isSentenceEnd = sentenceEnders.has(lastChar);
           const isPauseEnd =
-            pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 8;
+            pauseEnders.has(lastChar) && sentenceBuffer.split(' ').length > 5;
+          const isTooLongWithoutPause = sentenceBuffer.split(' ').length >= 25 && lastChar === ' ';
 
-          if (isSentenceEnd || isPauseEnd) {
+          if (isSentenceEnd || isPauseEnd || isTooLongWithoutPause) {
             // Limpiar `[END_CALL]` (y variantes vocales) antes de enviar al TTS
             const sentenceToSend = this.stripEndCallToken(sentenceBuffer);
             if (sentenceToSend) {
@@ -835,6 +880,7 @@ export class SupportChatGateway {
       // Finalizar el mensaje en el frontend (sin el token técnico [END_CALL])
       const cleanFullResponse = this.stripEndCallToken(fullResponse);
       if (cleanFullResponse) {
+        this.logger.log(`🤖 [SupportVoice] [AGENT_RESPONSE] Respuesta final: "${cleanFullResponse}"`);
         session.history.push({
           role: 'assistant',
           content: cleanFullResponse,
@@ -1058,6 +1104,7 @@ export class SupportChatGateway {
     const url = `${this.elevenLabsBaseUrl}/text-to-speech/${voiceId}/stream?output_format=${this.ttsOutputFormat}&optimize_streaming_latency=3`;
 
     session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
 
     const response = await axios.post(
       url,
@@ -1248,6 +1295,7 @@ export class SupportChatGateway {
     // session.history.push({ role: 'assistant', content: greeting });
 
     session.agentSpeaking = true;
+    session.lastAgentStartSpeakingTime = Date.now();
     session.allowInterruptions = true; // Permitir que el usuario corte el saludo inicial
 
     this.sendJson(session.client, {
