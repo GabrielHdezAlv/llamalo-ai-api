@@ -2,29 +2,27 @@ const admin = require('firebase-admin');
 const { readFileSync, existsSync } = require('fs');
 const { join } = require('path');
 
-// Ensure you only initialize once
 if (!admin.apps.length) {
-    let serviceAccount;
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        // Usa la variable de entorno nativa de Google
+        admin.initializeApp();
+    } else {
+        let serviceAccount;
+        const renderSecretPath = '/etc/secrets/firebase_service_account.json';
+        
+        if (existsSync(renderSecretPath)) {
+            console.log('📦 Usando credenciales Firebase desde Render secret file');
+            serviceAccount = JSON.parse(readFileSync(renderSecretPath, 'utf8'));
+        } else {
+            const localPath = join(process.cwd(), 'src/config/firebase-service-account.json');
+            console.log('💻 Usando credenciales Firebase locales (default dev)');
+            serviceAccount = JSON.parse(readFileSync(localPath, 'utf8'));
+        }
 
-    // 🔹 1. Render: secret file
-    const renderSecretPath = '/etc/secrets/firebase_service_account.json';
-    if (existsSync(renderSecretPath)) {
-      console.log('📦 Usando credenciales Firebase desde Render secret file');
-      serviceAccount = JSON.parse(readFileSync(renderSecretPath, 'utf8'));
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount)
+        });
     }
-    // 🔹 2. Local: cuando desarrollas en tu equipo
-    else {
-      const localPath = join(
-        process.cwd(),
-        'src/config/firebase-service-account.json',
-      );
-      console.log('💻 Usando credenciales Firebase locales');
-      serviceAccount = JSON.parse(readFileSync(localPath, 'utf8'));
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
 }
 
 const db = admin.firestore();
