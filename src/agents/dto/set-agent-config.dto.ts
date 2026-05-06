@@ -150,19 +150,19 @@ export class SetAgentConfigDto {
 
   @ApiProperty({
     example: 'Hola, bienvenido a LlamaloIA. ¿En qué puedo ayudarte?',
-    description: 'Texto de la primera interacción',
+    description: 'Texto de la primera interacción (Opcional en outbound)',
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  firstInteraction: string;
+  firstInteraction?: string;
 
   @ApiProperty({
     example: 'Eres un asistente virtual amigable y profesional.',
-    description: 'Instrucciones para el agente',
+    description: 'Instrucciones para el agente (Opcional en outbound)',
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  agentInstruction: string;
+  agentInstruction?: string;
 
   @ApiProperty({
     type: PhoneNumberDto,

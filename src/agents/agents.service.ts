@@ -465,8 +465,8 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         type: agentConfig.type,
         language: agentConfig.language,
         voiceId: agentConfig.voiceId,
-        firstInteraction: agentConfig.firstInteraction,
-        agentInstruction: agentConfig.agentInstruction,
+        firstInteraction: agentConfig.firstInteraction || '',
+        agentInstruction: agentConfig.agentInstruction || '',
         phoneNumbers: phoneNumbersWithId,
         ...(resolvedTwilioAccountId !== undefined && {
           twilioAccountId: resolvedTwilioAccountId,
@@ -805,8 +805,8 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         type: agentConfig.type,
         language: agentConfig.language,
         voiceId: agentConfig.voiceId,
-        firstInteraction: agentConfig.firstInteraction,
-        agentInstruction: agentConfig.agentInstruction,
+        firstInteraction: agentConfig.firstInteraction || '',
+        agentInstruction: agentConfig.agentInstruction || '',
         phoneNumbers: phoneNumbersWithId,
         ...(resolvedTwilioAccountId !== undefined && {
           twilioAccountId: resolvedTwilioAccountId,
