@@ -469,6 +469,14 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         parameters: agentConfig.parameters,
         totalMinutes: 0, // Siempre inicializar en 0, no se acepta del request
         ...(shopifyDomain && { shopifyDomain }),
+        ...(agentConfig.model && { model: agentConfig.model }),
+        ...(agentConfig.contactEmail && { contactEmail: agentConfig.contactEmail }),
+        ...(agentConfig.knowledgeSourceIds && { knowledgeSourceIds: agentConfig.knowledgeSourceIds }),
+        ...(agentConfig.outboundCampaignKind && { outboundCampaignKind: agentConfig.outboundCampaignKind }),
+        ...(agentConfig.outboundCampaignScripts && { outboundCampaignScripts: agentConfig.outboundCampaignScripts }),
+        ...(agentConfig.outboundImportCsvPhones && { outboundImportCsvPhones: agentConfig.outboundImportCsvPhones }),
+        ...(agentConfig.outboundSegmentationNotes && { outboundSegmentationNotes: agentConfig.outboundSegmentationNotes }),
+        ...(agentConfig.outboundScheduleCampaignNotes && { outboundScheduleCampaignNotes: agentConfig.outboundScheduleCampaignNotes }),
       };
 
       // Si hay estructura antigua, migrar primero
@@ -563,6 +571,11 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         },
         { merge: true },
       );
+
+      // Sincronizar cola de llamadas outbound
+      if (newAgent.type === 'outbound' && newAgent.outboundImportCsvPhones && newAgent.outboundImportCsvPhones.length > 0) {
+        await this.syncOutboundQueue(userId, agentId, newAgent.outboundImportCsvPhones, newAgent.outboundCampaignKind || '');
+      }
 
       return {
         message: 'Agente creado correctamente.',
@@ -793,6 +806,14 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         parameters: agentConfig.parameters,
         totalMinutes: (existingAgent.totalMinutes as number) || 0, // Mantener valor existente, no se acepta del request
         shopifyDomain,
+        ...(agentConfig.model !== undefined ? { model: agentConfig.model } : existingAgent.model ? { model: existingAgent.model } : {}),
+        ...(agentConfig.contactEmail !== undefined ? { contactEmail: agentConfig.contactEmail } : existingAgent.contactEmail ? { contactEmail: existingAgent.contactEmail } : {}),
+        ...(agentConfig.knowledgeSourceIds !== undefined ? { knowledgeSourceIds: agentConfig.knowledgeSourceIds } : existingAgent.knowledgeSourceIds ? { knowledgeSourceIds: existingAgent.knowledgeSourceIds } : {}),
+        ...(agentConfig.outboundCampaignKind !== undefined ? { outboundCampaignKind: agentConfig.outboundCampaignKind } : existingAgent.outboundCampaignKind ? { outboundCampaignKind: existingAgent.outboundCampaignKind } : {}),
+        ...(agentConfig.outboundCampaignScripts !== undefined ? { outboundCampaignScripts: agentConfig.outboundCampaignScripts } : existingAgent.outboundCampaignScripts ? { outboundCampaignScripts: existingAgent.outboundCampaignScripts } : {}),
+        ...(agentConfig.outboundImportCsvPhones !== undefined ? { outboundImportCsvPhones: agentConfig.outboundImportCsvPhones } : existingAgent.outboundImportCsvPhones ? { outboundImportCsvPhones: existingAgent.outboundImportCsvPhones } : {}),
+        ...(agentConfig.outboundSegmentationNotes !== undefined ? { outboundSegmentationNotes: agentConfig.outboundSegmentationNotes } : existingAgent.outboundSegmentationNotes ? { outboundSegmentationNotes: existingAgent.outboundSegmentationNotes } : {}),
+        ...(agentConfig.outboundScheduleCampaignNotes !== undefined ? { outboundScheduleCampaignNotes: agentConfig.outboundScheduleCampaignNotes } : existingAgent.outboundScheduleCampaignNotes ? { outboundScheduleCampaignNotes: existingAgent.outboundScheduleCampaignNotes } : {}),
       };
 
       // Actualizar en el array
@@ -813,6 +834,11 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         { merge: true },
       );
 
+      // Sincronizar cola de llamadas outbound
+      if (updatedAgent.type === 'outbound' && updatedAgent.outboundImportCsvPhones && updatedAgent.outboundImportCsvPhones.length > 0) {
+        await this.syncOutboundQueue(userId, agentId, updatedAgent.outboundImportCsvPhones, updatedAgent.outboundCampaignKind || '');
+      }
+
       return {
         message: 'Agente actualizado correctamente.',
         agent: updatedAgent,
@@ -827,6 +853,48 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       throw new BadRequestException(
         `Error al actualizar el agente: ${(error as Error).message}`,
       );
+    }
+  }
+
+  async syncOutboundQueue(userId: string, agentId: number, phones: string[], campaignKind: string) {
+    const batch = this.firestore.batch();
+    const queueRef = this.firestore.collection('outbound_queue');
+
+    // Obtener las existentes para este agente
+    const existingSnapshot = await queueRef.where('agentId', '==', agentId).get();
+    const existingPhones = new Set<string>();
+    existingSnapshot.docs.forEach(doc => {
+      existingPhones.add(doc.data().phoneNumber);
+    });
+
+    const now = new Date().toISOString();
+    let count = 0;
+
+    // Solo añadimos los que no estén ya en la cola para no sobreescribir el estado
+    for (const phone of phones) {
+      const normalizedPhone = phone.replace(/\s|-|\(|\)/g, ''); // Normalización básica
+      if (!existingPhones.has(normalizedPhone) && normalizedPhone) {
+        // Formato E164 (añadir + si no lo tiene)
+        const e164Phone = normalizedPhone.startsWith('+') ? normalizedPhone : `+${normalizedPhone}`;
+        
+        const docId = `${agentId}_${e164Phone.replace('+', '')}`;
+        const newQueueItemRef = queueRef.doc(docId);
+        batch.set(newQueueItemRef, {
+          userId,
+          agentId,
+          phoneNumber: e164Phone,
+          status: 'pending',
+          campaignKind,
+          createdAt: now,
+          updatedAt: now,
+        });
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      await batch.commit();
+      console.log(`[Outbound] Añadidos ${count} nuevos números a la cola para el agente ${agentId}`);
     }
   }
 

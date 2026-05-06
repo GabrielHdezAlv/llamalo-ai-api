@@ -9,6 +9,7 @@ import { AuthModule } from '../auth/auth.module'; // Importar AuthModule para us
 import { UsersModule } from '../users/users.module';
 import { WebhookActionsModule } from '../webhook-actions/webhook-actions.module';
 import { PlanLimitsModule } from '../plan-limits/plan-limits.module';
+import { OutboundService } from './outbound.service';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { PlanLimitsModule } from '../plan-limits/plan-limits.module';
     PlanLimitsModule,
   ],
   controllers: [CallsController],
-  providers: [TwilioService, StreamsGateway],
-  exports: [StreamsGateway],
+  providers: [TwilioService, StreamsGateway, OutboundService],
+  exports: [StreamsGateway, OutboundService],
 })
 export class CallsModule {}

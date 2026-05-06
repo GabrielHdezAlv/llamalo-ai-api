@@ -453,6 +453,23 @@ export class StreamsGateway {
     let instructions = this.resolveInstructions(customParameters);
     let pendingGreeting = this.resolveGreeting(customParameters);
 
+    // Modificaciones para Outbound
+    const isOutbound = !!customParameters?.outboundCampaign && customParameters?.outboundCampaign !== 'outbound';
+    const outboundCampaignKind = customParameters?.outboundCampaign;
+    
+    if (isOutbound && userDocumentData && customParameters.agentId) {
+      const agentsArray = (userDocumentData.agents as any[]) || [];
+      const agent = agentsArray.find(a => a.agentId === Number(customParameters.agentId));
+      if (agent && agent.outboundCampaignScripts) {
+        const script = agent.outboundCampaignScripts[outboundCampaignKind];
+        if (script) {
+          instructions = `Eres un agente realizando una llamada saliente. Tu objetivo y guión principal es el siguiente:\n\n${script}\n\nSigue este guión y adáptate a las respuestas del usuario.`;
+          pendingGreeting = script; // El usuario indicó que quiere que el script se use como la primera interacción
+          console.log(`📞 [Outbound] Script inyectado para la campaña ${outboundCampaignKind} en llamada a ${customParameters.callerPhone}`);
+        }
+      }
+    }
+
     if (!hasAvailableMinutes) {
       // Modificar comportamiento si no tiene minutos
       instructions = 'DI EXACTAMENTE: "Lo siento, el saldo de esta cuenta se ha agotado. Por favor, contacta con el administrador." Y NO DIGAS NADA MÁS.';

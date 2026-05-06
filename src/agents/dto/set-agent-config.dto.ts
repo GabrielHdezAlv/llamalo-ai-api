@@ -42,6 +42,28 @@ export class PhoneNumberDto {
   number: number;
 }
 
+export class OutboundCampaignScriptsDto {
+  @ApiProperty({ description: 'Script para carrito abandonado', required: false })
+  @IsOptional()
+  @IsString()
+  abandonedCart?: string;
+
+  @ApiProperty({ description: 'Script para encuesta de satisfacción', required: false })
+  @IsOptional()
+  @IsString()
+  satisfactionSurvey?: string;
+
+  @ApiProperty({ description: 'Script para post compra', required: false })
+  @IsOptional()
+  @IsString()
+  postPurchase?: string;
+
+  @ApiProperty({ description: 'Script para recordatorio de pago', required: false })
+  @IsOptional()
+  @IsString()
+  paymentReminder?: string;
+}
+
 export class AgentParametersDto {
   @ApiProperty({
     example: 0.5,
@@ -224,4 +246,48 @@ export class SetAgentConfigDto {
   @IsOptional()
   @IsString()
   model?: string;
+
+  @ApiProperty({
+    description: 'Tipo de campaña outbound (ej. abandonedCart)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  outboundCampaignKind?: string;
+
+  @ApiProperty({
+    type: OutboundCampaignScriptsDto,
+    description: 'Scripts configurados para las campañas outbound',
+    required: false,
+  })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => OutboundCampaignScriptsDto)
+  outboundCampaignScripts?: OutboundCampaignScriptsDto;
+
+  @ApiProperty({
+    description: 'Lista de teléfonos importados en la campaña',
+    required: false,
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  outboundImportCsvPhones?: string[];
+
+  @ApiProperty({
+    description: 'Notas de segmentación para la campaña',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  outboundSegmentationNotes?: string;
+
+  @ApiProperty({
+    description: 'Notas de horario y reintentos para la campaña',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  outboundScheduleCampaignNotes?: string;
 }
