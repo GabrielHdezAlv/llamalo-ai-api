@@ -455,13 +455,14 @@ export class StreamsGateway {
 
     // Modificaciones para Outbound
     const isOutbound = !!customParameters?.outboundCampaign && customParameters?.outboundCampaign !== 'outbound';
-    const outboundCampaignKind = customParameters?.outboundCampaign;
+    const outboundCampaignKind = customParameters?.outboundCampaign as string;
     
     if (isOutbound && userDocumentData && customParameters.agentId) {
       const agentsArray = (userDocumentData.agents as any[]) || [];
       const agent = agentsArray.find(a => a.agentId === Number(customParameters.agentId));
-      if (agent && agent.outboundCampaignScripts) {
-        const script = agent.outboundCampaignScripts[outboundCampaignKind];
+      if (agent && agent.outboundCampaignScripts && outboundCampaignKind) {
+        const scripts = agent.outboundCampaignScripts as Record<string, string>;
+        const script = scripts[outboundCampaignKind];
         if (script) {
           instructions = `Eres un agente realizando una llamada saliente. Tu objetivo y guión principal es el siguiente:\n\n${script}\n\nSigue este guión y adáptate a las respuestas del usuario.`;
           pendingGreeting = script; // El usuario indicó que quiere que el script se use como la primera interacción

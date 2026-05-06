@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import * as twilio from 'twilio';
+import { Twilio, twiml } from 'twilio';
 import { getFirestore } from '../firebase/firebase.config';
 import { getTwilioMediaStreamWebSocketUrl } from './twilio-media-stream-url';
 import { UsersService } from '../users/users.service';
@@ -94,13 +94,13 @@ export class OutboundService {
     }
 
     // Instanciar cliente Twilio
-    const client = twilio(twilioConfig.twilioSid, twilioConfig.twilioToken);
+    const client = new Twilio(twilioConfig.twilioSid, twilioConfig.twilioToken);
 
     // Preparar TwiML
     const wsUrl = getTwilioMediaStreamWebSocketUrl();
-    const twiml = new twilio.twiml.VoiceResponse();
-    twiml.pause({ length: 1 });
-    const connect = twiml.connect();
+    const voiceResponse = new twiml.VoiceResponse();
+    voiceResponse.pause({ length: 1 });
+    const connect = voiceResponse.connect();
     const stream = connect.stream({ url: wsUrl });
 
     // Pasar parámetros al stream
@@ -120,7 +120,7 @@ export class OutboundService {
       const call = await client.calls.create({
         to: toPhoneNumber,
         from: fromNumber,
-        twiml: twiml.toString(),
+        twiml: voiceResponse.toString(),
         record: false, // Puedes cambiarlo si se requiere grabar
       });
 

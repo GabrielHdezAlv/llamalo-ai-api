@@ -573,8 +573,11 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       );
 
       // Sincronizar cola de llamadas outbound
-      if (newAgent.type === 'outbound' && newAgent.outboundImportCsvPhones && newAgent.outboundImportCsvPhones.length > 0) {
-        await this.syncOutboundQueue(userId, agentId, newAgent.outboundImportCsvPhones, newAgent.outboundCampaignKind || '');
+      const outboundPhones = newAgent.outboundImportCsvPhones as string[] | undefined;
+      const outboundKind = newAgent.outboundCampaignKind as string | undefined;
+
+      if (newAgent.type === 'outbound' && Array.isArray(outboundPhones) && outboundPhones.length > 0) {
+        await this.syncOutboundQueue(userId, agentId, outboundPhones, outboundKind || '');
       }
 
       return {
@@ -835,8 +838,11 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       );
 
       // Sincronizar cola de llamadas outbound
-      if (updatedAgent.type === 'outbound' && updatedAgent.outboundImportCsvPhones && updatedAgent.outboundImportCsvPhones.length > 0) {
-        await this.syncOutboundQueue(userId, agentId, updatedAgent.outboundImportCsvPhones, updatedAgent.outboundCampaignKind || '');
+      const outboundPhones = updatedAgent.outboundImportCsvPhones as string[] | undefined;
+      const outboundKind = updatedAgent.outboundCampaignKind as string | undefined;
+
+      if (updatedAgent.type === 'outbound' && Array.isArray(outboundPhones) && outboundPhones.length > 0) {
+        await this.syncOutboundQueue(userId, agentId, outboundPhones, outboundKind || '');
       }
 
       return {
