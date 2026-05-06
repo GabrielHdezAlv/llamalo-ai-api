@@ -942,7 +942,7 @@ export class SupportChatGateway {
     session: SupportVoiceSession,
     userQuery: string,
   ): Promise<string> {
-    let prompt = session.config.agentInstruction;
+    let prompt = session.config.agentInstruction || '';
 
     // Detectar si el agente configurado es "Xenon" para inyectar su personalidad específica
     const isXenon =
@@ -1022,7 +1022,7 @@ export class SupportChatGateway {
       prompt += `\n\nSi el usuario necesita hablar con un humano, proporciona este contacto: Email: ${session.config.contactEmail}`;
     }
 
-    return prompt;
+    return prompt as string;
   }
 
   // ── TTS ────────────────────────────────────────────────────────────────────
