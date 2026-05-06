@@ -455,7 +455,7 @@ export class StreamsGateway {
 
     // Modificaciones para Outbound
     const isOutbound = !!customParameters?.outboundCampaign && customParameters?.outboundCampaign !== 'outbound';
-    const outboundCampaignKind = customParameters?.outboundCampaign as string;
+    const outboundCampaignKind = customParameters?.outboundCampaign;
     
     if (isOutbound && userDocumentData && customParameters.agentId) {
       const agentsArray = (userDocumentData.agents as any[]) || [];
@@ -464,8 +464,25 @@ export class StreamsGateway {
         const scripts = agent.outboundCampaignScripts as Record<string, string>;
         const script = scripts[outboundCampaignKind];
         if (script) {
-          instructions = `Eres un agente realizando una llamada saliente. Tu objetivo y guión principal es el siguiente:\n\n${script}\n\nSigue este guión y adáptate a las respuestas del usuario.`;
-          pendingGreeting = script; // El usuario indicó que quiere que el script se use como la primera interacción
+          // Extraemos la instrucción principal del agente (las instrucciones básicas + contexto del usuario)
+          // Si por alguna razón está vacía o tiene el fallback temporal, usamos una instrucción base genérica
+          const baseInstruction = agent.agentInstruction && !agent.agentInstruction.includes('Instrucciones salientes gestionadas') 
+            ? agent.agentInstruction 
+            : `Eres un asistente de IA conversacional representando a ${userDocumentData.companyName || 'nuestra empresa'}.`;
+
+          instructions = `${baseInstruction}
+
+INSTRUCCIÓN CRÍTICA DE CAMPAÑA:
+Actualmente estás realizando una LLAMADA SALIENTE a un usuario. 
+Tu objetivo principal para esta llamada específica y tu guión de inicio es el siguiente:
+
+"""
+${script}
+"""
+
+Sigue este guión y adáptate a las respuestas del usuario.`;
+
+          pendingGreeting = script; // Usamos el script de la campaña como primera interacción
           console.log(`📞 [Outbound] Script inyectado para la campaña ${outboundCampaignKind} en llamada a ${customParameters.callerPhone}`);
         }
       }
