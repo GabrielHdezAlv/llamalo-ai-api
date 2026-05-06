@@ -140,15 +140,22 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     const baseMaxTokens = 3500;
 
     const callOpenAI = async (max_tokens: number) => {
-      return await this.openai.chat.completions.create({
-        model,
-        temperature,
-        max_tokens,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-      });
+      try {
+        return await this.openai.chat.completions.create({
+          model,
+          temperature,
+          max_tokens,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        });
+      } catch (error: any) {
+        if (error.status === 429) {
+          throw new BadRequestException('Límite de cuota de OpenAI excedido. Por favor, verifica los fondos en tu cuenta de OpenAI (platform.openai.com).');
+        }
+        throw error;
+      }
     };
 
     let completion = await callOpenAI(baseMaxTokens);
