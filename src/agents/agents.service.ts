@@ -16,6 +16,11 @@ import { GenerateAgentInstructionResponseDto } from './dto/generate-agent-instru
 import { getFirestore } from '../firebase/firebase.config';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 import { WebhookActionsService } from '../webhook-actions/webhook-actions.service';
+import {
+  computeInitialNotBeforeIso,
+  parseOutboundSegmentationNotes,
+  phoneMatchesCountrySegmentation,
+} from '../calls/outbound-scheduling.util';
 
 @Injectable()
 export class AgentsService {
@@ -584,7 +589,13 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       const outboundKind = newAgent.outboundCampaignKind as string | undefined;
 
       if (newAgent.type === 'outbound' && Array.isArray(outboundPhones) && outboundPhones.length > 0) {
-        await this.syncOutboundQueue(userId, agentId, outboundPhones, outboundKind || '');
+        await this.syncOutboundQueue(userId, agentId, outboundPhones, {
+          outboundCampaignKind: outboundKind || '',
+          outboundScheduleCampaignNotes:
+            newAgent.outboundScheduleCampaignNotes as string | undefined,
+          outboundSegmentationNotes:
+            newAgent.outboundSegmentationNotes as string | undefined,
+        });
       }
 
       return {
@@ -849,7 +860,13 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       const outboundKind = updatedAgent.outboundCampaignKind as string | undefined;
 
       if (updatedAgent.type === 'outbound' && Array.isArray(outboundPhones) && outboundPhones.length > 0) {
-        await this.syncOutboundQueue(userId, agentId, outboundPhones, outboundKind || '');
+        await this.syncOutboundQueue(userId, agentId, outboundPhones, {
+          outboundCampaignKind: outboundKind || '',
+          outboundScheduleCampaignNotes:
+            updatedAgent.outboundScheduleCampaignNotes as string | undefined,
+          outboundSegmentationNotes:
+            updatedAgent.outboundSegmentationNotes as string | undefined,
+        });
       }
 
       return {
@@ -869,45 +886,100 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     }
   }
 
-  async syncOutboundQueue(userId: string, agentId: number, phones: string[], campaignKind: string) {
-    const batch = this.firestore.batch();
+  async syncOutboundQueue(
+    userId: string,
+    agentId: number,
+    phones: string[],
+    agentScheduling: {
+      outboundCampaignKind?: string;
+      outboundScheduleCampaignNotes?: string;
+      outboundSegmentationNotes?: string;
+    },
+  ) {
+    const campaignKind = agentScheduling.outboundCampaignKind || '';
+    const segmentation = parseOutboundSegmentationNotes(
+      agentScheduling.outboundSegmentationNotes,
+    );
     const queueRef = this.firestore.collection('outbound_queue');
 
-    // Obtener las existentes para este agente
     const existingSnapshot = await queueRef.where('agentId', '==', agentId).get();
     const existingPhones = new Set<string>();
-    existingSnapshot.docs.forEach(doc => {
-      existingPhones.add(doc.data().phoneNumber);
+    existingSnapshot.docs.forEach((doc) => {
+      const p = String(doc.data().phoneNumber ?? '').replace(/\s|-|\(|\)/g, '');
+      if (!p) return;
+      const e164 = p.startsWith('+') ? p : `+${p.replace(/\D/g, '')}`;
+      existingPhones.add(e164);
     });
 
     const now = new Date().toISOString();
+    const notBeforeIso = computeInitialNotBeforeIso(
+      campaignKind,
+      agentScheduling.outboundScheduleCampaignNotes,
+      agentScheduling.outboundSegmentationNotes,
+      new Date(),
+    );
+
+    const batch = this.firestore.batch();
     let count = 0;
 
-    // Solo añadimos los que no estén ya en la cola para no sobreescribir el estado
+    const toE164 = (raw: string): string => {
+      const normalizedPhone = raw.replace(/\s|-|\(|\)/g, '');
+      if (!normalizedPhone) return '';
+      return normalizedPhone.startsWith('+')
+        ? normalizedPhone
+        : `+${normalizedPhone.replace(/\D/g, '')}`;
+    };
+
     for (const phone of phones) {
-      const normalizedPhone = phone.replace(/\s|-|\(|\)/g, ''); // Normalización básica
-      if (!existingPhones.has(normalizedPhone) && normalizedPhone) {
-        // Formato E164 (añadir + si no lo tiene)
-        const e164Phone = normalizedPhone.startsWith('+') ? normalizedPhone : `+${normalizedPhone}`;
-        
-        const docId = `${agentId}_${e164Phone.replace('+', '')}`;
-        const newQueueItemRef = queueRef.doc(docId);
+      const e164Phone = toE164(phone);
+      if (!e164Phone || existingPhones.has(e164Phone)) continue;
+
+      const docId = `${agentId}_${e164Phone.replace('+', '')}`;
+      const newQueueItemRef = queueRef.doc(docId);
+
+      if (!phoneMatchesCountrySegmentation(e164Phone, segmentation)) {
         batch.set(newQueueItemRef, {
           userId,
           agentId,
           phoneNumber: e164Phone,
-          status: 'pending',
+          status: 'failed',
           campaignKind,
+          errorMessage:
+            'Segmentación: el número no coincide con el país configurado para la campaña.',
+          notBefore: now,
+          failureCount: 0,
+          callsTodayDate: '',
+          dialsTodayCount: 0,
           createdAt: now,
           updatedAt: now,
         });
+        existingPhones.add(e164Phone);
         count++;
+        continue;
       }
+
+      batch.set(newQueueItemRef, {
+        userId,
+        agentId,
+        phoneNumber: e164Phone,
+        status: 'pending',
+        campaignKind,
+        notBefore: notBeforeIso,
+        failureCount: 0,
+        callsTodayDate: '',
+        dialsTodayCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      existingPhones.add(e164Phone);
+      count++;
     }
 
     if (count > 0) {
       await batch.commit();
-      console.log(`[Outbound] Añadidos ${count} nuevos números a la cola para el agente ${agentId}`);
+      console.log(
+        `[Outbound] Añadidos o actualizados ${count} elementos en la cola para el agente ${agentId}`,
+      );
     }
   }
 
@@ -944,6 +1016,7 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         callSid: d.callSid ? String(d.callSid) : undefined,
         errorMessage: d.errorMessage ? String(d.errorMessage) : undefined,
         updatedAt: d.updatedAt ? String(d.updatedAt) : undefined,
+        notBefore: d.notBefore ? String(d.notBefore) : undefined,
       };
     });
 
@@ -958,28 +1031,77 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     return {
       agentId,
       campaignKind: (agent.outboundCampaignKind as string | undefined) ?? null,
+      outboundScheduleCampaignNotes:
+        (agent.outboundScheduleCampaignNotes as string | undefined) ?? null,
+      outboundSegmentationNotes:
+        (agent.outboundSegmentationNotes as string | undefined) ?? null,
       summary,
       items,
     };
   }
 
   async relaunchOutboundCampaign(userId: string, agentId: number) {
+    const userDocRef = this.firestore.collection('users').doc(userId);
+    const userSnapshot = await userDocRef.get();
+    if (!userSnapshot.exists) {
+      throw new NotFoundException('Usuario no encontrado.');
+    }
+    const userData = userSnapshot.data() as Record<string, unknown>;
+    const agentsArray =
+      (userData?.agents as Array<Record<string, unknown>>) || [];
+    const agent = agentsArray.find((a) => Number(a.agentId) === agentId);
+    if (!agent || agent.type !== 'outbound') {
+      throw new BadRequestException('El agente indicado no es outbound.');
+    }
+
+    const campaignKind = (agent.outboundCampaignKind as string) || '';
+    const scheduleNotes =
+      agent.outboundScheduleCampaignNotes as string | undefined;
+    const segmentationNotes =
+      agent.outboundSegmentationNotes as string | undefined;
+    const segmentation = parseOutboundSegmentationNotes(segmentationNotes);
+
     const status = await this.getOutboundCampaignStatus(userId, agentId);
     const now = new Date().toISOString();
     const batch = this.firestore.batch();
     let requeued = 0;
 
+    const notBeforeIso = computeInitialNotBeforeIso(
+      campaignKind,
+      scheduleNotes,
+      segmentationNotes,
+      new Date(),
+    );
+
     for (const item of status.items) {
-      if (item.status === 'failed' || item.status === 'completed') {
-        const ref = this.firestore.collection('outbound_queue').doc(item.id);
+      if (item.status !== 'failed' && item.status !== 'completed') {
+        continue;
+      }
+
+      const ref = this.firestore.collection('outbound_queue').doc(item.id);
+
+      if (!phoneMatchesCountrySegmentation(item.phoneNumber, segmentation)) {
         batch.update(ref, {
-          status: 'pending',
-          errorMessage: '',
-          callSid: '',
+          status: 'failed',
+          errorMessage:
+            'Segmentación: el número no coincide con el país configurado para la campaña.',
           updatedAt: now,
         });
-        requeued++;
+        continue;
       }
+
+      batch.update(ref, {
+        status: 'pending',
+        errorMessage: '',
+        callSid: '',
+        notBefore: notBeforeIso,
+        failureCount: 0,
+        callsTodayDate: '',
+        dialsTodayCount: 0,
+        campaignKind,
+        updatedAt: now,
+      });
+      requeued++;
     }
 
     if (requeued > 0) {
@@ -989,7 +1111,7 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     return {
       message:
         requeued > 0
-          ? `Se han re-encolado ${requeued} llamadas para la campaña outbound.`
+          ? `Se han programado ${requeued} llamadas según la configuración actual del agente (no se ejecutan al instante).`
           : 'No había llamadas completadas/fallidas para relanzar.',
       requeued,
     };
