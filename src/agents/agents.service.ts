@@ -911,6 +911,90 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
     }
   }
 
+  async getOutboundCampaignStatus(userId: string, agentId: number) {
+    const userDocRef = this.firestore.collection('users').doc(userId);
+    const userSnapshot = await userDocRef.get();
+    if (!userSnapshot.exists) {
+      throw new NotFoundException('Usuario no encontrado.');
+    }
+
+    const userData = userSnapshot.data() as Record<string, unknown>;
+    const agentsArray =
+      (userData?.agents as Array<Record<string, unknown>>) || [];
+    const agent = agentsArray.find((a) => Number(a.agentId) === agentId);
+    if (!agent) {
+      throw new NotFoundException(`Agente con agentId ${agentId} no encontrado.`);
+    }
+    if (agent.type !== 'outbound') {
+      throw new BadRequestException('El agente indicado no es outbound.');
+    }
+
+    const queueSnapshot = await this.firestore
+      .collection('outbound_queue')
+      .where('userId', '==', userId)
+      .where('agentId', '==', agentId)
+      .get();
+
+    const items = queueSnapshot.docs.map((doc) => {
+      const d = doc.data() as Record<string, unknown>;
+      return {
+        id: doc.id,
+        phoneNumber: String(d.phoneNumber ?? ''),
+        status: String(d.status ?? 'pending'),
+        callSid: d.callSid ? String(d.callSid) : undefined,
+        errorMessage: d.errorMessage ? String(d.errorMessage) : undefined,
+        updatedAt: d.updatedAt ? String(d.updatedAt) : undefined,
+      };
+    });
+
+    const summary = {
+      total: items.length,
+      pending: items.filter((i) => i.status === 'pending').length,
+      calling: items.filter((i) => i.status === 'calling').length,
+      completed: items.filter((i) => i.status === 'completed').length,
+      failed: items.filter((i) => i.status === 'failed').length,
+    };
+
+    return {
+      agentId,
+      campaignKind: (agent.outboundCampaignKind as string | undefined) ?? null,
+      summary,
+      items,
+    };
+  }
+
+  async relaunchOutboundCampaign(userId: string, agentId: number) {
+    const status = await this.getOutboundCampaignStatus(userId, agentId);
+    const now = new Date().toISOString();
+    const batch = this.firestore.batch();
+    let requeued = 0;
+
+    for (const item of status.items) {
+      if (item.status === 'failed' || item.status === 'completed') {
+        const ref = this.firestore.collection('outbound_queue').doc(item.id);
+        batch.update(ref, {
+          status: 'pending',
+          errorMessage: '',
+          callSid: '',
+          updatedAt: now,
+        });
+        requeued++;
+      }
+    }
+
+    if (requeued > 0) {
+      await batch.commit();
+    }
+
+    return {
+      message:
+        requeued > 0
+          ? `Se han re-encolado ${requeued} llamadas para la campaña outbound.`
+          : 'No había llamadas completadas/fallidas para relanzar.',
+      requeued,
+    };
+  }
+
   // ✅ Eliminar agente por agentId
   async deleteAgent(userId: string, agentId: number) {
     try {

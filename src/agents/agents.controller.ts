@@ -103,6 +103,26 @@ export class AgentsController {
     return this.agentsService.updateAgent(userId, agentId, agentConfig);
   }
 
+  @Get('agents/:agentId/outbound-campaign')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({ summary: 'Obtener estado de campaña outbound por agente' })
+  async getOutboundCampaignStatus(
+    @GetUser('uid') userId: string,
+    @Param('agentId', ParseIntPipe) agentId: number,
+  ) {
+    return this.agentsService.getOutboundCampaignStatus(userId, agentId);
+  }
+
+  @Post('agents/:agentId/outbound-campaign/relaunch')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({ summary: 'Relanzar campaña outbound de un agente' })
+  async relaunchOutboundCampaign(
+    @GetUser('uid') userId: string,
+    @Param('agentId', ParseIntPipe) agentId: number,
+  ) {
+    return this.agentsService.relaunchOutboundCampaign(userId, agentId);
+  }
+
   @Delete('agents/:agentId')
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Eliminar un agente específico por agentId' })
