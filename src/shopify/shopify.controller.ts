@@ -649,6 +649,38 @@ export class ShopifyController {
             extra: { shopDomain, webhookId },
           });
         });
+    } else if (topic === 'orders/paid') {
+      let orderBody: Record<string, unknown>;
+      try {
+        orderBody = JSON.parse(req.rawBody.toString('utf8'));
+      } catch {
+        orderBody = {};
+      }
+      void this.shopifyService
+        .handleOrdersPaidOutboundWebhook(shopDomain, orderBody)
+        .catch((err) => {
+          console.error(`Error webhook orders/paid ${shopDomain}:`, err);
+          Sentry.captureException(err, {
+            tags: { webhook: 'shopify', shopify_topic: topic },
+            extra: { shopDomain, webhookId },
+          });
+        });
+    } else if (topic === 'orders/create') {
+      let orderBody: Record<string, unknown>;
+      try {
+        orderBody = JSON.parse(req.rawBody.toString('utf8'));
+      } catch {
+        orderBody = {};
+      }
+      void this.shopifyService
+        .handleOrdersCreateOutboundWebhook(shopDomain, orderBody)
+        .catch((err) => {
+          console.error(`Error webhook orders/create ${shopDomain}:`, err);
+          Sentry.captureException(err, {
+            tags: { webhook: 'shopify', shopify_topic: topic },
+            extra: { shopDomain, webhookId },
+          });
+        });
     } else {
       console.log(
         `Webhook recibido y aceptado: ${topic} para la tienda ${shopDomain}`,

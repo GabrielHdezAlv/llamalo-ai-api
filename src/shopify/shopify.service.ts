@@ -6,7 +6,10 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { OutboundQueueService } from '../agents/outbound-queue.service';
+import {
+  OutboundQueueService,
+  type OutboundQueueLeadInput,
+} from '../agents/outbound-queue.service';
 import axios, { AxiosInstance } from 'axios';
 import { getFirestore } from '../firebase/firebase.config';
 import * as admin from 'firebase-admin';
@@ -155,6 +158,14 @@ export interface ShopifyMasterDataResponse {
   products: NormalizedProduct[];
   orders: NormalizedOrder[];
 }
+
+/** Pedidos con pago aún no completado (recordatorio de pago vía `orders/create`). */
+const ORDER_FINANCIAL_PENDING_REMINDER = new Set([
+  'pending',
+  'authorized',
+  'partially_paid',
+  'unpaid',
+]);
 
 @Injectable()
 export class ShopifyService {
@@ -668,6 +679,14 @@ export class ShopifyService {
         (err) => {
           console.error(
             `Error al registrar webhook checkouts/update para ${normalizedShop}:`,
+            this.formatHttpErrorForLog(err),
+          );
+        },
+      );
+      this.registerOrdersOutboundWebhooks(normalizedShop, accessToken).catch(
+        (err) => {
+          console.error(
+            `Error al registrar webhooks orders/paid u orders/create para ${normalizedShop}:`,
             this.formatHttpErrorForLog(err),
           );
         },
@@ -1200,9 +1219,11 @@ export class ShopifyService {
     }
   }
 
-  private async registerCheckoutEnqueueWebhook(
+  /** Registra un webhook REST Admin en la misma URL que el resto de topics. */
+  private async registerShopifyTopicWebhook(
     shop: string,
     accessToken: string,
+    topic: string,
   ): Promise<void> {
     try {
       const baseUrl = this.getPublicApiBaseUrl();
@@ -1212,7 +1233,7 @@ export class ShopifyService {
         `https://${shop}/admin/api/2026-01/webhooks.json`,
         {
           webhook: {
-            topic: 'checkouts/update',
+            topic,
             address: webhookUrl,
             format: 'json',
           },
@@ -1225,7 +1246,7 @@ export class ShopifyService {
         },
       );
 
-      console.log(`✅ Webhook checkouts/update registrado en ${shop}`);
+      console.log(`✅ Webhook ${topic} registrado en ${shop}`);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
         const responseData = error.response.data;
@@ -1235,14 +1256,30 @@ export class ShopifyService {
             responseData,
           )
         ) {
-          console.log(
-            `ℹ️ Webhook checkouts/update ya estaba registrado en ${shop}`,
-          );
+          console.log(`ℹ️ Webhook ${topic} ya estaba registrado en ${shop}`);
           return;
         }
       }
       throw error;
     }
+  }
+
+  private async registerCheckoutEnqueueWebhook(
+    shop: string,
+    accessToken: string,
+  ): Promise<void> {
+    await this.registerShopifyTopicWebhook(shop, accessToken, 'checkouts/update');
+  }
+
+  /** Encuesta post-compra, ofertas post-compra y recordatorios (pedidos sin pagar). */
+  private async registerOrdersOutboundWebhooks(
+    shop: string,
+    accessToken: string,
+  ): Promise<void> {
+    await Promise.all([
+      this.registerShopifyTopicWebhook(shop, accessToken, 'orders/paid'),
+      this.registerShopifyTopicWebhook(shop, accessToken, 'orders/create'),
+    ]);
   }
 
   /**
@@ -1567,6 +1604,278 @@ export class ShopifyService {
     return { phone: undefined, source: 'none' };
   }
 
+  private extractOrderPhone(order: Record<string, unknown>): {
+    phone: string | undefined;
+    source: 'order' | 'shipping' | 'billing' | 'none';
+  } {
+    const top = order.phone;
+    if (typeof top === 'string' && top.trim()) {
+      return { phone: top.trim(), source: 'order' };
+    }
+    const ship = order.shipping_address as
+      | Record<string, unknown>
+      | undefined;
+    const bill = order.billing_address as
+      | Record<string, unknown>
+      | undefined;
+    if (ship) {
+      const p = ship.phone;
+      if (typeof p === 'string' && p.trim()) {
+        return { phone: p.trim(), source: 'shipping' };
+      }
+    }
+    if (bill) {
+      const p = bill.phone;
+      if (typeof p === 'string' && p.trim()) {
+        return { phone: p.trim(), source: 'billing' };
+      }
+    }
+    return { phone: undefined, source: 'none' };
+  }
+
+  /**
+   * Construye fila de cola desde payload REST Order de webhook.
+   * @param eventAtPreference processed = pagos (`orders/paid`); created = alta del pedido (`orders/create`).
+   */
+  private buildOutboundLeadFromOrder(
+    order: Record<string, unknown>,
+    eventAtPreference: 'processed' | 'created',
+  ): OutboundQueueLeadInput | null {
+    const extracted = this.extractOrderPhone(order);
+    if (!extracted.phone?.trim()) {
+      return null;
+    }
+
+    const orderId = order.id;
+    const externalEventId =
+      orderId != null && String(orderId).trim() !== ''
+        ? `order_${String(orderId)}`
+        : undefined;
+
+    let eventAtIso: string;
+    if (eventAtPreference === 'processed') {
+      const p = order.processed_at;
+      const c = order.created_at;
+      const u = order.updated_at;
+      eventAtIso =
+        (typeof p === 'string' && p) ||
+        (typeof c === 'string' && c) ||
+        (typeof u === 'string' && u) ||
+        new Date().toISOString();
+    } else {
+      const c = order.created_at;
+      eventAtIso =
+        (typeof c === 'string' && c) || new Date().toISOString();
+    }
+
+    const tp = order.total_price ?? order.subtotal_price;
+    let cartTotal: number | undefined;
+    if (typeof tp === 'string' || typeof tp === 'number') {
+      const n = parseFloat(String(tp));
+      if (Number.isFinite(n)) cartTotal = n;
+    }
+
+    const lineItems = order.line_items as
+      | Array<Record<string, unknown>>
+      | undefined;
+    const cartItemCount = Array.isArray(lineItems)
+      ? lineItems.length
+      : undefined;
+
+    let productHandle: string | undefined;
+    if (lineItems?.length) {
+      const first = lineItems[0];
+      if (typeof first?.sku === 'string' && first.sku.trim()) {
+        productHandle = first.sku.trim();
+      } else if (typeof first?.vendor === 'string' && first.vendor.trim()) {
+        productHandle = first.vendor.trim();
+      } else if (
+        first?.variant_id !== undefined &&
+        first?.variant_id !== null
+      ) {
+        productHandle = String(first.variant_id);
+      }
+    }
+
+    const customer = order.customer as Record<string, unknown> | undefined;
+    let customerState: 'new' | 'recurring' | null = null;
+    if (customer && typeof customer.orders_count === 'number') {
+      customerState =
+        customer.orders_count <= 1 ? 'new' : 'recurring';
+    }
+
+    return {
+      phone: extracted.phone,
+      eventAt: eventAtIso,
+      externalEventId: externalEventId ?? null,
+      contactTicket: cartTotal !== undefined ? cartTotal : null,
+      customerState,
+      cartTotal: cartTotal !== undefined ? cartTotal : null,
+      cartItemCount: cartItemCount !== undefined ? cartItemCount : null,
+      productHandle: productHandle ?? null,
+    };
+  }
+
+  /**
+   * Encola `lead` para agentes outbound de la tienda con `shopifyDomain` coincidente
+   * y tipo de campaña incluido en `campaignKinds`.
+   */
+  private async enqueueShopifyOutboundForCampaignKinds(
+    normalizedShop: string,
+    campaignKinds: Set<string>,
+    lead: OutboundQueueLeadInput,
+  ): Promise<number> {
+    const storesSnap = await this.firestore
+      .collection('shopifyStores')
+      .where('shopDomain', '==', normalizedShop)
+      .limit(40)
+      .get();
+
+    let enqueueCalls = 0;
+
+    for (const sdoc of storesSnap.docs) {
+      const ownerUserId = sdoc.data()?.ownerUserId as string | undefined;
+      if (!ownerUserId) continue;
+
+      const userSnap = await this.firestore
+        .collection('users')
+        .doc(ownerUserId)
+        .get();
+      if (!userSnap.exists) continue;
+      const userData = userSnap.data() as Record<string, unknown>;
+      const agents =
+        (userData.agents as Array<Record<string, unknown>>) || [];
+
+      for (const agent of agents) {
+        if (agent.type !== 'outbound') continue;
+        const kind = String(agent.outboundCampaignKind ?? '');
+        if (!campaignKinds.has(kind)) continue;
+
+        const rawDom = agent.shopifyDomain as string | undefined;
+        const agentShop = rawDom
+          ? ShopifyService.normalizeWebhookShopDomain(rawDom)
+          : '';
+        if (!agentShop || agentShop !== normalizedShop) continue;
+
+        const agentId = Number(agent.agentId ?? 0);
+        if (!agentId) continue;
+
+        await this.outboundQueueService.syncQueue(
+          ownerUserId,
+          agentId,
+          [],
+          [lead],
+          {
+            outboundCampaignKind: agent.outboundCampaignKind as
+              | string
+              | undefined,
+            outboundScheduleCampaignNotes:
+              agent.outboundScheduleCampaignNotes as string | undefined,
+            outboundSegmentationNotes:
+              agent.outboundSegmentationNotes as string | undefined,
+          },
+          'shopify',
+        );
+        enqueueCalls++;
+      }
+    }
+
+    return enqueueCalls;
+  }
+
+  /** `orders/paid` → encuesta de satisfacción y ofertas post-compra. */
+  async handleOrdersPaidOutboundWebhook(
+    shopDomainHeader: string,
+    orderPayload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const normalizedShop =
+        ShopifyService.normalizeWebhookShopDomain(shopDomainHeader);
+      if (!normalizedShop) {
+        console.log(
+          '[Shopify outbound] orders/paid: dominio de tienda inválido; se ignora.',
+        );
+        return;
+      }
+
+      const lead = this.buildOutboundLeadFromOrder(orderPayload, 'processed');
+      if (!lead) {
+        const oid = String(orderPayload.id ?? '').slice(0, 12);
+        console.log(
+          `[Shopify outbound] orders/paid: sin teléfono en pedido (shop=${normalizedShop}, order~=${oid || 'n/a'}).`,
+        );
+        return;
+      }
+
+      console.log(
+        `[Shopify outbound] orders/paid: teléfono OK (shop=${normalizedShop}, origen pedido, número=${this.maskPhoneForLog(lead.phone)})`,
+      );
+
+      const n = await this.enqueueShopifyOutboundForCampaignKinds(
+        normalizedShop,
+        new Set(['satisfactionSurvey', 'postPurchase']),
+        lead,
+      );
+      if (n === 0) {
+        console.log(
+          `[Shopify outbound] orders/paid: ningún agente satisfactionSurvey/postPurchase para shop=${normalizedShop}.`,
+        );
+      }
+    } catch (e) {
+      console.error('[Shopify outbound] orders/paid:', e);
+    }
+  }
+
+  /**
+   * `orders/create` con pago pendiente → recordatorio de pago.
+   * Pedidos ya pagados se ignoran aquí (entran por `orders/paid`).
+   */
+  async handleOrdersCreateOutboundWebhook(
+    shopDomainHeader: string,
+    orderPayload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const normalizedShop =
+        ShopifyService.normalizeWebhookShopDomain(shopDomainHeader);
+      if (!normalizedShop) {
+        return;
+      }
+
+      const financial = String(
+        orderPayload.financial_status ?? '',
+      ).toLowerCase();
+      if (!financial || !ORDER_FINANCIAL_PENDING_REMINDER.has(financial)) {
+        return;
+      }
+
+      const lead = this.buildOutboundLeadFromOrder(orderPayload, 'created');
+      if (!lead) {
+        const oid = String(orderPayload.id ?? '').slice(0, 12);
+        console.log(
+          `[Shopify outbound] orders/create: sin teléfono (shop=${normalizedShop}, order~=${oid || 'n/a'}, financial=${financial}).`,
+        );
+        return;
+      }
+
+      console.log(
+        `[Shopify outbound] orders/create (pendiente): teléfono OK (shop=${normalizedShop}, financial=${financial}, número=${this.maskPhoneForLog(lead.phone)})`,
+      );
+
+      const n = await this.enqueueShopifyOutboundForCampaignKinds(
+        normalizedShop,
+        new Set(['paymentReminder']),
+        lead,
+      );
+      if (n === 0) {
+        console.log(
+          `[Shopify outbound] orders/create: ningún agente paymentReminder para shop=${normalizedShop}.`,
+        );
+      }
+    } catch (e) {
+      console.error('[Shopify outbound] orders/create:', e);
+    }
+  }
+
   /** Usa topic `checkouts/update` como señal de abandono cuando el checkout sigue abierto y hay teléfono. */
   async handleOutboundCheckoutWebhook(
     shopDomainHeader: string,
@@ -1669,76 +1978,27 @@ export class ShopifyService {
         if (sku?.trim()) productHandle = sku.trim();
       }
 
-      const storesSnap = await this.firestore
-        .collection('shopifyStores')
-        .where('shopDomain', '==', normalizedShop)
-        .limit(40)
-        .get();
+      const lead: OutboundQueueLeadInput = {
+        phone: phoneRaw,
+        eventAt: eventAtIso,
+        externalEventId: externalEventId ?? null,
+        contactTicket: cartTotal !== undefined ? cartTotal : null,
+        customerState: null,
+        cartTotal: cartTotal !== undefined ? cartTotal : null,
+        cartItemCount: cartItemCount !== undefined ? cartItemCount : null,
+        productHandle: productHandle ?? null,
+      };
 
-      let abandonedCartEnqueueCalls = 0;
-
-      for (const sdoc of storesSnap.docs) {
-        const ownerUserId = sdoc.data()?.ownerUserId as string | undefined;
-        if (!ownerUserId) continue;
-
-        const userSnap = await this.firestore
-          .collection('users')
-          .doc(ownerUserId)
-          .get();
-        if (!userSnap.exists) continue;
-        const userData = userSnap.data() as Record<string, unknown>;
-        const agents =
-          (userData.agents as Array<Record<string, unknown>>) || [];
-
-        for (const agent of agents) {
-          if (agent.type !== 'outbound') continue;
-          if ((agent.outboundCampaignKind as string) !== 'abandonedCart') {
-            continue;
-          }
-          const rawDom = agent.shopifyDomain as string | undefined;
-          const agentShop = rawDom
-            ? ShopifyService.normalizeWebhookShopDomain(rawDom)
-            : '';
-          if (!agentShop || agentShop !== normalizedShop) continue;
-
-          const agentId = Number(agent.agentId ?? 0);
-          if (!agentId) continue;
-
-          await this.outboundQueueService.syncQueue(
-            ownerUserId,
-            agentId,
-            [],
-            [
-              {
-                phone: phoneRaw,
-                eventAt: eventAtIso,
-                externalEventId: externalEventId ?? null,
-                contactTicket:
-                  cartTotal !== undefined ? cartTotal : null,
-                customerState: null,
-                cartTotal: cartTotal !== undefined ? cartTotal : null,
-                cartItemCount: cartItemCount !== undefined ? cartItemCount : null,
-                productHandle: productHandle ?? null,
-              },
-            ],
-            {
-              outboundCampaignKind: agent.outboundCampaignKind as
-                | string
-                | undefined,
-              outboundScheduleCampaignNotes:
-                agent.outboundScheduleCampaignNotes as string | undefined,
-              outboundSegmentationNotes:
-                agent.outboundSegmentationNotes as string | undefined,
-            },
-            'shopify',
-          );
-          abandonedCartEnqueueCalls++;
-        }
-      }
+      const abandonedCartEnqueueCalls =
+        await this.enqueueShopifyOutboundForCampaignKinds(
+          normalizedShop,
+          new Set(['abandonedCart']),
+          lead,
+        );
 
       if (abandonedCartEnqueueCalls === 0) {
         console.log(
-          `[Shopify outbound] checkouts/update: teléfono obtenido pero no se llamó a la cola (shop=${normalizedShop}, tiendasFirestore=${storesSnap.size}). Revisa agente outbound abandonedCart y shopifyDomain.`,
+          `[Shopify outbound] checkouts/update: teléfono obtenido pero no se llamó a la cola (shop=${normalizedShop}). Revisa agente outbound abandonedCart y shopifyDomain.`,
         );
       }
     } catch (e) {
