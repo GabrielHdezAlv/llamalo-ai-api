@@ -314,19 +314,63 @@ function parsePaymentDueToMs(v: string): number {
   }
 }
 
+/**
+ * Calcula el primer instante permitido para intentar la llamada.
+ * - `initialDelay` del JSON de programación solo aplica a campaña **carrito abandonado** (opción B producto).
+ * - Si `eventAt` existe (abandono/compra real), la base temporal es ese instante + demoras de segmentación
+ *   (+ `initialDelay` solo si abandonedCart); si no, la referencia es `reference` (típicamente "ahora").
+ */
+export function computeEnqueueNotBeforeLuxon(
+  campaignKind: string,
+  scheduleNotes: string | undefined,
+  segmentationNotes: string | undefined,
+  opts: {
+    reference?: DateTime;
+    eventAt?: DateTime | null;
+  } = {},
+): DateTime {
+  const schedule = parseOutboundScheduleNotes(scheduleNotes);
+  const segmentation = parseOutboundSegmentationNotes(segmentationNotes);
+  const ref =
+    opts.reference ?? DateTime.now().setZone(OUTBOUND_SCHEDULE_TZ);
+  const eventAt = opts.eventAt
+    ? opts.eventAt.setZone(OUTBOUND_SCHEDULE_TZ)
+    : null;
+
+  if (eventAt) {
+    let t = eventAt;
+    const segMs = segmentationMinimumDelayMs(campaignKind, segmentation);
+    t = t.plus({ milliseconds: segMs });
+    if (campaignKind === 'abandonedCart') {
+      t = t.plus({
+        milliseconds: parseInitialDelayMs(schedule.initialDelay),
+      });
+    }
+    return alignToNextCallingWindow(t, schedule);
+  }
+
+  const extraMs = segmentationMinimumDelayMs(campaignKind, segmentation);
+  const initialMs =
+    campaignKind === 'abandonedCart'
+      ? parseInitialDelayMs(schedule.initialDelay)
+      : 0;
+  let t = ref.plus({ milliseconds: initialMs + extraMs });
+  t = alignToNextCallingWindow(t, schedule);
+  return t;
+}
+
 export function computeInitialNotBeforeLuxon(
   campaignKind: string,
   scheduleNotes: string | undefined,
   segmentationNotes: string | undefined,
   reference: DateTime,
 ): DateTime {
-  const schedule = parseOutboundScheduleNotes(scheduleNotes);
-  const segmentation = parseOutboundSegmentationNotes(segmentationNotes);
-  const extraMs = segmentationMinimumDelayMs(campaignKind, segmentation);
-  const delayMs = parseInitialDelayMs(schedule.initialDelay) + extraMs;
-  let t = reference.plus({ milliseconds: delayMs });
-  t = alignToNextCallingWindow(t, schedule);
-  return t;
+  return computeEnqueueNotBeforeLuxon(
+    campaignKind,
+    scheduleNotes,
+    segmentationNotes,
+    { reference },
+  );
 }
 
 export function computeInitialNotBeforeIso(
@@ -338,11 +382,49 @@ export function computeInitialNotBeforeIso(
   const ref = DateTime.fromJSDate(referenceUtc, { zone: 'utc' }).setZone(
     OUTBOUND_SCHEDULE_TZ,
   );
-  return computeInitialNotBeforeLuxon(
+  return computeEnqueueNotBeforeLuxon(
     campaignKind,
     scheduleNotes,
     segmentationNotes,
-    ref,
+    { reference: ref },
+  )
+    .toUTC()
+    .toISO()!;
+}
+
+export function computeEnqueueNotBeforeIso(
+  campaignKind: string,
+  scheduleNotes: string | undefined,
+  segmentationNotes: string | undefined,
+  opts: {
+    referenceUtc?: Date;
+    eventAtIso?: string | null;
+  } = {},
+): string {
+  const ref = opts.referenceUtc
+    ? DateTime.fromJSDate(opts.referenceUtc, { zone: 'utc' }).setZone(
+        OUTBOUND_SCHEDULE_TZ,
+      )
+    : DateTime.now().setZone(OUTBOUND_SCHEDULE_TZ);
+  const eventAt =
+    opts.eventAtIso && opts.eventAtIso.trim()
+      ? DateTime.fromISO(opts.eventAtIso.trim(), { setZone: true })
+      : null;
+  if (eventAt && !eventAt.isValid) {
+    return computeEnqueueNotBeforeLuxon(
+      campaignKind,
+      scheduleNotes,
+      segmentationNotes,
+      { reference: ref },
+    )
+      .toUTC()
+      .toISO()!;
+  }
+  return computeEnqueueNotBeforeLuxon(
+    campaignKind,
+    scheduleNotes,
+    segmentationNotes,
+    { reference: ref, eventAt: eventAt ?? undefined },
   )
     .toUTC()
     .toISO()!;

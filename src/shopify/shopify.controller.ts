@@ -630,6 +630,25 @@ export class ShopifyController {
           extra: { shopDomain, webhookId },
         });
       });
+    } else if (topic === 'checkouts/update') {
+      let checkoutBody: Record<string, unknown>;
+      try {
+        checkoutBody = JSON.parse(req.rawBody.toString('utf8'));
+      } catch {
+        checkoutBody = {};
+      }
+      void this.shopifyService
+        .handleOutboundCheckoutWebhook(shopDomain, checkoutBody)
+        .catch((err) => {
+          console.error(
+            `Error webhook checkouts/update ${shopDomain}:`,
+            err,
+          );
+          Sentry.captureException(err, {
+            tags: { webhook: 'shopify', shopify_topic: topic },
+            extra: { shopDomain, webhookId },
+          });
+        });
     } else {
       console.log(
         `Webhook recibido y aceptado: ${topic} para la tienda ${shopDomain}`,

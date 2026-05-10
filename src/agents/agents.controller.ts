@@ -123,6 +123,19 @@ export class AgentsController {
     return this.agentsService.relaunchOutboundCampaign(userId, agentId);
   }
 
+  @Get('agents/:agentId/outbound-make-ingress')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiOperation({
+    summary:
+      'URL del webhook y cabecera X-Outbound-Key para automatización Make',
+  })
+  async getOutboundMakeIngress(
+    @GetUser('uid') userId: string,
+    @Param('agentId', ParseIntPipe) agentId: number,
+  ) {
+    return this.agentsService.getOutboundMakeIngressMetadata(userId, agentId);
+  }
+
   @Delete('agents/:agentId')
   @UseGuards(FirebaseAuthGuard)
   @ApiOperation({ summary: 'Eliminar un agente específico por agentId' })

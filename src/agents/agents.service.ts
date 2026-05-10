@@ -3,21 +3,32 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  UnauthorizedException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SetAgentConfigDto } from './dto/set-agent-config.dto';
+import {
+  SetAgentConfigDto,
+  OutboundQueueLeadDto,
+} from './dto/set-agent-config.dto';
+import { OutboundIngressLeadDto } from './dto/outbound-ingress-lead.dto';
+import {
+  OutboundQueueService,
+  OutboundQueueLeadInput,
+} from './outbound-queue.service';
+import { evaluateOutboundSegmentationForContact } from '../calls/outbound-segmentation-eval.util';
 import { GenerateAgentInstructionRequestDto } from './dto/generate-agent-instruction-request.dto';
 import { GenerateAgentInstructionResponseDto } from './dto/generate-agent-instruction-response.dto';
 import { getFirestore } from '../firebase/firebase.config';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
 import { WebhookActionsService } from '../webhook-actions/webhook-actions.service';
 import {
-  computeInitialNotBeforeIso,
+  computeEnqueueNotBeforeIso,
   parseOutboundSegmentationNotes,
   phoneMatchesCountrySegmentation,
 } from '../calls/outbound-scheduling.util';
@@ -35,7 +46,24 @@ export class AgentsService {
     private readonly knowledgeBaseService: KnowledgeBaseService,
     private readonly planLimitsService: PlanLimitsService,
     private readonly webhookActionsService: WebhookActionsService,
+    private readonly outboundQueueService: OutboundQueueService,
   ) {}
+
+  private mapOutboundQueueLeads(
+    dto?: OutboundQueueLeadDto[],
+  ): OutboundQueueLeadInput[] | undefined {
+    if (!dto?.length) return undefined;
+    return dto.map((r) => ({
+      phone: r.phone,
+      eventAt: r.eventAt ?? null,
+      externalEventId: r.externalEventId ?? null,
+      contactTicket: r.contactTicket ?? null,
+      customerState: r.customerState ?? null,
+      cartTotal: r.cartTotal ?? null,
+      cartItemCount: r.cartItemCount ?? null,
+      productHandle: r.productHandle ?? null,
+    }));
+  }
 
   private readAgentPromptTemplate(): string {
     const candidatePaths = [
@@ -464,6 +492,10 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       const shopifyDomain = this.normalizeShopifyDomain(
         agentConfig.shopifyDomain,
       );
+      const outboundIngressSecret =
+        agentConfig.type === 'outbound'
+          ? randomBytes(18).toString('base64url')
+          : undefined;
       const newAgent = {
         agentId: agentId,
         name: agentConfig.name,
@@ -489,6 +521,9 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         ...(agentConfig.outboundImportCsvPhones && { outboundImportCsvPhones: agentConfig.outboundImportCsvPhones }),
         ...(agentConfig.outboundSegmentationNotes && { outboundSegmentationNotes: agentConfig.outboundSegmentationNotes }),
         ...(agentConfig.outboundScheduleCampaignNotes && { outboundScheduleCampaignNotes: agentConfig.outboundScheduleCampaignNotes }),
+        ...(outboundIngressSecret && {
+          outboundIngressSecret,
+        }),
       };
 
       // Si hay estructura antigua, migrar primero
@@ -584,18 +619,32 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         { merge: true },
       );
 
+      if (agentConfig.type === 'outbound' && outboundIngressSecret) {
+        await this.writeOutboundIngressKeyDoc(
+          outboundIngressSecret,
+          userId,
+          agentId,
+        );
+      }
+
       // Sincronizar cola de llamadas outbound
       const outboundPhones = newAgent.outboundImportCsvPhones as string[] | undefined;
       const outboundKind = newAgent.outboundCampaignKind as string | undefined;
 
       if (newAgent.type === 'outbound' && Array.isArray(outboundPhones) && outboundPhones.length > 0) {
-        await this.syncOutboundQueue(userId, agentId, outboundPhones, {
-          outboundCampaignKind: outboundKind || '',
-          outboundScheduleCampaignNotes:
-            newAgent.outboundScheduleCampaignNotes as string | undefined,
-          outboundSegmentationNotes:
-            newAgent.outboundSegmentationNotes as string | undefined,
-        });
+        await this.syncOutboundQueue(
+          userId,
+          agentId,
+          outboundPhones,
+          {
+            outboundCampaignKind: outboundKind || '',
+            outboundScheduleCampaignNotes:
+              newAgent.outboundScheduleCampaignNotes as string | undefined,
+            outboundSegmentationNotes:
+              newAgent.outboundSegmentationNotes as string | undefined,
+          },
+          this.mapOutboundQueueLeads(agentConfig.outboundQueueLeads),
+        );
       }
 
       return {
@@ -810,6 +859,20 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         agentConfig.shopifyDomain !== undefined
           ? (this.normalizeShopifyDomain(agentConfig.shopifyDomain) ?? null)
           : ((existingAgent.shopifyDomain as string | undefined) ?? null);
+
+      const prevIngressSecret =
+        typeof existingAgent.outboundIngressSecret === 'string'
+          ? existingAgent.outboundIngressSecret.trim()
+          : '';
+      const outboundIngressSecretForOutbound =
+        agentConfig.type === 'outbound'
+          ? prevIngressSecret || randomBytes(18).toString('base64url')
+          : undefined;
+
+      if (agentConfig.type === 'inbound' && prevIngressSecret) {
+        await this.deleteOutboundIngressKeyDoc(prevIngressSecret);
+      }
+
       const updatedAgent = {
         agentId: agentId,
         name: agentConfig.name,
@@ -835,6 +898,9 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         ...(agentConfig.outboundImportCsvPhones !== undefined ? { outboundImportCsvPhones: agentConfig.outboundImportCsvPhones } : existingAgent.outboundImportCsvPhones ? { outboundImportCsvPhones: existingAgent.outboundImportCsvPhones } : {}),
         ...(agentConfig.outboundSegmentationNotes !== undefined ? { outboundSegmentationNotes: agentConfig.outboundSegmentationNotes } : existingAgent.outboundSegmentationNotes ? { outboundSegmentationNotes: existingAgent.outboundSegmentationNotes } : {}),
         ...(agentConfig.outboundScheduleCampaignNotes !== undefined ? { outboundScheduleCampaignNotes: agentConfig.outboundScheduleCampaignNotes } : existingAgent.outboundScheduleCampaignNotes ? { outboundScheduleCampaignNotes: existingAgent.outboundScheduleCampaignNotes } : {}),
+        ...(agentConfig.type === 'outbound' && outboundIngressSecretForOutbound
+          ? { outboundIngressSecret: outboundIngressSecretForOutbound }
+          : {}),
       };
 
       // Actualizar en el array
@@ -855,18 +921,39 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         { merge: true },
       );
 
+      if (
+        updatedAgent.type === 'outbound' &&
+        outboundIngressSecretForOutbound &&
+        outboundIngressSecretForOutbound !== prevIngressSecret
+      ) {
+        if (prevIngressSecret) {
+          await this.deleteOutboundIngressKeyDoc(prevIngressSecret);
+        }
+        await this.writeOutboundIngressKeyDoc(
+          outboundIngressSecretForOutbound,
+          userId,
+          agentId,
+        );
+      }
+
       // Sincronizar cola de llamadas outbound
       const outboundPhones = updatedAgent.outboundImportCsvPhones as string[] | undefined;
       const outboundKind = updatedAgent.outboundCampaignKind as string | undefined;
 
       if (updatedAgent.type === 'outbound' && Array.isArray(outboundPhones) && outboundPhones.length > 0) {
-        await this.syncOutboundQueue(userId, agentId, outboundPhones, {
-          outboundCampaignKind: outboundKind || '',
-          outboundScheduleCampaignNotes:
-            updatedAgent.outboundScheduleCampaignNotes as string | undefined,
-          outboundSegmentationNotes:
-            updatedAgent.outboundSegmentationNotes as string | undefined,
-        });
+        await this.syncOutboundQueue(
+          userId,
+          agentId,
+          outboundPhones,
+          {
+            outboundCampaignKind: outboundKind || '',
+            outboundScheduleCampaignNotes:
+              updatedAgent.outboundScheduleCampaignNotes as string | undefined,
+            outboundSegmentationNotes:
+              updatedAgent.outboundSegmentationNotes as string | undefined,
+          },
+          this.mapOutboundQueueLeads(agentConfig.outboundQueueLeads),
+        );
       }
 
       return {
@@ -895,92 +982,16 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       outboundScheduleCampaignNotes?: string;
       outboundSegmentationNotes?: string;
     },
+    leads?: OutboundQueueLeadInput[],
   ) {
-    const campaignKind = agentScheduling.outboundCampaignKind || '';
-    const segmentation = parseOutboundSegmentationNotes(
-      agentScheduling.outboundSegmentationNotes,
+    await this.outboundQueueService.syncQueue(
+      userId,
+      agentId,
+      phones,
+      leads,
+      agentScheduling,
+      'csv',
     );
-    const queueRef = this.firestore.collection('outbound_queue');
-
-    const existingSnapshot = await queueRef.where('agentId', '==', agentId).get();
-    const existingPhones = new Set<string>();
-    existingSnapshot.docs.forEach((doc) => {
-      const p = String(doc.data().phoneNumber ?? '').replace(/\s|-|\(|\)/g, '');
-      if (!p) return;
-      const e164 = p.startsWith('+') ? p : `+${p.replace(/\D/g, '')}`;
-      existingPhones.add(e164);
-    });
-
-    const now = new Date().toISOString();
-    const notBeforeIso = computeInitialNotBeforeIso(
-      campaignKind,
-      agentScheduling.outboundScheduleCampaignNotes,
-      agentScheduling.outboundSegmentationNotes,
-      new Date(),
-    );
-
-    const batch = this.firestore.batch();
-    let count = 0;
-
-    const toE164 = (raw: string): string => {
-      const normalizedPhone = raw.replace(/\s|-|\(|\)/g, '');
-      if (!normalizedPhone) return '';
-      return normalizedPhone.startsWith('+')
-        ? normalizedPhone
-        : `+${normalizedPhone.replace(/\D/g, '')}`;
-    };
-
-    for (const phone of phones) {
-      const e164Phone = toE164(phone);
-      if (!e164Phone || existingPhones.has(e164Phone)) continue;
-
-      const docId = `${agentId}_${e164Phone.replace('+', '')}`;
-      const newQueueItemRef = queueRef.doc(docId);
-
-      if (!phoneMatchesCountrySegmentation(e164Phone, segmentation)) {
-        batch.set(newQueueItemRef, {
-          userId,
-          agentId,
-          phoneNumber: e164Phone,
-          status: 'failed',
-          campaignKind,
-          errorMessage:
-            'Segmentación: el número no coincide con el país configurado para la campaña.',
-          notBefore: now,
-          failureCount: 0,
-          callsTodayDate: '',
-          dialsTodayCount: 0,
-          createdAt: now,
-          updatedAt: now,
-        });
-        existingPhones.add(e164Phone);
-        count++;
-        continue;
-      }
-
-      batch.set(newQueueItemRef, {
-        userId,
-        agentId,
-        phoneNumber: e164Phone,
-        status: 'pending',
-        campaignKind,
-        notBefore: notBeforeIso,
-        failureCount: 0,
-        callsTodayDate: '',
-        dialsTodayCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      });
-      existingPhones.add(e164Phone);
-      count++;
-    }
-
-    if (count > 0) {
-      await batch.commit();
-      console.log(
-        `[Outbound] Añadidos o actualizados ${count} elementos en la cola para el agente ${agentId}`,
-      );
-    }
   }
 
   async getOutboundCampaignStatus(userId: string, agentId: number) {
@@ -1017,6 +1028,11 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         errorMessage: d.errorMessage ? String(d.errorMessage) : undefined,
         updatedAt: d.updatedAt ? String(d.updatedAt) : undefined,
         notBefore: d.notBefore ? String(d.notBefore) : undefined,
+        eventAt: d.eventAt ? String(d.eventAt) : undefined,
+        source: d.source ? String(d.source) : undefined,
+        externalEventId: d.externalEventId
+          ? String(d.externalEventId)
+          : undefined,
       };
     });
 
@@ -1061,26 +1077,27 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
       agent.outboundSegmentationNotes as string | undefined;
     const segmentation = parseOutboundSegmentationNotes(segmentationNotes);
 
-    const status = await this.getOutboundCampaignStatus(userId, agentId);
+    const queueSnapshot = await this.firestore
+      .collection('outbound_queue')
+      .where('userId', '==', userId)
+      .where('agentId', '==', agentId)
+      .get();
+
     const now = new Date().toISOString();
     const batch = this.firestore.batch();
     let requeued = 0;
 
-    const notBeforeIso = computeInitialNotBeforeIso(
-      campaignKind,
-      scheduleNotes,
-      segmentationNotes,
-      new Date(),
-    );
-
-    for (const item of status.items) {
-      if (item.status !== 'failed' && item.status !== 'completed') {
+    for (const docSnap of queueSnapshot.docs) {
+      const d = docSnap.data() as Record<string, unknown>;
+      const st = String(d.status ?? '');
+      if (st !== 'failed' && st !== 'completed') {
         continue;
       }
 
-      const ref = this.firestore.collection('outbound_queue').doc(item.id);
+      const phoneNumber = String(d.phoneNumber ?? '');
+      const ref = docSnap.ref;
 
-      if (!phoneMatchesCountrySegmentation(item.phoneNumber, segmentation)) {
+      if (!phoneMatchesCountrySegmentation(phoneNumber, segmentation)) {
         batch.update(ref, {
           status: 'failed',
           errorMessage:
@@ -1089,6 +1106,52 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         });
         continue;
       }
+
+      const contactMeta = {
+        contactTicket:
+          d.contactTicket !== undefined && d.contactTicket !== null
+            ? Number(d.contactTicket)
+            : undefined,
+        customerState: d.customerState != null ? String(d.customerState) : undefined,
+        cartTotal:
+          d.cartTotal !== undefined && d.cartTotal !== null
+            ? Number(d.cartTotal)
+            : undefined,
+        cartItemCount:
+          d.cartItemCount !== undefined && d.cartItemCount !== null
+            ? Number(d.cartItemCount)
+            : undefined,
+        productHandle:
+          d.productHandle != null ? String(d.productHandle) : undefined,
+      };
+
+      const segEval = evaluateOutboundSegmentationForContact(
+        campaignKind,
+        segmentationNotes,
+        contactMeta,
+      );
+      if (!segEval.ok) {
+        batch.update(ref, {
+          status: 'failed',
+          errorMessage: segEval.reason ?? 'Segmentación no cumplida.',
+          updatedAt: now,
+        });
+        continue;
+      }
+
+      const eventAtIso =
+        d.eventAt != null && String(d.eventAt).trim()
+          ? String(d.eventAt).trim()
+          : null;
+      const notBeforeIso = computeEnqueueNotBeforeIso(
+        campaignKind,
+        scheduleNotes,
+        segmentationNotes,
+        {
+          referenceUtc: new Date(),
+          eventAtIso,
+        },
+      );
 
       batch.update(ref, {
         status: 'pending',
@@ -1142,6 +1205,11 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         );
       }
 
+      const removedAgent = agentsArray[agentIndex];
+      const removedIngress = removedAgent?.outboundIngressSecret as
+        | string
+        | undefined;
+
       // Eliminar agente del array
       agentsArray.splice(agentIndex, 1);
 
@@ -1163,6 +1231,10 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         },
         { merge: true },
       );
+
+      if (removedIngress?.trim()) {
+        await this.deleteOutboundIngressKeyDoc(removedIngress.trim());
+      }
 
       try {
         await this.webhookActionsService.deleteAllForAgent(userId, agentId);
@@ -1187,5 +1259,118 @@ Genera las instrucciones completas rellenando la plantilla con todo el contexto 
         `Error al eliminar el agente: ${(error as Error).message}`,
       );
     }
+  }
+
+  private async writeOutboundIngressKeyDoc(
+    secret: string,
+    userId: string,
+    agentId: number,
+  ): Promise<void> {
+    await this.firestore.collection('outbound_ingress_keys').doc(secret).set({
+      userId,
+      agentId,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  private async deleteOutboundIngressKeyDoc(secret: string): Promise<void> {
+    try {
+      await this.firestore.collection('outbound_ingress_keys').doc(secret).delete();
+    } catch (e) {
+      console.warn('[OutboundIngress] No se pudo borrar la clave de ingreso:', e);
+    }
+  }
+
+  async ingestOutboundLeadFromWebhook(
+    secretKey: string,
+    dto: OutboundIngressLeadDto,
+  ): Promise<void> {
+    const keySnap = await this.firestore
+      .collection('outbound_ingress_keys')
+      .doc(secretKey)
+      .get();
+    if (!keySnap.exists) {
+      throw new UnauthorizedException('Clave inválida');
+    }
+    const kd = keySnap.data() as { userId?: string; agentId?: number };
+    const userId = String(kd.userId ?? '');
+    const agentId = Number(kd.agentId ?? 0);
+    if (!userId || !agentId) {
+      throw new UnauthorizedException('Clave inválida');
+    }
+
+    const userSnap = await this.firestore.collection('users').doc(userId).get();
+    if (!userSnap.exists) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+    const userData = userSnap.data() as Record<string, unknown>;
+    const agents =
+      (userData.agents as Array<Record<string, unknown>>) || [];
+    const agent = agents.find((a) => Number(a.agentId) === agentId);
+    if (!agent || agent.type !== 'outbound') {
+      throw new BadRequestException('Agente no válido');
+    }
+
+    const row: OutboundQueueLeadInput = {
+      phone: dto.phone,
+      eventAt: dto.eventAt ?? null,
+      externalEventId: dto.externalEventId ?? null,
+      contactTicket:
+        dto.contactTicket !== undefined ? dto.contactTicket : null,
+      customerState: dto.customerState ?? null,
+      cartTotal: dto.cartTotal !== undefined ? dto.cartTotal : null,
+      cartItemCount:
+        dto.cartItemCount !== undefined ? dto.cartItemCount : null,
+      productHandle: dto.productHandle ?? null,
+    };
+
+    await this.outboundQueueService.syncQueue(
+      userId,
+      agentId,
+      [],
+      [row],
+      {
+        outboundCampaignKind: agent.outboundCampaignKind as string | undefined,
+        outboundScheduleCampaignNotes:
+          agent.outboundScheduleCampaignNotes as string | undefined,
+        outboundSegmentationNotes:
+          agent.outboundSegmentationNotes as string | undefined,
+      },
+      'make',
+    );
+  }
+
+  async getOutboundMakeIngressMetadata(
+    userId: string,
+    agentId: number,
+  ): Promise<{ webhookUrl: string; secret: string }> {
+    const userSnap = await this.firestore.collection('users').doc(userId).get();
+    if (!userSnap.exists) {
+      throw new NotFoundException('Usuario no encontrado.');
+    }
+    const agents =
+      ((userSnap.data() as Record<string, unknown>).agents as Array<
+        Record<string, unknown>
+      >) || [];
+    const agent = agents.find((a) => Number(a.agentId) === agentId);
+    if (!agent || agent.type !== 'outbound') {
+      throw new BadRequestException('El agente no es outbound.');
+    }
+    const secret = String(agent.outboundIngressSecret ?? '').trim();
+    if (!secret) {
+      throw new BadRequestException(
+        'Este agente aún no tiene clave Make. Guarda el agente otra vez para generarla.',
+      );
+    }
+    const base = process.env.APP_URL?.trim()?.replace(/\/+$/, '') ?? '';
+    if (!base) {
+      throw new BadRequestException(
+        'APP_URL no está configurada en el servidor.',
+      );
+    }
+    return {
+      webhookUrl: `${base}/webhooks/outbound/leads`,
+      secret,
+    };
   }
 }

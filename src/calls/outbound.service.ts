@@ -17,6 +17,7 @@ import {
   scheduleRetryNotBeforeLuxon,
   nextDayWindowOpenLuxon,
 } from './outbound-scheduling.util';
+import { evaluateOutboundSegmentationForContact } from './outbound-segmentation-eval.util';
 
 @Injectable()
 export class OutboundService {
@@ -87,6 +88,14 @@ export class OutboundService {
         continue;
       }
 
+      if (String(agent.state ?? 'Activo') !== 'Activo') {
+        await queueRef.doc(docId).update({
+          notBefore: nowLuxon.plus({ hours: 1 }).toUTC().toISO()!,
+          updatedAt: nowLuxon.toUTC().toISO()!,
+        });
+        continue;
+      }
+
       const schedule = parseOutboundScheduleNotes(
         agent.outboundScheduleCampaignNotes as string | undefined,
       );
@@ -114,6 +123,43 @@ export class OutboundService {
           status: 'failed',
           errorMessage:
             'Segmentación: el número no coincide con el país configurado para la campaña.',
+          updatedAt: nowLuxon.toUTC().toISO()!,
+        });
+        continue;
+      }
+
+      const campaignKind = String(
+        data.campaignKind ?? agent.outboundCampaignKind ?? '',
+      );
+      const segNotes =
+        agent.outboundSegmentationNotes as string | undefined;
+      const contactMeta = {
+        contactTicket:
+          data.contactTicket !== undefined && data.contactTicket !== null
+            ? Number(data.contactTicket)
+            : undefined,
+        customerState:
+          data.customerState != null ? String(data.customerState) : undefined,
+        cartTotal:
+          data.cartTotal !== undefined && data.cartTotal !== null
+            ? Number(data.cartTotal)
+            : undefined,
+        cartItemCount:
+          data.cartItemCount !== undefined && data.cartItemCount !== null
+            ? Number(data.cartItemCount)
+            : undefined,
+        productHandle:
+          data.productHandle != null ? String(data.productHandle) : undefined,
+      };
+      const segEval = evaluateOutboundSegmentationForContact(
+        campaignKind,
+        segNotes,
+        contactMeta,
+      );
+      if (!segEval.ok) {
+        await queueRef.doc(docId).update({
+          status: 'failed',
+          errorMessage: segEval.reason ?? 'Segmentación no cumplida.',
           updatedAt: nowLuxon.toUTC().toISO()!,
         });
         continue;

@@ -3,7 +3,10 @@ import {
   BadRequestException,
   UnauthorizedException,
   InternalServerErrorException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
+import { OutboundQueueService } from '../agents/outbound-queue.service';
 import axios, { AxiosInstance } from 'axios';
 import { getFirestore } from '../firebase/firebase.config';
 import * as admin from 'firebase-admin';
@@ -158,7 +161,11 @@ export class ShopifyService {
   private readonly firestore = getFirestore();
   private readonly apiVersion = '2026-01';
 
-  constructor(private readonly cryptoService: CryptoService) {}
+  constructor(
+    private readonly cryptoService: CryptoService,
+    @Inject(forwardRef(() => OutboundQueueService))
+    private readonly outboundQueueService: OutboundQueueService,
+  ) {}
 
   /**
    * URL base pública del API (OAuth `redirect_uri`, webhooks). Prioriza `APP_URL` siempre que esté definida,
@@ -599,6 +606,14 @@ export class ShopifyService {
         (err) => {
           console.error(
             `Error al registrar webhook de desinstalación para ${normalizedShop}:`,
+            err,
+          );
+        },
+      );
+      this.registerCheckoutEnqueueWebhook(normalizedShop, accessToken).catch(
+        (err) => {
+          console.error(
+            `Error al registrar webhook checkouts/update para ${normalizedShop}:`,
             err,
           );
         },
@@ -1139,6 +1154,49 @@ export class ShopifyService {
     }
   }
 
+  private async registerCheckoutEnqueueWebhook(
+    shop: string,
+    accessToken: string,
+  ): Promise<void> {
+    try {
+      const baseUrl = this.getPublicApiBaseUrl();
+      const webhookUrl = `${baseUrl}/shopify/webhooks`;
+
+      await axios.post(
+        `https://${shop}/admin/api/2026-01/webhooks.json`,
+        {
+          webhook: {
+            topic: 'checkouts/update',
+            address: webhookUrl,
+            format: 'json',
+          },
+        },
+        {
+          headers: {
+            'X-Shopify-Access-Token': accessToken,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      console.log(`✅ Webhook checkouts/update registrado en ${shop}`);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        const responseData = error.response.data;
+        if (
+          error.response.status === 422 &&
+          responseData?.errors?.address?.includes('has already been taken')
+        ) {
+          console.log(
+            `ℹ️ Webhook checkouts/update ya estaba registrado en ${shop}`,
+          );
+          return;
+        }
+      }
+      throw error;
+    }
+  }
+
   /**
    * Verifica de manera atómica si un webhook ya fue procesado.
    * Evita condiciones de carrera en ráfagas de reintentos usando create().
@@ -1413,6 +1471,169 @@ export class ShopifyService {
    * Limpia sesiones OAuth expiradas (método de mantenimiento)
    * Puede ser llamado periódicamente por un cron job
    */
+  static normalizeWebhookShopDomain(domain: string): string {
+    const trimmed = domain.trim();
+    if (!trimmed) return '';
+    return trimmed
+      .replace(/^https?:\/\//i, '')
+      .split('/')[0]
+      .replace(/\.+$/, '')
+      .toLowerCase();
+  }
+
+  private extractCheckoutPhone(
+    checkout: Record<string, unknown>,
+  ): string | undefined {
+    const top = checkout.phone;
+    if (typeof top === 'string' && top.trim()) return top.trim();
+    const ship = checkout.shipping_address as
+      | Record<string, unknown>
+      | undefined;
+    const bill = checkout.billing_address as
+      | Record<string, unknown>
+      | undefined;
+    for (const addr of [ship, bill]) {
+      if (!addr) continue;
+      const p = addr.phone;
+      if (typeof p === 'string' && p.trim()) return p.trim();
+    }
+    return undefined;
+  }
+
+  /** Usa topic `checkouts/update` como señal de abandono cuando el checkout sigue abierto y hay teléfono. */
+  async handleOutboundCheckoutWebhook(
+    shopDomainHeader: string,
+    checkoutPayload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const normalizedShop =
+        ShopifyService.normalizeWebhookShopDomain(shopDomainHeader);
+      if (!normalizedShop) {
+        return;
+      }
+
+      const completedRaw = checkoutPayload.completed_at;
+      if (
+        completedRaw !== null &&
+        completedRaw !== undefined &&
+        String(completedRaw).trim() !== ''
+      ) {
+        return;
+      }
+
+      const phoneRaw = this.extractCheckoutPhone(checkoutPayload);
+      if (!phoneRaw?.trim()) {
+        return;
+      }
+
+      const externalEventId =
+        String(
+          checkoutPayload.token ??
+            checkoutPayload.id ??
+            checkoutPayload.checkout_id ??
+            '',
+        ).trim() || undefined;
+
+      const eventAtIso =
+        (typeof checkoutPayload.updated_at === 'string' &&
+          checkoutPayload.updated_at) ||
+        (typeof checkoutPayload.created_at === 'string' &&
+          checkoutPayload.created_at) ||
+        new Date().toISOString();
+
+      let cartTotal: number | undefined;
+      const tp = checkoutPayload.total_price ?? checkoutPayload.subtotal_price;
+      if (typeof tp === 'string' || typeof tp === 'number') {
+        const n = parseFloat(String(tp));
+        if (Number.isFinite(n)) cartTotal = n;
+      }
+
+      const lineItems = checkoutPayload.line_items as
+        | Array<Record<string, unknown>>
+        | undefined;
+      const cartItemCount = Array.isArray(lineItems)
+        ? lineItems.length
+        : undefined;
+
+      let productHandle: string | undefined;
+      if (lineItems?.length) {
+        const sku =
+          typeof lineItems[0]?.sku === 'string'
+            ? lineItems[0].sku
+            : typeof lineItems[0]?.vendor === 'string'
+              ? (lineItems[0].vendor as string)
+              : undefined;
+        if (sku?.trim()) productHandle = sku.trim();
+      }
+
+      const storesSnap = await this.firestore
+        .collection('shopifyStores')
+        .where('shopDomain', '==', normalizedShop)
+        .limit(40)
+        .get();
+
+      for (const sdoc of storesSnap.docs) {
+        const ownerUserId = sdoc.data()?.ownerUserId as string | undefined;
+        if (!ownerUserId) continue;
+
+        const userSnap = await this.firestore
+          .collection('users')
+          .doc(ownerUserId)
+          .get();
+        if (!userSnap.exists) continue;
+        const userData = userSnap.data() as Record<string, unknown>;
+        const agents =
+          (userData.agents as Array<Record<string, unknown>>) || [];
+
+        for (const agent of agents) {
+          if (agent.type !== 'outbound') continue;
+          if ((agent.outboundCampaignKind as string) !== 'abandonedCart') {
+            continue;
+          }
+          const rawDom = agent.shopifyDomain as string | undefined;
+          const agentShop = rawDom
+            ? ShopifyService.normalizeWebhookShopDomain(rawDom)
+            : '';
+          if (!agentShop || agentShop !== normalizedShop) continue;
+
+          const agentId = Number(agent.agentId ?? 0);
+          if (!agentId) continue;
+
+          await this.outboundQueueService.syncQueue(
+            ownerUserId,
+            agentId,
+            [],
+            [
+              {
+                phone: phoneRaw,
+                eventAt: eventAtIso,
+                externalEventId: externalEventId ?? null,
+                contactTicket:
+                  cartTotal !== undefined ? cartTotal : null,
+                customerState: null,
+                cartTotal: cartTotal !== undefined ? cartTotal : null,
+                cartItemCount: cartItemCount !== undefined ? cartItemCount : null,
+                productHandle: productHandle ?? null,
+              },
+            ],
+            {
+              outboundCampaignKind: agent.outboundCampaignKind as
+                | string
+                | undefined,
+              outboundScheduleCampaignNotes:
+                agent.outboundScheduleCampaignNotes as string | undefined,
+              outboundSegmentationNotes:
+                agent.outboundSegmentationNotes as string | undefined,
+            },
+            'shopify',
+          );
+        }
+      }
+    } catch (e) {
+      console.error('[Shopify outbound] checkout webhook:', e);
+    }
+  }
+
   async cleanupExpiredSessions(): Promise<number> {
     try {
       const now = admin.firestore.Timestamp.now();

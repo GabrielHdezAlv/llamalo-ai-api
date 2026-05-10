@@ -42,6 +42,48 @@ export class PhoneNumberDto {
   number: number;
 }
 
+export class OutboundQueueLeadDto {
+  @ApiProperty({ example: '+34600111222' })
+  @IsNotEmpty()
+  @IsString()
+  phone: string;
+
+  @ApiProperty({ required: false, description: 'ISO 8601 del evento (abandono, compra, etc.)' })
+  @IsOptional()
+  @IsString()
+  eventAt?: string;
+
+  @ApiProperty({ required: false, description: 'Id externo para idempotencia (checkout, etc.)' })
+  @IsOptional()
+  @IsString()
+  externalEventId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  contactTicket?: number;
+
+  @ApiProperty({ required: false, enum: ['new', 'recurring'] })
+  @IsOptional()
+  @IsString()
+  customerState?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  cartTotal?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  cartItemCount?: number;
+
+  @ApiProperty({ required: false, description: 'Handle o id de producto para reglas de segmentación' })
+  @IsOptional()
+  @IsString()
+  productHandle?: string;
+}
+
 export class OutboundCampaignScriptsDto {
   @ApiProperty({ description: 'Script para carrito abandonado', required: false })
   @IsOptional()
@@ -274,6 +316,18 @@ export class SetAgentConfigDto {
   @IsArray()
   @IsString({ each: true })
   outboundImportCsvPhones?: string[];
+
+  @ApiProperty({
+    description:
+      'Contactos enriquecidos para la cola outbound (opcional; alternativa a sólo outboundImportCsvPhones)',
+    required: false,
+    type: () => [OutboundQueueLeadDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OutboundQueueLeadDto)
+  outboundQueueLeads?: OutboundQueueLeadDto[];
 
   @ApiProperty({
     description: 'Notas de segmentación para la campaña',
