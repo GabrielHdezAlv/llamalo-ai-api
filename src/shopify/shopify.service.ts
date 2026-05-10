@@ -1481,23 +1481,42 @@ export class ShopifyService {
       .toLowerCase();
   }
 
+  /** Solo para logs: no exponer el número completo. */
+  private maskPhoneForLog(raw: string): string {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length <= 2) return '****';
+    return `…${digits.slice(-4)}`;
+  }
+
   private extractCheckoutPhone(
     checkout: Record<string, unknown>,
-  ): string | undefined {
+  ): {
+    phone: string | undefined;
+    source: 'checkout' | 'shipping' | 'billing' | 'none';
+  } {
     const top = checkout.phone;
-    if (typeof top === 'string' && top.trim()) return top.trim();
+    if (typeof top === 'string' && top.trim()) {
+      return { phone: top.trim(), source: 'checkout' };
+    }
     const ship = checkout.shipping_address as
       | Record<string, unknown>
       | undefined;
     const bill = checkout.billing_address as
       | Record<string, unknown>
       | undefined;
-    for (const addr of [ship, bill]) {
-      if (!addr) continue;
-      const p = addr.phone;
-      if (typeof p === 'string' && p.trim()) return p.trim();
+    if (ship) {
+      const p = ship.phone;
+      if (typeof p === 'string' && p.trim()) {
+        return { phone: p.trim(), source: 'shipping' };
+      }
     }
-    return undefined;
+    if (bill) {
+      const p = bill.phone;
+      if (typeof p === 'string' && p.trim()) {
+        return { phone: p.trim(), source: 'billing' };
+      }
+    }
+    return { phone: undefined, source: 'none' };
   }
 
   /** Usa topic `checkouts/update` como señal de abandono cuando el checkout sigue abierto y hay teléfono. */
@@ -1509,6 +1528,9 @@ export class ShopifyService {
       const normalizedShop =
         ShopifyService.normalizeWebhookShopDomain(shopDomainHeader);
       if (!normalizedShop) {
+        console.log(
+          '[Shopify outbound] checkouts/update: dominio de tienda vacío o inválido; se ignora.',
+        );
         return;
       }
 
@@ -1518,13 +1540,46 @@ export class ShopifyService {
         completedRaw !== undefined &&
         String(completedRaw).trim() !== ''
       ) {
+        console.log(
+          `[Shopify outbound] checkouts/update: checkout completado (shop=${normalizedShop}); no se trata como abandono.`,
+        );
         return;
       }
 
-      const phoneRaw = this.extractCheckoutPhone(checkoutPayload);
+      const checkoutTokenHint = String(
+        checkoutPayload.token ??
+          checkoutPayload.id ??
+          checkoutPayload.checkout_id ??
+          '',
+      ).slice(0, 20);
+
+      const extracted = this.extractCheckoutPhone(checkoutPayload);
+      const phoneRaw = extracted.phone;
       if (!phoneRaw?.trim()) {
+        const ship = checkoutPayload.shipping_address as
+          | Record<string, unknown>
+          | undefined;
+        const bill = checkoutPayload.billing_address as
+          | Record<string, unknown>
+          | undefined;
+        console.log(
+          `[Shopify outbound] checkouts/update: sin teléfono en payload (shop=${normalizedShop}, token~=${checkoutTokenHint || 'n/a'}).`,
+          {
+            hasCheckoutRootPhone:
+              typeof checkoutPayload.phone === 'string' &&
+              !!checkoutPayload.phone.trim(),
+            hasShippingPhone:
+              typeof ship?.phone === 'string' && !!String(ship.phone).trim(),
+            hasBillingPhone:
+              typeof bill?.phone === 'string' && !!String(bill.phone).trim(),
+          },
+        );
         return;
       }
+
+      console.log(
+        `[Shopify outbound] checkouts/update: teléfono obtenido correctamente (shop=${normalizedShop}, origen=${extracted.source}, número=${this.maskPhoneForLog(phoneRaw)})`,
+      );
 
       const externalEventId =
         String(
@@ -1571,6 +1626,8 @@ export class ShopifyService {
         .where('shopDomain', '==', normalizedShop)
         .limit(40)
         .get();
+
+      let abandonedCartEnqueueCalls = 0;
 
       for (const sdoc of storesSnap.docs) {
         const ownerUserId = sdoc.data()?.ownerUserId as string | undefined;
@@ -1627,7 +1684,14 @@ export class ShopifyService {
             },
             'shopify',
           );
+          abandonedCartEnqueueCalls++;
         }
+      }
+
+      if (abandonedCartEnqueueCalls === 0) {
+        console.log(
+          `[Shopify outbound] checkouts/update: teléfono obtenido pero no se llamó a la cola (shop=${normalizedShop}, tiendasFirestore=${storesSnap.size}). Revisa agente outbound abandonedCart y shopifyDomain.`,
+        );
       }
     } catch (e) {
       console.error('[Shopify outbound] checkout webhook:', e);
