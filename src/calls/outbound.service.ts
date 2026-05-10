@@ -28,7 +28,6 @@ export class OutboundService {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async handleOutboundQueue() {
-    this.logger.log('Revisando cola de llamadas outbound...');
     const queueRef = this.firestore.collection('outbound_queue');
     const snapshot = await queueRef
       .where('status', '==', 'pending')
@@ -201,8 +200,7 @@ export class OutboundService {
         );
       } catch (error) {
         this.logger.error(
-          `Error procesando llamada a ${item.data.phoneNumber}:`,
-          error,
+          `Error procesando llamada a ${item.data.phoneNumber}: ${error instanceof Error ? error.message : String(error)}`,
         );
         await this.applyOutboundFailure(
           item.docId,

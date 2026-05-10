@@ -168,6 +168,60 @@ export class ShopifyService {
   ) {}
 
   /**
+   * Evita volcar en logs el objeto completo de Axios (ClientRequest, socket, etc.).
+   */
+  private formatHttpErrorForLog(err: unknown): string {
+    if (axios.isAxiosError(err)) {
+      const st = err.response?.status;
+      let body = '';
+      try {
+        const data = err.response?.data;
+        body =
+          typeof data === 'string'
+            ? data
+            : data != null
+              ? JSON.stringify(data)
+              : '';
+      } catch {
+        body = '[cuerpo no serializable]';
+      }
+      if (body.length > 900) {
+        body = `${body.slice(0, 900)}…`;
+      }
+      return `HTTP ${st ?? '?'} ${err.message} | ${body}`;
+    }
+    if (err instanceof Error) {
+      return err.message;
+    }
+    return String(err);
+  }
+
+  /**
+   * 422 cuando la misma URL ya está registrada para ese topic en Shopify.
+   * Nota: `errors.address` es un array de strings; hay que comprobar cada elemento.
+   */
+  private isWebhookAddressAlreadyTaken(
+    status: number,
+    responseData: unknown,
+  ): boolean {
+    if (status !== 422) {
+      return false;
+    }
+    const errors = (responseData as { errors?: { address?: unknown } } | null)
+      ?.errors;
+    const addr = errors?.address;
+    const matches = (text: string) =>
+      text.toLowerCase().includes('already been taken');
+    if (Array.isArray(addr)) {
+      return addr.some((msg) => matches(String(msg)));
+    }
+    if (typeof addr === 'string') {
+      return matches(addr);
+    }
+    return false;
+  }
+
+  /**
    * URL base pública del API (OAuth `redirect_uri`, webhooks). Prioriza `APP_URL` siempre que esté definida,
    * con o sin NODE_ENV=production (cada despliegue Render dev/preprod/prod debe tener su `APP_URL`).
    * Debe coincidir carácter a carácter con "Allowed redirection URL(s)" en Shopify Partners.
@@ -606,7 +660,7 @@ export class ShopifyService {
         (err) => {
           console.error(
             `Error al registrar webhook de desinstalación para ${normalizedShop}:`,
-            err,
+            this.formatHttpErrorForLog(err),
           );
         },
       );
@@ -614,7 +668,7 @@ export class ShopifyService {
         (err) => {
           console.error(
             `Error al registrar webhook checkouts/update para ${normalizedShop}:`,
-            err,
+            this.formatHttpErrorForLog(err),
           );
         },
       );
@@ -1129,26 +1183,18 @@ export class ShopifyService {
       console.log(`✅ Webhook app/uninstalled registrado en ${shop}`);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
-        // Ignorar si el webhook ya existe (Shopify devuelve 422 con un error específico)
         const responseData = error.response.data;
         if (
-          error.response.status === 422 &&
-          responseData?.errors?.address?.includes('has already been taken')
+          this.isWebhookAddressAlreadyTaken(
+            error.response.status,
+            responseData,
+          )
         ) {
           console.log(
             `ℹ️ Webhook app/uninstalled ya estaba registrado en ${shop}`,
           );
           return;
         }
-        console.error(
-          `Error al registrar webhook en ${shop}:`,
-          JSON.stringify(responseData),
-        );
-      } else {
-        console.error(
-          `Error inesperado al registrar webhook en ${shop}:`,
-          (error as Error).message,
-        );
       }
       throw error;
     }
@@ -1184,8 +1230,10 @@ export class ShopifyService {
       if (axios.isAxiosError(error) && error.response) {
         const responseData = error.response.data;
         if (
-          error.response.status === 422 &&
-          responseData?.errors?.address?.includes('has already been taken')
+          this.isWebhookAddressAlreadyTaken(
+            error.response.status,
+            responseData,
+          )
         ) {
           console.log(
             `ℹ️ Webhook checkouts/update ya estaba registrado en ${shop}`,
