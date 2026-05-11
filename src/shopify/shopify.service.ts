@@ -1615,13 +1615,32 @@ export class ShopifyService {
     return { phone: undefined, source: 'none' };
   }
 
+  /** Quita comillas simples típicas de exportes CSV de Shopify. */
+  private normalizePhoneRaw(raw: string): string {
+    return raw
+      .trim()
+      .replace(/^['\u2019]+\s*/, '')
+      .replace(/\s*['\u2019]+$/, '')
+      .trim();
+  }
+
+  private pickPhoneString(v: unknown): string | undefined {
+    if (typeof v !== 'string') return undefined;
+    const t = this.normalizePhoneRaw(v);
+    return t || undefined;
+  }
+
+  /**
+   * Teléfono del pedido: raíz, envío, facturación, cliente o dirección por defecto del cliente.
+   * Los webhooks a veces envían un cuerpo reducido sin direcciones; entonces hace falta GET /orders/:id.
+   */
   private extractOrderPhone(order: Record<string, unknown>): {
     phone: string | undefined;
-    source: 'order' | 'shipping' | 'billing' | 'none';
+    source: string;
   } {
-    const top = order.phone;
-    if (typeof top === 'string' && top.trim()) {
-      return { phone: top.trim(), source: 'order' };
+    const top = this.pickPhoneString(order.phone);
+    if (top) {
+      return { phone: top, source: 'order' };
     }
     const ship = order.shipping_address as
       | Record<string, unknown>
@@ -1630,18 +1649,97 @@ export class ShopifyService {
       | Record<string, unknown>
       | undefined;
     if (ship) {
-      const p = ship.phone;
-      if (typeof p === 'string' && p.trim()) {
-        return { phone: p.trim(), source: 'shipping' };
+      const p = this.pickPhoneString(ship.phone);
+      if (p) {
+        return { phone: p, source: 'shipping' };
       }
     }
     if (bill) {
-      const p = bill.phone;
-      if (typeof p === 'string' && p.trim()) {
-        return { phone: p.trim(), source: 'billing' };
+      const p = this.pickPhoneString(bill.phone);
+      if (p) {
+        return { phone: p, source: 'billing' };
+      }
+    }
+    const customer = order.customer as Record<string, unknown> | undefined;
+    if (customer) {
+      const cp = this.pickPhoneString(customer.phone);
+      if (cp) {
+        return { phone: cp, source: 'customer' };
+      }
+      const def = customer.default_address as
+        | Record<string, unknown>
+        | undefined;
+      const dp = this.pickPhoneString(def?.phone);
+      if (dp) {
+        return { phone: dp, source: 'customer_default_address' };
       }
     }
     return { phone: undefined, source: 'none' };
+  }
+
+  /** Pedido completo REST (útil cuando el webhook o el listado vienen sin teléfono). */
+  private async fetchShopifyOrderById(
+    normalizedShop: string,
+    orderId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const storesSnap = await this.firestore
+      .collection('shopifyStores')
+      .where('shopDomain', '==', normalizedShop)
+      .limit(1)
+      .get();
+    if (storesSnap.empty) {
+      return null;
+    }
+    const ownerUserId = storesSnap.docs[0].data()?.ownerUserId as
+      | string
+      | undefined;
+    if (!ownerUserId) {
+      return null;
+    }
+    try {
+      const token = await this.getAccessToken(ownerUserId, normalizedShop);
+      const client = this.createShopifyClient(normalizedShop, token);
+      const res = await client.get<{ order?: Record<string, unknown> }>(
+        `/orders/${encodeURIComponent(orderId)}.json`,
+      );
+      return (res.data.order as Record<string, unknown>) ?? null;
+    } catch (e) {
+      console.warn(
+        `[Shopify outbound] No se pudo cargar pedido ${orderId} en ${normalizedShop}:`,
+        this.formatHttpErrorForLog(e),
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Si el payload no trae teléfono, intenta GET /orders/:id.json y fusiona campos.
+   */
+  private async resolveOrderPayloadWithPhoneFallback(
+    normalizedShop: string,
+    order: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (this.extractOrderPhone(order).phone) {
+      return order;
+    }
+    const idRaw = order.id;
+    if (idRaw == null || String(idRaw).trim() === '') {
+      return order;
+    }
+    const full = await this.fetchShopifyOrderById(
+      normalizedShop,
+      String(idRaw),
+    );
+    if (!full) {
+      return order;
+    }
+    const merged = { ...order, ...full } as Record<string, unknown>;
+    if (!this.extractOrderPhone(merged).phone) {
+      console.log(
+        `[Shopify outbound] Pedido ${idRaw}: payload ampliado sin teléfono (revisar datos protegidos de cliente en Partners / consentimientos de la tienda).`,
+      );
+    }
+    return merged;
   }
 
   /**
@@ -1809,17 +1907,22 @@ export class ShopifyService {
         return;
       }
 
-      const lead = this.buildOutboundLeadFromOrder(orderPayload, 'processed');
+      const merged = await this.resolveOrderPayloadWithPhoneFallback(
+        normalizedShop,
+        orderPayload,
+      );
+      const phoneMeta = this.extractOrderPhone(merged);
+      const lead = this.buildOutboundLeadFromOrder(merged, 'processed');
       if (!lead) {
-        const oid = String(orderPayload.id ?? '').slice(0, 12);
+        const oid = String(merged.id ?? '').slice(0, 12);
         console.log(
-          `[Shopify outbound] orders/paid: sin teléfono en pedido (shop=${normalizedShop}, order~=${oid || 'n/a'}).`,
+          `[Shopify outbound] orders/paid: sin teléfono tras webhook+GET pedido (shop=${normalizedShop}, order~=${oid || 'n/a'}, últimaFuente=${phoneMeta.source}).`,
         );
         return;
       }
 
       console.log(
-        `[Shopify outbound] orders/paid: teléfono OK (shop=${normalizedShop}, origen pedido, número=${this.maskPhoneForLog(lead.phone)})`,
+        `[Shopify outbound] orders/paid: teléfono OK (shop=${normalizedShop}, origen=${phoneMeta.source}, número=${this.maskPhoneForLog(lead.phone)})`,
       );
 
       const n = await this.enqueueShopifyOutboundForCampaignKinds(
@@ -1859,17 +1962,22 @@ export class ShopifyService {
         return;
       }
 
-      const lead = this.buildOutboundLeadFromOrder(orderPayload, 'created');
+      const merged = await this.resolveOrderPayloadWithPhoneFallback(
+        normalizedShop,
+        orderPayload,
+      );
+      const phoneMeta = this.extractOrderPhone(merged);
+      const lead = this.buildOutboundLeadFromOrder(merged, 'created');
       if (!lead) {
-        const oid = String(orderPayload.id ?? '').slice(0, 12);
+        const oid = String(merged.id ?? '').slice(0, 12);
         console.log(
-          `[Shopify outbound] orders/create: sin teléfono (shop=${normalizedShop}, order~=${oid || 'n/a'}, financial=${financial}).`,
+          `[Shopify outbound] orders/create: sin teléfono tras webhook+GET (shop=${normalizedShop}, order~=${oid || 'n/a'}, financial=${financial}, últimaFuente=${phoneMeta.source}).`,
         );
         return;
       }
 
       console.log(
-        `[Shopify outbound] orders/create (pendiente): teléfono OK (shop=${normalizedShop}, financial=${financial}, número=${this.maskPhoneForLog(lead.phone)})`,
+        `[Shopify outbound] orders/create (pendiente): teléfono OK (shop=${normalizedShop}, financial=${financial}, origen=${phoneMeta.source}, número=${this.maskPhoneForLog(lead.phone)})`,
       );
 
       const n = await this.enqueueShopifyOutboundForCampaignKinds(
@@ -1956,10 +2064,14 @@ export class ShopifyService {
           }
           scanned++;
 
-          const financial = String(order.financial_status ?? '').toLowerCase();
+          const merged = await this.resolveOrderPayloadWithPhoneFallback(
+            normalizedShop,
+            order,
+          );
+          const financial = String(merged.financial_status ?? '').toLowerCase();
 
           if (financial === 'paid') {
-            const lead = this.buildOutboundLeadFromOrder(order, 'processed');
+            const lead = this.buildOutboundLeadFromOrder(merged, 'processed');
             if (!lead) {
               skippedNoPhone++;
               continue;
@@ -1971,7 +2083,7 @@ export class ShopifyService {
                 lead,
               );
           } else if (ORDER_FINANCIAL_PENDING_REMINDER.has(financial)) {
-            const lead = this.buildOutboundLeadFromOrder(order, 'created');
+            const lead = this.buildOutboundLeadFromOrder(merged, 'created');
             if (!lead) {
               skippedNoPhone++;
               continue;
