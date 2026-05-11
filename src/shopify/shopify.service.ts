@@ -1590,10 +1590,6 @@ export class ShopifyService {
     phone: string | undefined;
     source: 'checkout' | 'shipping' | 'billing' | 'none';
   } {
-    const top = checkout.phone;
-    if (typeof top === 'string' && top.trim()) {
-      return { phone: top.trim(), source: 'checkout' };
-    }
     const ship = checkout.shipping_address as
       | Record<string, unknown>
       | undefined;
@@ -1611,6 +1607,10 @@ export class ShopifyService {
       if (typeof p === 'string' && p.trim()) {
         return { phone: p.trim(), source: 'billing' };
       }
+    }
+    const top = checkout.phone;
+    if (typeof top === 'string' && top.trim()) {
+      return { phone: top.trim(), source: 'checkout' };
     }
     return { phone: undefined, source: 'none' };
   }
@@ -1631,17 +1631,14 @@ export class ShopifyService {
   }
 
   /**
-   * Teléfono del pedido: raíz, envío, facturación, cliente o dirección por defecto del cliente.
+   * Teléfono del pedido: envío, facturación, raíz, cliente o dirección por defecto del cliente.
    * Los webhooks a veces envían un cuerpo reducido sin direcciones; entonces hace falta GET /orders/:id.
    */
   private extractOrderPhone(order: Record<string, unknown>): {
     phone: string | undefined;
     source: string;
   } {
-    const top = this.pickPhoneString(order.phone);
-    if (top) {
-      return { phone: top, source: 'order' };
-    }
+    // Prioridad alineada con integraciones típicas (envío suele llevar el móvil de contacto).
     const ship = order.shipping_address as
       | Record<string, unknown>
       | undefined;
@@ -1659,6 +1656,10 @@ export class ShopifyService {
       if (p) {
         return { phone: p, source: 'billing' };
       }
+    }
+    const top = this.pickPhoneString(order.phone);
+    if (top) {
+      return { phone: top, source: 'order' };
     }
     const customer = order.customer as Record<string, unknown> | undefined;
     if (customer) {
