@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Post,
@@ -18,6 +19,7 @@ import { PlanLimitsService } from '../plan-limits/plan-limits.service';
 import {
   ApiTags,
   ApiBearerAuth,
+  ApiBody,
   ApiOperation,
   ApiResponse,
   ApiQuery,
@@ -42,6 +44,7 @@ import { ShopifyProductsResponseDto } from './dto/shopify-products-response.dto'
 import { ShopifyOrdersResponseDto } from './dto/shopify-orders-response.dto';
 import { ShopifyAuthResponseDto } from './dto/shopify-auth-response.dto';
 import { ShopifyMasterDataResponseDto } from './dto/shopify-master-data-response.dto';
+import { ShopifySyncOutboundDto } from './dto/shopify-sync-outbound.dto';
 
 @ApiTags('shopify')
 @Controller('shopify')
@@ -513,6 +516,69 @@ export class ShopifyController {
     }
 
     return this.shopifyService.getMasterData(userId, shop);
+  }
+
+  @Post('outbound/sync-historical')
+  @UseGuards(FirebaseAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Sincronizar pedidos históricos de Shopify a la cola outbound',
+    description:
+      'Lista pedidos de la tienda desde hace N días (API REST, paginado) y encola contactos con origen shopify: pedidos **pagados** → agentes de encuesta de satisfacción y oferta post-compra; pedidos con **pago pendiente** → recordatorio de pago. Útil para clientes que ya compraron antes de activar webhooks. Los duplicados por pedido y agente se omiten. Puede tardar varios minutos en tiendas con muchos pedidos.',
+  })
+  @ApiQuery({
+    name: 'shop',
+    type: String,
+    example: 'llamaloai-dev.myshopify.com',
+    description: 'Dominio de la tienda Shopify',
+    required: true,
+  })
+  @ApiBody({ type: ShopifySyncOutboundDto, required: false })
+  @ApiResponse({
+    status: 200,
+    description: 'Resumen de la sincronización',
+    schema: {
+      type: 'object',
+      properties: {
+        shop: { type: 'string' },
+        sinceDays: { type: 'number' },
+        maxOrders: { type: 'number' },
+        scanned: { type: 'number' },
+        enqueuedPaidAgentCalls: { type: 'number' },
+        enqueuedPendingAgentCalls: { type: 'number' },
+        skippedNoPhone: { type: 'number' },
+        skippedFinancialOther: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Parámetros inválidos o error Shopify' })
+  @ApiResponse({ status: 401, description: 'No autenticado o tienda no conectada' })
+  async syncOutboundHistorical(
+    @GetUser('uid') userId: string,
+    @Query('shop') shop: string,
+    @Body() body: ShopifySyncOutboundDto,
+  ): Promise<{
+    shop: string;
+    sinceDays: number;
+    maxOrders: number;
+    scanned: number;
+    enqueuedPaidAgentCalls: number;
+    enqueuedPendingAgentCalls: number;
+    skippedNoPhone: number;
+    skippedFinancialOther: number;
+  }> {
+    if (!shop?.trim()) {
+      throw new BadRequestException('El parámetro shop es obligatorio');
+    }
+    return this.shopifyService.syncHistoricalOrdersToOutboundQueue(
+      userId,
+      shop.trim(),
+      {
+        sinceDays: body?.sinceDays,
+        maxOrders: body?.maxOrders,
+      },
+    );
   }
 
   @Delete('connection')

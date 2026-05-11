@@ -691,6 +691,17 @@ export class ShopifyService {
           );
         },
       );
+
+      /** Histórico de pedidos → cola outbound (no solo webhooks en tiempo real). */
+      void this.syncHistoricalOrdersToOutboundQueue(userId, normalizedShop, {
+        sinceDays: 365,
+        maxOrders: 3000,
+      }).catch((err) => {
+        console.error(
+          `[Shopify outbound] sync histórico post-OAuth ${normalizedShop}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      });
     } catch (error) {
       if (
         error instanceof BadRequestException ||
@@ -1874,6 +1885,145 @@ export class ShopifyService {
     } catch (e) {
       console.error('[Shopify outbound] orders/create:', e);
     }
+  }
+
+  /**
+   * Lista pedidos vía REST Admin (paginado) desde `created_at_min` y encola outbound
+   * igual que los webhooks: pagados → encuesta/post-compra; pendientes de pago → recordatorio.
+   * Sirve para **histórico** (p. ej. clientes que compraron hace semanas): los webhooks solo cubren eventos nuevos.
+   */
+  async syncHistoricalOrdersToOutboundQueue(
+    userId: string,
+    shop: string,
+    opts: { sinceDays?: number; maxOrders?: number } = {},
+  ): Promise<{
+    shop: string;
+    sinceDays: number;
+    maxOrders: number;
+    scanned: number;
+    enqueuedPaidAgentCalls: number;
+    enqueuedPendingAgentCalls: number;
+    skippedNoPhone: number;
+    skippedFinancialOther: number;
+  }> {
+    const sinceDays = Math.min(Math.max(opts.sinceDays ?? 365, 1), 730);
+    const maxOrders = Math.min(Math.max(opts.maxOrders ?? 5000, 1), 25000);
+
+    const normalizedShop = ShopifyService.normalizeWebhookShopDomain(
+      shop.replace(/^https?:\/\//i, ''),
+    );
+    if (!normalizedShop) {
+      throw new BadRequestException('Dominio de tienda inválido.');
+    }
+
+    const accessToken = await this.getAccessToken(userId, normalizedShop);
+    const client = this.createShopifyClient(normalizedShop, accessToken);
+
+    const createdAtMin = new Date(
+      Date.now() - sinceDays * 86400000,
+    ).toISOString();
+
+    let scanned = 0;
+    let enqueuedPaidAgentCalls = 0;
+    let enqueuedPendingAgentCalls = 0;
+    let skippedNoPhone = 0;
+    let skippedFinancialOther = 0;
+    let sinceId: number | undefined;
+
+    console.log(
+      `[Shopify outbound] sync histórico: inicio shop=${normalizedShop}, sinceDays=${sinceDays}, maxOrders=${maxOrders}, created_at_min=${createdAtMin}`,
+    );
+
+    try {
+      while (scanned < maxOrders) {
+        const limit = 250;
+        let path = `/orders.json?limit=${limit}&status=any&created_at_min=${encodeURIComponent(createdAtMin)}&order=id+asc`;
+        if (sinceId !== undefined) {
+          path += `&since_id=${sinceId}`;
+        }
+
+        const response = await client.get<{ orders?: Array<Record<string, unknown>> }>(
+          path,
+        );
+        const orders = response.data.orders ?? [];
+        if (orders.length === 0) {
+          break;
+        }
+
+        for (const order of orders) {
+          if (scanned >= maxOrders) {
+            break;
+          }
+          scanned++;
+
+          const financial = String(order.financial_status ?? '').toLowerCase();
+
+          if (financial === 'paid') {
+            const lead = this.buildOutboundLeadFromOrder(order, 'processed');
+            if (!lead) {
+              skippedNoPhone++;
+              continue;
+            }
+            enqueuedPaidAgentCalls +=
+              await this.enqueueShopifyOutboundForCampaignKinds(
+                normalizedShop,
+                new Set(['satisfactionSurvey', 'postPurchase']),
+                lead,
+              );
+          } else if (ORDER_FINANCIAL_PENDING_REMINDER.has(financial)) {
+            const lead = this.buildOutboundLeadFromOrder(order, 'created');
+            if (!lead) {
+              skippedNoPhone++;
+              continue;
+            }
+            enqueuedPendingAgentCalls +=
+              await this.enqueueShopifyOutboundForCampaignKinds(
+                normalizedShop,
+                new Set(['paymentReminder']),
+                lead,
+              );
+          } else {
+            skippedFinancialOther++;
+          }
+        }
+
+        const last = orders[orders.length - 1];
+        const lastId = Number(last?.id ?? 0);
+        if (!Number.isFinite(lastId) || lastId <= 0) {
+          break;
+        }
+        sinceId = lastId;
+
+        if (orders.length < limit) {
+          break;
+        }
+
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } catch (e) {
+      if (axios.isAxiosError(e)) {
+        throw new BadRequestException(
+          `Error al listar pedidos en Shopify: ${this.formatHttpErrorForLog(e)}`,
+        );
+      }
+      throw e;
+    }
+
+    const summary = {
+      shop: normalizedShop,
+      sinceDays,
+      maxOrders,
+      scanned,
+      enqueuedPaidAgentCalls,
+      enqueuedPendingAgentCalls,
+      skippedNoPhone,
+      skippedFinancialOther,
+    };
+    console.log(
+      `[Shopify outbound] sync histórico: fin shop=${normalizedShop}`,
+      summary,
+    );
+    return summary;
   }
 
   /** Usa topic `checkouts/update` como señal de abandono cuando el checkout sigue abierto y hay teléfono. */
