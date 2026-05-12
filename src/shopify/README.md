@@ -277,6 +277,7 @@ Los tokens y datos de las tiendas se guardan en una colección dedicada:
   "scopes": [
     "read_products",
     "read_orders",
+    "read_all_orders",
     "read_customers",
     "read_fulfillments",
     "read_shipping"
@@ -313,26 +314,28 @@ El módulo solicita los siguientes permisos por defecto:
 
 - `read_products` - Leer productos
 - `read_orders` - Leer pedidos
+- `read_all_orders` - Historial de pedidos completo (junto con `read_orders`; requiere justificación en Partners)
+- `read_customers` - Leer clientes (datos personales; ver advertencia legal abajo)
 - `read_fulfillments` - Leer cumplimientos/envíos
 - `read_shipping` - Leer información de envío
 
 ### ⚠️ ADVERTENCIA LEGAL: read_customers
 
-**`read_customers` NO está incluido por defecto** por razones de cumplimiento legal:
+**`read_customers` implica datos personales** y debe usarse solo con base legal adecuada:
 
 - **GDPR (UE)**: Acceso a datos personales requiere justificación legal
 - **Revisión de Shopify**: Pueden solicitar revisión de la aplicación
 - **Responsabilidad**: Debes tener base legal para procesar datos personales
 
-### Agregar read_customers (si es necesario)
+### Ajustar scopes por entorno
 
-Si necesitas acceso a datos de clientes, configura la variable de entorno:
+Si necesitas **quitar** `read_customers` u otros permisos, configura la variable de entorno:
 
 ```env
-SHOPIFY_SCOPES=read_products,read_orders,read_customers,read_fulfillments,read_shipping
+SHOPIFY_SCOPES=read_products,read_orders,read_all_orders,read_customers,read_fulfillments,read_shipping
 ```
 
-**Antes de agregar `read_customers`, asegúrate de:**
+**Antes de usar `read_customers` en producción, asegúrate de:**
 
 1. Tener base legal para procesar datos personales (GDPR Art. 6)
 2. Tener política de privacidad actualizada

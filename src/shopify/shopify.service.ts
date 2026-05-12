@@ -268,10 +268,12 @@ export class ShopifyService {
       return customScopes;
     }
 
-    // Scopes por defecto (con read_customers para búsqueda de caller)
+    // Scopes por defecto (con read_customers para búsqueda de caller).
+    // read_all_orders + read_orders: historial de pedidos completo (no limitado a ~60 días en listados).
     return [
       'read_products',
       'read_orders',
+      'read_all_orders',
       'read_customers',
       'read_fulfillments',
       'read_shipping',
