@@ -1,98 +1,73 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# LlamaloAI API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend de **LlamaloAI**, una plataforma SaaS de agentes telefónicos con IA: cada empresa configura su agente, le sube su conocimiento (PDFs, webs, texto) y el agente atiende llamadas reales por teléfono.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Construido con **NestJS (Node.js + TypeScript)**.
 
-## Description
+## Cómo funciona una llamada
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ yarn install
+```
+Twilio ──audio──▶ WebSocket (NestJS) ──▶ STT (Deepgram / ElevenLabs)
+   ▲                                          │ texto
+   │                                          ▼
+   └──audio μ-law── TTS (ElevenLabs) ◀── LLM (OpenAI, streaming)
+                                              │
+                                   RAG + tools (webhooks, escalado)
 ```
 
-## Compile and run the project
+1. Twilio recibe o lanza la llamada y abre un WebSocket con el backend.
+2. El audio del usuario se transcribe en tiempo real (STT).
+3. El LLM genera la respuesta en streaming con el prompt del agente, el historial y el conocimiento recuperado.
+4. La respuesta se convierte en voz (TTS) y vuelve a Twilio.
+5. Si el usuario interrumpe, se corta el audio en curso y se reinicia el turno (barge-in).
+
+## Funcionalidades principales
+
+| Módulo | Qué hace |
+| --- | --- |
+| `streams/` | Gateway WebSocket de voz en tiempo real: STT → LLM → TTS, interrupciones y silencios |
+| `knowledge-base/` | RAG: extracción de PDF, web y texto → limpieza → chunking con solape → embeddings (`text-embedding-3-small`) → búsqueda por similitud coseno filtrada por agente |
+| `webhook-actions/` | Function calling: los webhooks del cliente (Make, Shopify…) se exponen al LLM como tools |
+| `learning/` | Evaluación diaria de llamadas reales con un LLM como juez; las mejores se guardan como dataset para fine-tuning |
+| `agents/`, `users/`, `auth/` | Gestión de agentes, usuarios y autenticación con Firebase |
+| `stripe/`, `plan-limits/` | Suscripciones y facturación por uso |
+| `metrics/` | Métricas de llamadas para el dashboard |
+| `support-chat/` | Chat de soporte con IA |
+
+## Stack
+
+- **Backend:** NestJS 11, TypeScript, WebSockets
+- **IA:** OpenAI (chat, embeddings), Deepgram (STT), ElevenLabs (STT/TTS)
+- **Telefonía:** Twilio
+- **Datos:** Firebase / Firestore, Firebase Storage
+- **Pagos:** Stripe
+- **Observabilidad y seguridad:** Sentry, Helmet, rate limiting (Throttler), Swagger
+- **Despliegue:** Render con entornos dev, preprod y prod (`render.yaml`)
+
+## Puesta en marcha
 
 ```bash
-# development
-$ yarn run start
-
-# watch mode
-$ yarn run start:dev
-
-# production mode
-$ yarn run start:prod
+yarn install
+cp env.example .env   # rellena las variables
+yarn start:dev
 ```
 
-## Run tests
+Las claves (OpenAI, Twilio, ElevenLabs, Deepgram, Stripe, Firebase…) se configuran solo por variables de entorno; ver `env.example` y `CONFIGURACION_VARIABLES_ENTORNO.md`.
 
-```bash
-# unit tests
-$ yarn run test
+## Scripts útiles
 
-# e2e tests
-$ yarn run test:e2e
+| Comando | Uso |
+| --- | --- |
+| `yarn start:dev` | Desarrollo con recarga |
+| `yarn build` / `yarn start:prod` | Compilar y arrancar en producción |
+| `yarn test` | Tests con Jest |
+| `yarn lint` | Linter |
 
-# test coverage
-$ yarn run test:cov
-```
+## Repositorios relacionados
 
-## Deployment
+- [LlamaloIA](https://github.com/GabrielHdezAlv/LlamaloIA) — frontend en Angular 19
+- [LlamaloIABackend](https://github.com/GabrielHdezAlv/LlamaloIABackend) — primera versión del backend en .NET 9
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+---
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ yarn install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Autor: [Gabriel Hernández Álvarez](https://github.com/GabrielHdezAlv) — CTO y cofundador de LlamaloAI
